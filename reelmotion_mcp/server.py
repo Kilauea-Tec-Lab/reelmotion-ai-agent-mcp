@@ -137,10 +137,15 @@ async def chat_endpoint(request: Request):
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500, headers=headers)
 
-# Add the custom route to FastMCP
-# We allow OPTIONS here to prevent 405 from the router before middleware/endpoint can handle it
+# Add custom HTTP routes to FastMCP.
+# We allow OPTIONS here to prevent 405 from the router before middleware/endpoint can handle it.
 mcp._additional_http_routes.append(
     Route("/api/chat", chat_endpoint, methods=["POST", "OPTIONS"])
+)
+
+# Health check endpoint for Docker Compose / monitoring.
+mcp._additional_http_routes.append(
+    Route("/health", health_endpoint, methods=["GET"])
 )
 
 # Constants
@@ -252,20 +257,13 @@ async def chat(message: str, context: str = "") -> str:
     return response
 
 if __name__ == "__main__":
-    # Initialize and run the server
-    # Use transport="sse" for HTTP/SSE support (requires sse-starlette)
-    # or transport="stdio" for standard input/output
     import sys
-    
+
     # Get host and port from environment variables
     host = os.getenv("HOST", "127.0.0.1")
     port = int(os.getenv("PORT", "8000"))
-    
+
     if len(sys.argv) > 1 and sys.argv[1] == "http":
-        # Register health endpoint directly on the app
-        from starlette.routing import Mount
-        mcp._app.routes.append(Route("/health", health_endpoint, methods=["GET"]))
-        
         mcp.run(transport="sse", host=host, port=port)
     else:
         mcp.run()
