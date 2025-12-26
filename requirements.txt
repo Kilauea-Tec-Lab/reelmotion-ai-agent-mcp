@@ -1,0 +1,9 @@
+fastmcp
+google-generativeai
+python-dotenv
+httpx
+starlette
+pydantic
+sse-starlette
+redis>=5.0.0
+aiofiles>=23.0.0

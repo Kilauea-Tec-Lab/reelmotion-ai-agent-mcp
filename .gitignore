@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+build/
+dist/
+*.egg-info/
+
+# Environment files
+.env
+.env.local
+.env.production
+
+# Temp files
+temp_files/
+*.log
+*.pid
+
+# Redis
+dump.rdb
+appendonly.aof
+
+# Windows Redis portable
+redis-portable/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local batch files
+start.bat
+start_http.bat
+start_all.bat
