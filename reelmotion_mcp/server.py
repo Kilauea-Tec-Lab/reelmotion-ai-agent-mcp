@@ -45,6 +45,12 @@ class ChatRequest(BaseModel):
     context: str = ""
     conversation_uuid: str  # UUID de la conversación (obligatorio)
 
+async def health_endpoint(request: Request):
+    """
+    Health check endpoint for Docker and monitoring.
+    """
+    return JSONResponse({"status": "healthy", "service": "reelmotion-mcp"})
+
 async def chat_endpoint(request: Request):
     """
     HTTP endpoint for React frontend to chat with the bot.
@@ -250,7 +256,15 @@ if __name__ == "__main__":
     # Use transport="sse" for HTTP/SSE support (requires sse-starlette)
     # or transport="stdio" for standard input/output
     import sys
+    
+    # Register health endpoint
+    mcp.app.routes.append(Route("/health", health_endpoint, methods=["GET"]))
+    
+    # Get host and port from environment variables
+    host = os.getenv("HOST", "127.0.0.1")
+    port = int(os.getenv("PORT", "8000"))
+    
     if len(sys.argv) > 1 and sys.argv[1] == "http":
-        mcp.run(transport="sse")
+        mcp.run(transport="sse", host=host, port=port)
     else:
         mcp.run()
