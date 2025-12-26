@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -e
+set -euo pipefail
 
 echo "🚀 Starting ReelMotion deployment..."
 
@@ -16,16 +16,31 @@ docker-compose build --no-cache
 echo "▶️  Starting services..."
 docker-compose up -d
 
-echo "⏳ Waiting for services..."
-sleep 15
+echo "📊 Containers:"
+docker-compose ps
 
-echo "🏥 Health check..."
-if curl -sS http://localhost:8000/ > /dev/null 2>&1; then
-    echo "✅ Deployment successful!"
+if [ "${SKIP_HEALTHCHECK:-0}" = "1" ]; then
+    echo "⚠️  Skipping health check (SKIP_HEALTHCHECK=1)"
 else
-    echo "❌ Health check failed!"
-    docker-compose logs --tail=50 api
-    exit 1
+    echo "🏥 Readiness check (OPTIONS /api/chat)..."
+    max_attempts="${HEALTHCHECK_ATTEMPTS:-30}"
+    attempt=1
+
+    until curl -fsS -X OPTIONS --connect-timeout 2 --max-time 5 http://localhost:8000/api/chat > /dev/null 2>&1; do
+        if [ "$attempt" -ge "$max_attempts" ]; then
+            echo "❌ Health check failed after $max_attempts attempts!"
+            echo "🧾 API logs (last 200 lines):"
+            docker-compose logs --tail=200 api || true
+            echo "🧾 Redis logs (last 200 lines):"
+            docker-compose logs --tail=200 redis || true
+            exit 1
+        fi
+        echo "⏳ Not ready yet... ($attempt/$max_attempts)"
+        attempt=$((attempt+1))
+        sleep 2
+    done
+
+    echo "✅ Deployment successful!"
 fi
 
 echo "🧹 Cleanup..."
