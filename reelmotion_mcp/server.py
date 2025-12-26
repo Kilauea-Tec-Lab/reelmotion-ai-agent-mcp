@@ -55,16 +55,12 @@ async def chat_endpoint(request: Request):
     """
     HTTP endpoint for React frontend to chat with the bot.
     """
-    # Manually handle CORS headers to ensure they are present
-    headers = {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "POST, OPTIONS",
-        "Access-Control-Allow-Headers": "*",
-    }
-
-    # Handle preflight requests explicitly
+    # CORS headers are handled by Nginx reverse proxy
+    # No need to add them here to avoid duplicates
+    
+    # Handle preflight requests explicitly (nginx handles this too, but just in case)
     if request.method == "OPTIONS":
-        return JSONResponse({}, headers=headers)
+        return JSONResponse({}, status_code=204)
 
     try:
         # Check Content-Type to handle both JSON and Form Data
@@ -99,8 +95,7 @@ async def chat_endpoint(request: Request):
         if not conversation_uuid:
             return JSONResponse(
                 {"error": "conversation_uuid is required"}, 
-                status_code=400, 
-                headers=headers
+                status_code=400
             )
 
         # Set conversation UUID in context for tools to access
@@ -110,7 +105,7 @@ async def chat_endpoint(request: Request):
             set_api_token(str(token))
 
         if not message:
-             return JSONResponse({"error": "Message is required"}, status_code=400, headers=headers)
+             return JSONResponse({"error": "Message is required"}, status_code=400)
 
         # Crear chatbot con UUID de conversación
         chatbot = get_chatbot(conversation_uuid)
@@ -133,9 +128,9 @@ async def chat_endpoint(request: Request):
         return JSONResponse({
             "response": response,
             "files": files
-        }, headers=headers)
+        })
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500, headers=headers)
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 # Add the custom route to FastMCP
 # We allow OPTIONS here to prevent 405 from the router before middleware/endpoint can handle it
