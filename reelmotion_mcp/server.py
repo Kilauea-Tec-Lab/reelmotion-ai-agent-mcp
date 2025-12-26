@@ -257,14 +257,17 @@ if __name__ == "__main__":
     # or transport="stdio" for standard input/output
     import sys
     
-    # Register health endpoint
-    mcp.app.routes.append(Route("/health", health_endpoint, methods=["GET"]))
-    
     # Get host and port from environment variables
     host = os.getenv("HOST", "127.0.0.1")
     port = int(os.getenv("PORT", "8000"))
     
+    # The health endpoint will be registered via custom_routes parameter
     if len(sys.argv) > 1 and sys.argv[1] == "http":
-        mcp.run(transport="sse", host=host, port=port)
+        mcp.run(
+            transport="sse", 
+            host=host, 
+            port=port,
+            custom_routes=[Route("/health", health_endpoint, methods=["GET"])]
+        )
     else:
         mcp.run()
