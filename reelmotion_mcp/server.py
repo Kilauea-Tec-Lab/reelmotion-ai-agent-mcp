@@ -261,13 +261,11 @@ if __name__ == "__main__":
     host = os.getenv("HOST", "127.0.0.1")
     port = int(os.getenv("PORT", "8000"))
     
-    # The health endpoint will be registered via custom_routes parameter
     if len(sys.argv) > 1 and sys.argv[1] == "http":
-        mcp.run(
-            transport="sse", 
-            host=host, 
-            port=port,
-            custom_routes=[Route("/health", health_endpoint, methods=["GET"])]
-        )
+        # Register health endpoint directly on the app
+        from starlette.routing import Mount
+        mcp._app.routes.append(Route("/health", health_endpoint, methods=["GET"]))
+        
+        mcp.run(transport="sse", host=host, port=port)
     else:
         mcp.run()
