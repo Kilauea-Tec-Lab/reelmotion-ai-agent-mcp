@@ -22,15 +22,17 @@ docker-compose ps
 if [ "${SKIP_HEALTHCHECK:-0}" = "1" ]; then
     echo "⚠️  Skipping health check (SKIP_HEALTHCHECK=1)"
 else
-    echo "🏥 Readiness check (OPTIONS /api/chat)..."
+    echo "🏥 Readiness check (OPTIONS /api/chat via nginx:80)..."
     max_attempts="${HEALTHCHECK_ATTEMPTS:-30}"
     attempt=1
 
-    until curl -fsS -X OPTIONS --connect-timeout 2 --max-time 5 http://localhost:8000/api/chat > /dev/null 2>&1; do
+    until curl -fsS -X OPTIONS --connect-timeout 2 --max-time 5 http://localhost/api/chat > /dev/null 2>&1; do
         if [ "$attempt" -ge "$max_attempts" ]; then
             echo "❌ Health check failed after $max_attempts attempts!"
             echo "🧾 API logs (last 200 lines):"
             docker-compose logs --tail=200 api || true
+            echo "🧾 Nginx logs (last 200 lines):"
+            docker-compose logs --tail=200 nginx || true
             echo "🧾 Redis logs (last 200 lines):"
             docker-compose logs --tail=200 redis || true
             exit 1
