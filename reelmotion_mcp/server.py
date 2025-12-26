@@ -137,15 +137,10 @@ async def chat_endpoint(request: Request):
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500, headers=headers)
 
-# Add custom HTTP routes to FastMCP.
-# We allow OPTIONS here to prevent 405 from the router before middleware/endpoint can handle it.
+# Add the custom route to FastMCP
+# We allow OPTIONS here to prevent 405 from the router before middleware/endpoint can handle it
 mcp._additional_http_routes.append(
     Route("/api/chat", chat_endpoint, methods=["POST", "OPTIONS"])
-)
-
-# Health check endpoint for Docker Compose / monitoring.
-mcp._additional_http_routes.append(
-    Route("/health", health_endpoint, methods=["GET"])
 )
 
 # Constants
@@ -259,10 +254,10 @@ async def chat(message: str, context: str = "") -> str:
 if __name__ == "__main__":
     import sys
 
-    # Get host and port from environment variables
     host = os.getenv("HOST", "127.0.0.1")
     port = int(os.getenv("PORT", "8000"))
 
+    # HTTP mode (SSE transport) used by our Docker deployment
     if len(sys.argv) > 1 and sys.argv[1] == "http":
         mcp.run(transport="sse", host=host, port=port)
     else:

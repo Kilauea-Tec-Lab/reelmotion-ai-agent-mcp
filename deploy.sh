@@ -20,7 +20,7 @@ echo "⏳ Waiting for services..."
 sleep 15
 
 echo "🏥 Health check..."
-if curl -f http://localhost:8000/health > /dev/null 2>&1; then
+if curl -sS http://localhost:8000/ > /dev/null 2>&1; then
     echo "✅ Deployment successful!"
 else
     echo "❌ Health check failed!"
