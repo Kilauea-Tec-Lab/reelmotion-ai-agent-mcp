@@ -3,17 +3,21 @@
 ## Fecha: 28 de Diciembre de 2025
 
 ## 🎯 Objetivo
+
 Refactorizar el servidor MCP para que acepte **URLs de archivos directamente** en lugar de archivos en base64, optimizando el flujo de datos y reduciendo el procesamiento innecesario.
 
 ## 📋 Cambios Realizados
 
 ### 1. **server.py** - Endpoint de Chat
+
 **Antes:**
+
 - Recibía archivos binarios vía `multipart/form-data`
 - Convertía archivos a base64 para almacenarlos en Redis
 - Enviaba base64 a los tools
 
 **Después:**
+
 - Recibe URLs de archivos directamente
 - Formato esperado:
   ```
@@ -26,17 +30,22 @@ Refactorizar el servidor MCP para que acepte **URLs de archivos directamente** e
 - Pasa URLs directamente a los tools
 
 ### 2. **chatbot.py** - Gestión de Referencias
+
 **Nuevos métodos:**
+
 - `set_reference_files(file_urls, file_types)` - Almacena URLs de archivos
 - `get_reference_files()` - Retorna lista de `{url, type}`
 - `clear_reference_files()` - Limpia referencias después de usarlas
 
 **Compatibilidad:**
+
 - Los métodos antiguos (`set_reference_images`, etc.) siguen funcionando
 - Se adaptaron para manejar URLs internamente
 
 ### 3. **tools.py** - Funciones de Generación
+
 **Cambios en `generate_image`:**
+
 - Ya NO descarga imágenes
 - Ya NO convierte a base64
 - Envía URLs directamente a Laravel:
@@ -50,39 +59,49 @@ Refactorizar el servidor MCP para que acepte **URLs de archivos directamente** e
   ```
 
 **Cambios en `generate_video`:**
+
 - Maneja URLs de imágenes y videos de referencia
 - Diferencia entre `reference_image` (URL) y `reference_video` (URL)
 - Soporte específico para Runway Aleph (video-to-video)
 
 ### 4. **session_manager.py** - Almacenamiento
+
 **Nuevos métodos:**
+
 - `save_reference_files(files_data)` - Guarda lista de `{url, type}`
 - `get_reference_files()` - Retorna archivos de referencia
 
 **Formato de almacenamiento en Redis:**
+
 ```json
 [
-  {"url": "https://...", "type": "image"},
-  {"url": "https://...", "type": "video"}
+  { "url": "https://...", "type": "image" },
+  { "url": "https://...", "type": "video" }
 ]
 ```
 
 ## 🔄 Flujo de Datos (Antes vs Después)
 
 ### Antes (Base64):
+
 ```
 Laravel → Binary File → MCP Server → Base64 → Redis → Base64 → Tools → Base64 → Laravel
 ```
+
 **Problemas:**
+
 - 33% más tamaño en base64
 - Doble conversión innecesaria
 - Alto uso de memoria en Redis
 
 ### Después (URLs):
+
 ```
 Laravel → URL → MCP Server → URL → Redis → URL → Tools → URL → Laravel
 ```
+
 **Beneficios:**
+
 - ✅ Sin conversiones
 - ✅ Mínimo uso de memoria
 - ✅ Más rápido
@@ -91,6 +110,7 @@ Laravel → URL → MCP Server → URL → Redis → URL → Tools → URL → L
 ## 📡 Ejemplo de Request desde Laravel
 
 ### Formato Form Data:
+
 ```php
 $data = [
     'message' => 'Genera un video con esta imagen',
@@ -102,6 +122,7 @@ $data = [
 ```
 
 ### Formato JSON:
+
 ```json
 {
   "message": "Genera un video con esta imagen",
@@ -117,6 +138,7 @@ $data = [
 ## 🎯 Payload a Laravel desde MCP
 
 ### Generate Image:
+
 ```json
 {
   "prompt": "texto exacto del usuario",
@@ -128,6 +150,7 @@ $data = [
 ```
 
 ### Generate Video:
+
 ```json
 {
   "prompt": "texto exacto del usuario",
@@ -151,6 +174,7 @@ $data = [
 Para probar los cambios:
 
 1. Enviar request con URLs:
+
    ```bash
    curl -X POST http://localhost/api/chat \
      -F "message=Genera una imagen" \

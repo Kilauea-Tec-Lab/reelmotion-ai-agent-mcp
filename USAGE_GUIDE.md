@@ -47,11 +47,11 @@ $response = Http::asForm()->post('http://localhost/api/chat', [
     'message' => 'Edita este video usando esta imagen de referencia',
     'token' => $token,
     'conversation_uuid' => $uuid,
-    
+
     // Primera referencia: imagen
     'files[0]' => 'https://storage.googleapis.com/bucket/reference.jpg',
     'file_types[0]' => 'image',
-    
+
     // Segunda referencia: video
     'files[1]' => 'https://storage.googleapis.com/bucket/source_video.mp4',
     'file_types[1]' => 'video',
@@ -61,6 +61,7 @@ $response = Http::asForm()->post('http://localhost/api/chat', [
 ## Ejemplo desde cURL
 
 ### Un solo archivo
+
 ```bash
 curl -X POST http://localhost/api/chat \
   -F "message=Genera una imagen con este estilo" \
@@ -71,6 +72,7 @@ curl -X POST http://localhost/api/chat \
 ```
 
 ### Múltiples archivos
+
 ```bash
 curl -X POST http://localhost/api/chat \
   -F "message=Combina estas imágenes" \
@@ -83,6 +85,7 @@ curl -X POST http://localhost/api/chat \
 ```
 
 ### JSON
+
 ```bash
 curl -X POST http://localhost/api/chat \
   -H "Content-Type: application/json" \
@@ -122,16 +125,17 @@ Después de confirmar:
 
 ## Tipos de Archivos Soportados
 
-| `file_types[n]` | Descripción | Uso |
-|-----------------|-------------|-----|
-| `image` | Imagen (JPG, PNG, WebP) | Referencia para generación de imágenes/videos |
-| `video` | Video (MP4, WebM) | Referencia para video-to-video (Runway Aleph) |
-| `audio` | Audio (futuro) | No implementado aún |
-| `document` | Documento (futuro) | No implementado aún |
+| `file_types[n]` | Descripción             | Uso                                           |
+| --------------- | ----------------------- | --------------------------------------------- |
+| `image`         | Imagen (JPG, PNG, WebP) | Referencia para generación de imágenes/videos |
+| `video`         | Video (MP4, WebM)       | Referencia para video-to-video (Runway Aleph) |
+| `audio`         | Audio (futuro)          | No implementado aún                           |
+| `document`      | Documento (futuro)      | No implementado aún                           |
 
 ## Flujo Completo
 
 1. **Laravel sube el archivo a Google Cloud Storage**
+
    ```php
    $path = Storage::disk('gcs')->put(
        "chat_attachments/{$uuid}/",
@@ -141,6 +145,7 @@ Después de confirmar:
    ```
 
 2. **Laravel envía la URL al MCP**
+
    ```php
    $response = Http::asForm()->post('http://mcp-server/api/chat', [
        'message' => $request->input('message'),
@@ -152,17 +157,17 @@ Después de confirmar:
    ```
 
 3. **MCP procesa con Gemini y llama a los tools**
+
    - Gemini decide si usar `generate_image` o `generate_video`
    - El tool recibe la URL y la envía a Laravel
    - Laravel procesa y retorna el resultado
 
 4. **MCP devuelve la respuesta a Laravel**
+
    ```json
    {
-       "response": "Texto de Gemini",
-       "files": [
-           {"url": "...", "type": "image"}
-       ]
+     "response": "Texto de Gemini",
+     "files": [{ "url": "...", "type": "image" }]
    }
    ```
 
@@ -176,27 +181,29 @@ Después de confirmar:
 ✅ **Menor uso de memoria** (solo URLs en Redis)  
 ✅ **Más rápido** (sin descarga/subida innecesaria)  
 ✅ **Archivos ya en Cloud Storage** (persistentes)  
-✅ **Cacheable** (las URLs son estables)  
+✅ **Cacheable** (las URLs son estables)
 
 ## Migración desde Base64
 
 Si actualmente envías base64, necesitas:
 
 1. **Guardar el archivo en storage primero:**
+
    ```php
    // Antes (base64):
    $base64 = base64_encode(file_get_contents($file));
-   
+
    // Después (URL):
    $path = Storage::disk('gcs')->put('chat_attachments/', $file);
    $url = Storage::disk('gcs')->url($path);
    ```
 
 2. **Enviar la URL:**
+
    ```php
    // Antes:
    'image_base64' => $base64,
-   
+
    // Después:
    'files[0]' => $url,
    'file_types[0]' => 'image',
@@ -205,11 +212,13 @@ Si actualmente envías base64, necesitas:
 ## Debug / Troubleshooting
 
 Para ver los logs del MCP:
+
 ```bash
 docker-compose logs -f api
 ```
 
 Buscar líneas como:
+
 ```
 DEBUG: Retrieved 1 files from chatbot session
 DEBUG: Sending request with 1 image URLs

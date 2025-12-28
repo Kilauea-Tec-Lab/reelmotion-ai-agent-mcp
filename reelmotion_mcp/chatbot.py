@@ -210,14 +210,51 @@ class GeminiChatbot:
             if context:
                 parts.append(f"Context: {context}\n\n")
             
-            # Add reference files info if available
+            # Add reference files for Gemini to analyze
             ref_files = await self.get_reference_files()
             if ref_files:
-                file_info = ", ".join([f"{f['type']}" for f in ref_files])
-                parts.append(f"Reference files are available in the session ({len(ref_files)} files: {file_info}).\n\n")
-            
-            # Note: No enviamos las URLs a Gemini, solo las usamos en los tools
-            # Gemini no necesita ver las imágenes, solo saber que están disponibles
+                # Download and send files to Gemini for analysis
+                for file_data in ref_files:
+                    file_url = file_data['url']
+                    file_type = file_data.get('type', 'image')
+                    
+                    try:
+                        print(f"DEBUG: Downloading {file_type} from {file_url} for Gemini analysis")
+                        import httpx
+                        async with httpx.AsyncClient(timeout=30.0) as client:
+                            response = await client.get(file_url)
+                            response.raise_for_status()
+                            file_bytes = response.content
+                            
+                            # Determine MIME type
+                            mime_type = file_type
+                            if file_type == 'image':
+                                # Detectar formato de imagen
+                                if file_url.endswith('.png'):
+                                    mime_type = 'image/png'
+                                elif file_url.endswith('.webp'):
+                                    mime_type = 'image/webp'
+                                elif file_url.endswith('.gif'):
+                                    mime_type = 'image/gif'
+                                else:
+                                    mime_type = 'image/jpeg'
+                            elif file_type == 'video':
+                                if file_url.endswith('.webm'):
+                                    mime_type = 'video/webm'
+                                elif file_url.endswith('.mov'):
+                                    mime_type = 'video/mov'
+                                else:
+                                    mime_type = 'video/mp4'
+                            
+                            # Add file to parts for Gemini to analyze
+                            parts.append({
+                                'mime_type': mime_type,
+                                'data': file_bytes
+                            })
+                            print(f"DEBUG: Added {file_type} ({mime_type}) to Gemini message for analysis")
+                    except Exception as e:
+                        print(f"ERROR: Failed to download {file_type} for analysis: {e}")
+                        parts.append(f"Note: Unable to load {file_type} from URL. Error: {str(e)}\n\n")
             
             # Add the user's message
             parts.append(message)

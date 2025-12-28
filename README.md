@@ -37,6 +37,7 @@ Http::asForm()->post('http://localhost/api/chat', [
 ```
 
 **Benefits:**
+
 - ✅ No base64 conversion overhead
 - ✅ Reduced memory usage in Redis
 - ✅ Faster processing
