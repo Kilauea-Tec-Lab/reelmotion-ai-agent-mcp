@@ -5,17 +5,6 @@ import asyncio
 from typing import Optional
 from request_context import get_api_token, get_conversation_uuid
 
-def _download_image(url: str) -> Optional[bytes]:
-    try:
-        print(f"DEBUG: Downloading image from {url}")
-        with httpx.Client(timeout=30.0) as client:
-            response = client.get(url, follow_redirects=True)
-            response.raise_for_status()
-            return response.content
-    except Exception as e:
-        print(f"Error downloading image: {e}")
-        return None
-
 async def generate_image(
     prompt: str, 
     model: str = "GPT", 
@@ -57,14 +46,14 @@ async def generate_image(
     # Try to get token from request context first, then env
     api_token = get_api_token() or os.getenv("API_TOKEN")
     
-    # Get REAL reference images from chatbot session (ignoring Gemini's invalid URLs)
+    # Get reference files from chatbot session (URLs, not base64)
     from chatbot import get_chatbot
     conversation_uuid = get_conversation_uuid() or "default"
     chatbot = get_chatbot(conversation_uuid)
     
-    # Get reference images asynchronously
-    context_images = await chatbot.get_reference_images()
-    print(f"DEBUG: Retrieved {len(context_images) if context_images else 0} images from chatbot session")
+    # Get reference files (URLs) asynchronously
+    context_files = await chatbot.get_reference_files()
+    print(f"DEBUG: Retrieved {len(context_files) if context_files else 0} files from chatbot session")
 
     if not backend_url or not endpoint:
         return "Error: Backend URL or Image Creation Endpoint not configured."
@@ -80,9 +69,11 @@ async def generate_image(
     if api_token:
         headers["Authorization"] = f"Bearer {api_token}"
     
-    # If we have images from context, use JSON with base64
-    if context_images:
-        print(f"DEBUG: Sending JSON request with {len(context_images)} base64 images")
+    # If we have files from context, send URLs directly
+    if context_files:
+        # Filtrar solo imágenes
+        image_files = [f for f in context_files if f.get("type") == "image"]
+        print(f"DEBUG: Sending request with {len(image_files)} image URLs")
         headers["Content-Type"] = "application/json"
         
         payload = {
@@ -92,13 +83,13 @@ async def generate_image(
             "quantity": quantity,
         }
         
-        # Send all context images as reference_images array
-        if len(context_images) == 1:
+        # Send image URLs directly (no download, no base64)
+        if len(image_files) == 1:
             # Single image: use reference_image field
-            payload["reference_image"] = context_images[0]
-        else:
+            payload["reference_image"] = image_files[0]["url"]
+        elif len(image_files) > 1:
             # Multiple images: use reference_images array
-            payload["reference_images"] = context_images
+            payload["reference_images"] = [f["url"] for f in image_files]
 
         try:
             with httpx.Client(timeout=60.0) as client:
@@ -121,9 +112,9 @@ async def generate_image(
                         print(f"DEBUG: Adding file to chatbot: {images_data['url']}")
                         await chatbot.add_generated_file(images_data["url"], "image")
                 
-                # Clear reference images after successful use
-                await chatbot.clear_reference_images()
-                print("DEBUG: Reference images cleared after use")
+                # Clear reference files after successful use
+                await chatbot.clear_reference_files()
+                print("DEBUG: Reference files cleared after use")
                 
                 # Return simple success message instead of full JSON
                 return f"Imágenes generadas exitosamente con {model}."
@@ -259,12 +250,12 @@ async def generate_video(
     url = f"{backend_url}/{endpoint}"
     print(f"DEBUG: Full URL: {url}")
     
-    # Get reference images/videos from chatbot session
+    # Get reference files from chatbot session (URLs, not base64)
     from chatbot import get_chatbot
     conversation_uuid = get_conversation_uuid() or "default"
     chatbot = get_chatbot(conversation_uuid)
-    context_images = await chatbot.get_reference_images()
-    print(f"DEBUG: Retrieved {len(context_images) if context_images else 0} reference media from chatbot session")
+    context_files = await chatbot.get_reference_files()
+    print(f"DEBUG: Retrieved {len(context_files) if context_files else 0} reference files from chatbot session")
     
     # Prepare headers
     headers = {
@@ -283,20 +274,20 @@ async def generate_video(
         "aspect_ratio": aspect_ratio
     }
     
-    # Add reference media from context (only if it's a valid URL, not base64)
-    if context_images and len(context_images) > 0:
-        # Check if first image is a URL or base64
-        first_media = context_images[0]
-        if first_media.startswith('http://') or first_media.startswith('https://'):
-            # It's a URL - use it directly
-            payload["media_url"] = first_media
-            print(f"DEBUG: Using reference URL: {first_media}")
-        elif first_media.startswith('/9j/') or first_media.startswith('iVBOR'):
-            # It's base64 - send in different field
-            payload["reference_image"] = first_media
-            print(f"DEBUG: Using reference image (base64): {first_media[:100]}...")
-        else:
-            print(f"DEBUG: Ignoring invalid reference media format")
+    # Add reference media from context (URLs directly)
+    if context_files and len(context_files) > 0:
+        # Buscar imagen o video en los archivos de referencia
+        image_file = next((f for f in context_files if f.get("type") == "image"), None)
+        video_file = next((f for f in context_files if f.get("type") == "video"), None)
+        
+        if video_file and model == "runway-aleph":
+            # Runway Aleph acepta video-to-video
+            payload["reference_video"] = video_file["url"]
+            print(f"DEBUG: Using reference video URL: {video_file['url']}")
+        elif image_file:
+            # Usar imagen de referencia
+            payload["reference_image"] = image_file["url"]
+            print(f"DEBUG: Using reference image URL: {image_file['url']}")
     
     print(f"DEBUG: Sending video generation request with model={model}, duration={duration}s, aspect={aspect_ratio}")
     print(f"DEBUG: Payload: {json.dumps(payload, indent=2)}")
@@ -320,9 +311,9 @@ async def generate_video(
                 print(f"DEBUG: Adding video file to chatbot: {video_url}")
                 await chatbot.add_generated_file(video_url, "video")
                 
-                # Clear reference images after successful use
-                await chatbot.clear_reference_images()
-                print("DEBUG: Reference images cleared after video generation")
+                # Clear reference files after successful use
+                await chatbot.clear_reference_files()
+                print("DEBUG: Reference files cleared after video generation")
                 
                 return f"Video generado exitosamente con {model}."
             else:

@@ -123,25 +123,45 @@ class GeminiChatbot:
             enable_automatic_function_calling=False
         )
     
-    async def set_reference_images(self, images: list):
-        """Store reference images as base64 in Redis for this chat session."""
-        images_b64 = []
-        for img in images:
-            if isinstance(img, dict) and 'data' in img:
-                # Convertir a base64 si es necesario
-                img_b64 = base64.b64encode(img['data']).decode('utf-8') if isinstance(img['data'], bytes) else img['data']
-                images_b64.append(img_b64)
+    async def set_reference_files(self, file_urls: list, file_types: list = None):
+        """Store reference file URLs in Redis for this chat session."""
+        if not file_types:
+            file_types = ["image"] * len(file_urls)
         
-        await self.session_manager.save_reference_images(self.conversation_uuid, images_b64)
+        # Store as list of dicts with URL and type
+        files_data = [
+            {"url": url, "type": file_type}
+            for url, file_type in zip(file_urls, file_types)
+        ]
+        await self.session_manager.save_reference_files(self.conversation_uuid, files_data)
     
-    async def get_reference_images(self) -> list:
-        """Get stored reference images from Redis."""
-        return await self.session_manager.get_reference_images(self.conversation_uuid)
+    async def get_reference_files(self) -> list:
+        """Get stored reference file URLs from Redis."""
+        return await self.session_manager.get_reference_files(self.conversation_uuid)
     
-    async def clear_reference_images(self):
-        """Clear stored reference images."""
+    async def clear_reference_files(self):
+        """Clear stored reference files."""
         refs_key = self.session_manager._get_refs_key(self.conversation_uuid)
         self.session_manager.redis_client.delete(refs_key)
+    
+    # Mantener compatibilidad con métodos antiguos
+    async def set_reference_images(self, images: list):
+        """Legacy method - converts to URLs if needed."""
+        # Si recibe URLs directamente, usarlas
+        if images and all(isinstance(img, str) for img in images):
+            await self.set_reference_files(images)
+        else:
+            # Compatibilidad con formato antiguo (no debería usarse)
+            pass
+    
+    async def get_reference_images(self) -> list:
+        """Legacy method - returns file URLs."""
+        files = await self.get_reference_files()
+        return [f["url"] for f in files] if files else []
+    
+    async def clear_reference_images(self):
+        """Legacy method."""
+        await self.clear_reference_files()
     
     async def add_generated_file(self, url: str, file_type: str = "image", metadata: dict = None):
         """Add a generated file URL to pending files in Redis."""
@@ -158,14 +178,16 @@ class GeminiChatbot:
         files = await self.session_manager.get_pending_files(self.conversation_uuid)
         return [{"url": f["url"], "type": f["type"]} for f in files]
         
-    async def send_message(self, message: str, context: str = "", images: list = None) -> str:
+    async def send_message(self, message: str, context: str = "", images: list = None, file_urls: list = None, file_types: list = None) -> str:
         """
         Send a message to the Gemini chatbot and get a response.
         
         Args:
             message: The user's message
             context: Optional context or conversation history
-            images: Optional list of image data (dicts with 'mime_type' and 'data')
+            images: DEPRECATED - Optional list of image data
+            file_urls: Optional list of file URLs
+            file_types: Optional list of file types (image, video, etc.)
             
         Returns:
             The chatbot's response
@@ -188,19 +210,14 @@ class GeminiChatbot:
             if context:
                 parts.append(f"Context: {context}\n\n")
             
-            # Add reference images if available
-            ref_images = await self.get_reference_images()
-            if ref_images:
-                parts.append("Reference images are available in the session.\n\n")
+            # Add reference files info if available
+            ref_files = await self.get_reference_files()
+            if ref_files:
+                file_info = ", ".join([f"{f['type']}" for f in ref_files])
+                parts.append(f"Reference files are available in the session ({len(ref_files)} files: {file_info}).\n\n")
             
-            # Add current images if provided
-            if images:
-                for img in images:
-                    if isinstance(img, dict) and 'mime_type' in img and 'data' in img:
-                        parts.append({
-                            'mime_type': img['mime_type'],
-                            'data': img['data']
-                        })
+            # Note: No enviamos las URLs a Gemini, solo las usamos en los tools
+            # Gemini no necesita ver las imágenes, solo saber que están disponibles
             
             # Add the user's message
             parts.append(message)

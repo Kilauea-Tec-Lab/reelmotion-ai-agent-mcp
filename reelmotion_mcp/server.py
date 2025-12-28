@@ -65,7 +65,8 @@ async def chat_endpoint(request: Request):
     try:
         # Check Content-Type to handle both JSON and Form Data
         content_type = request.headers.get("content-type", "")
-        images = []
+        file_urls = []
+        file_types = []
         
         if "multipart/form-data" in content_type or "application/x-www-form-urlencoded" in content_type:
             data = await request.form()
@@ -74,15 +75,18 @@ async def chat_endpoint(request: Request):
             token = data.get("token")
             conversation_uuid = data.get("conversation_uuid")
             
-            # Handle files from form data
-            if "files[]" in data:
-                uploaded_files = data.getlist("files[]")
-                for file in uploaded_files:
-                    # Ensure it's an UploadFile
-                    if hasattr(file, "read"):
-                        content = await file.read()
-                        mime_type = file.content_type or "image/jpeg"
-                        images.append({"mime_type": mime_type, "data": content})
+            # Handle file URLs from form data (no more binary uploads)
+            # Expecting: files[0]=URL, files[1]=URL, etc.
+            # and file_types[0]=image, file_types[1]=video, etc.
+            file_index = 0
+            while True:
+                file_url = data.get(f"files[{file_index}]")
+                if not file_url:
+                    break
+                file_type = data.get(f"file_types[{file_index}]", "image")
+                file_urls.append(file_url)
+                file_types.append(file_type)
+                file_index += 1
         else:
             # Default to JSON
             data = await request.json()
@@ -90,6 +94,11 @@ async def chat_endpoint(request: Request):
             context = data.get("context", "")
             token = data.get("token")
             conversation_uuid = data.get("conversation_uuid")
+            
+            # Extract file URLs from JSON
+            # Expecting: {"files": ["url1", "url2"], "file_types": ["image", "video"]}
+            file_urls = data.get("files", [])
+            file_types = data.get("file_types", [])
 
         # Validar UUID
         if not conversation_uuid:
@@ -110,11 +119,11 @@ async def chat_endpoint(request: Request):
         # Crear chatbot con UUID de conversación
         chatbot = get_chatbot(conversation_uuid)
         
-        # Store reference images in chatbot session (persists across messages)
-        if images:
-            await chatbot.set_reference_images(images)
+        # Store reference file URLs in chatbot session (persists across messages)
+        if file_urls:
+            await chatbot.set_reference_files(file_urls, file_types)
         
-        response = await chatbot.send_message(message, context, images=images)
+        response = await chatbot.send_message(message, context, file_urls=file_urls, file_types=file_types)
         
         # Get generated files and include in response
         files = await chatbot.get_generated_files()

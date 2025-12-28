@@ -8,9 +8,10 @@ AI-powered agent for image and video generation using Google Gemini and multiple
 - 🖼️ **Image generation** (Nano Banana, GPT models)
 - 🎬 **Video generation** (Runway Aleph, Veo 3.1, Sora 2, and more)
 - 💾 **Redis-based session management** for concurrent conversations
-- 🔄 **Reference image/video persistence**
+- 🔄 **Reference file persistence** (images/videos via URL)
 - 📊 **Token cost calculation** before generation
 - 🌐 **Multi-session support** with UUID-based conversation tracking
+- 🚀 **URL-based file handling** (no base64, optimized performance)
 
 ## Tech Stack
 
@@ -19,6 +20,29 @@ AI-powered agent for image and video generation using Google Gemini and multiple
 - **Redis** (for session storage)
 - **FastMCP** (Model Context Protocol server)
 - **Docker & Docker Compose**
+
+## 🆕 New: URL-Based File Handling
+
+The MCP now accepts **file URLs directly** instead of base64 encoding:
+
+```php
+// Laravel example
+Http::asForm()->post('http://localhost/api/chat', [
+    'message' => 'Generate an image with this reference',
+    'token' => $token,
+    'conversation_uuid' => $uuid,
+    'files[0]' => 'https://storage.googleapis.com/bucket/image.jpg',
+    'file_types[0]' => 'image',
+]);
+```
+
+**Benefits:**
+- ✅ No base64 conversion overhead
+- ✅ Reduced memory usage in Redis
+- ✅ Faster processing
+- ✅ Direct integration with Cloud Storage
+
+See [USAGE_GUIDE.md](USAGE_GUIDE.md) for detailed examples.
 
 ## Quick Start (Production)
 
@@ -106,10 +130,12 @@ GET /health
 ## Available Models
 
 ### Image Generation
+
 - **Nano Banana** - Fast generation (10 tokens/image)
 - **GPT** - High-quality images (10 tokens/image)
 
 ### Video Generation
+
 - **Runway Aleph** (19 tokens/sec) - 5-10 seconds, video-to-video
 - **Veo 3.1** (48 tokens/sec) - 8 seconds, high quality
 - **Veo 3.1 Flash** (21 tokens/sec) - 8 seconds, fast & economical

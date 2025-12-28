@@ -127,23 +127,34 @@ class SessionManager:
         files_key = self._get_files_key(conversation_uuid)
         self.redis_client.delete(files_key)
     
-    async def save_reference_images(self, conversation_uuid: str, images_b64: List[str]):
-        """Guarda imágenes de referencia (persisten en la sesión)."""
+    async def save_reference_files(self, conversation_uuid: str, files_data: List[Dict]):
+        """Guarda archivos de referencia como URLs (persisten en la sesión)."""
         refs_key = self._get_refs_key(conversation_uuid)
         self.redis_client.setex(
             refs_key,
             self.SESSION_TTL,
-            json.dumps(images_b64)
+            json.dumps(files_data)
         )
     
-    async def get_reference_images(self, conversation_uuid: str) -> List[str]:
-        """Obtiene imágenes de referencia de la sesión."""
+    async def get_reference_files(self, conversation_uuid: str) -> List[Dict]:
+        """Obtiene archivos de referencia de la sesión."""
         refs_key = self._get_refs_key(conversation_uuid)
         data = self.redis_client.get(refs_key)
         
         if data:
             return json.loads(data)
         return []
+    
+    # Mantener compatibilidad con métodos antiguos
+    async def save_reference_images(self, conversation_uuid: str, images_b64: List[str]):
+        """Legacy method - ahora guarda URLs."""
+        files_data = [{"url": img, "type": "image"} for img in images_b64]
+        await self.save_reference_files(conversation_uuid, files_data)
+    
+    async def get_reference_images(self, conversation_uuid: str) -> List[str]:
+        """Legacy method - retorna URLs."""
+        files = await self.get_reference_files(conversation_uuid)
+        return [f["url"] for f in files] if files else []
     
     async def delete_session(self, conversation_uuid: str):
         """Elimina una sesión completa."""

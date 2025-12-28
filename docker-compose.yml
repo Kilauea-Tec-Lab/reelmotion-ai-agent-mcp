@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 services:
   redis:
@@ -46,7 +46,11 @@ services:
     volumes:
       - ./temp_files:/app/temp_files
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS -X OPTIONS --connect-timeout 2 --max-time 5 http://nginx/api/chat > /dev/null"]
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS -X OPTIONS --connect-timeout 2 --max-time 5 http://nginx/api/chat > /dev/null",
+        ]
       interval: 30s
       timeout: 10s
       retries: 3
