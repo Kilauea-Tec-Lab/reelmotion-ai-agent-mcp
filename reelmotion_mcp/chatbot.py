@@ -39,6 +39,26 @@ class GeminiChatbot:
         - If user switches language, switch with them immediately
         - Keep technical terms and model names in their original form (e.g., "Nano Banana", "GPT")
         
+        PROJECT CREATION WORKFLOW (NEW):
+        If the user wants to create a "project" (a complete video production, story, or multiple assets), YOU MUST FOLLOW THIS STRICT PROCESS:
+        
+        1. PHASE 1: DISCOVERY
+           - Ask the user to describe the project concept/idea.
+           - Ask: "Do you have any reference images or videos?" (If provided, use them as context).
+           - Ask specific details: "How many characters?", "What is the setting (day/night)?", "What is the mood?".
+        
+        2. PHASE 2: PLANNING
+           - Based on the answers, present a detailed PLAN to the user.
+           - List the assets needed (e.g., "Scene 1: Image of hero", "Scene 2: Video of hero running").
+           - Ask for approval to proceed with the plan.
+        
+        3. PHASE 3: EXECUTION (CRITICAL)
+           - Once approved, start generating the assets ONE BY ONE.
+           - DO NOT try to generate everything at once.
+           - For each asset in the plan, YOU MUST USE THE EXISTING TOOLS ('generate_image', 'generate_video') EXACTLY AS DEFINED BELOW.
+           - You must still ask for Model, Cost, and Confirmation for EACH individual asset as per the tool rules.
+           - Example: "Okay, let's start with Scene 1. We need an image of the hero. Which model do you want to use: Nano Banana or GPT?"
+        
         CRITICAL RULES FOR 'generate_image' TOOL:
         1. The 'prompt' parameter MUST BE EXACTLY the LITERAL TEXT the user entered.
         2. FORBIDDEN to modify, improve, summarize, translate, or reinterpret the user's text for the prompt.
@@ -263,40 +283,56 @@ class GeminiChatbot:
             response = await self.chat_session.send_message_async(parts)
             
             # Handle function calls manually
-            while response.parts and response.parts[0].function_call:
-                fc = response.parts[0].function_call
-                func_name = fc.name
-                func_args = dict(fc.args)
-                
-                print(f"DEBUG: Handling function call: {func_name}")
-                
-                tool_result = "Error: Unknown function"
-                try:
-                    if func_name == "generate_image":
-                        tool_result = await generate_image(**func_args)
-                    elif func_name == "generate_video":
-                        tool_result = await generate_video(**func_args)
-                except Exception as e:
-                    tool_result = f"Error executing {func_name}: {str(e)}"
-                
-                # Send result back
-                response = await self.chat_session.send_message_async(
-                    genai.protos.Part(
-                        function_response=genai.protos.FunctionResponse(
-                            name=func_name,
-                            response={"result": tool_result}
+            try:
+                while response.parts and response.parts[0].function_call:
+                    fc = response.parts[0].function_call
+                    func_name = fc.name
+                    func_args = dict(fc.args)
+                    
+                    print(f"DEBUG: Handling function call: {func_name}")
+                    
+                    tool_result = "Error: Unknown function"
+                    try:
+                        if func_name == "generate_image":
+                            tool_result = await generate_image(**func_args)
+                        elif func_name == "generate_video":
+                            tool_result = await generate_video(**func_args)
+                    except Exception as e:
+                        tool_result = f"Error executing {func_name}: {str(e)}"
+                    
+                    # Send result back
+                    response = await self.chat_session.send_message_async(
+                        genai.protos.Part(
+                            function_response=genai.protos.FunctionResponse(
+                                name=func_name,
+                                response={"result": tool_result}
+                            )
                         )
                     )
-                )
+                
+                # Get text response safely
+                response_text = response.text
+
+            except ValueError as e:
+                # Handle Gemini safety or malformed content errors
+                error_str = str(e)
+                if "MALFORMED_FUNCTION_CALL" in error_str:
+                    print(f"WARNING: Gemini MALFORMED_FUNCTION_CALL: {error_str}")
+                    response_text = "Lo siento, ocurrió un error técnico al procesar la solicitud (Malformed Function Call). Por favor, intenta de nuevo o reformula tu petición."
+                elif "finish_reason" in error_str:
+                    print(f"WARNING: Gemini finish_reason error: {error_str}")
+                    response_text = f"Lo siento, no pude completar la respuesta. Razón: {error_str}"
+                else:
+                    raise e
             
             # Guardar respuesta del asistente en Redis
             await self.session_manager.add_message(
                 self.conversation_uuid,
                 "assistant",
-                response.text
+                response_text
             )
             
-            return response.text
+            return response_text
             
         except Exception as e:
             error_msg = f"Error communicating with Gemini: {str(e)}"
