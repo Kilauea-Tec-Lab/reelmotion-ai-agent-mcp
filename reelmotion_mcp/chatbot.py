@@ -294,10 +294,41 @@ class GeminiChatbot:
                     tool_result = "Error: Unknown function"
                     try:
                         if func_name == "generate_image":
+                            print(f"DEBUG [chatbot]: Calling generate_image...")
                             tool_result = await generate_image(**func_args)
+                            print(f"DEBUG [chatbot]: generate_image returned: {tool_result[:200] if tool_result else 'None'}...")
+                            
+                            # CRITICAL FIX: Extract URL and save to session immediately
+                            if tool_result and "http" in tool_result:
+                                import re
+                                urls = re.findall(r'https?://[^\s<>"]+|www\.[^\s<>"]+', tool_result)
+                                for url in urls:
+                                    url = url.rstrip('.,;)\'')
+                                    print(f"DEBUG [chatbot]: Auto-saving generated image URL: {url}")
+                                    await self.add_generated_file(url, "image")
+                                    
                         elif func_name == "generate_video":
+                            print(f"DEBUG [chatbot]: Calling generate_video...")
                             tool_result = await generate_video(**func_args)
+                            print(f"DEBUG [chatbot]: generate_video returned: {tool_result[:200] if tool_result else 'None'}...")
+                            
+                            # CRITICAL FIX: Extract URL and save to session immediately
+                            if tool_result and "http" in tool_result:
+                                import re
+                                urls = re.findall(r'https?://[^\s<>"]+|www\.[^\s<>"]+', tool_result)
+                                for url in urls:
+                                    url = url.rstrip('.,;)\'')
+                                    print(f"DEBUG [chatbot]: Auto-saving generated video URL: {url}")
+                                    await self.add_generated_file(url, "video")
+                                    
+                        else:
+                            print(f"ERROR [chatbot]: Unknown function: {func_name}")
+                            tool_result = f"Error: Unknown function '{func_name}'"
                     except Exception as e:
+                        print(f"ERROR [chatbot]: Exception executing {func_name}: {e}")
+                        import traceback
+                        print(f"Traceback: {traceback.format_exc()}")
+                        tool_result = f"Error executing {func_name}: {str(e)}"
                         tool_result = f"Error executing {func_name}: {str(e)}"
                     
                     # Send result back

@@ -228,24 +228,15 @@ def generate_video(
     return generate_video_impl(prompt, model, duration, aspect_ratio, reference_image, reference_video)
 
 @mcp.tool
-async def generate_video(prompt: str, duration: int = 5, fps: int = 24) -> str:
-    """
-    Generate a video based on a text prompt.
-    
-    Args:
-        prompt: The description of the video to generate.
-        duration: Duration of the video in seconds.
-        fps: Frames per second.
-    """
-    # Logic to call external video generation API would go here
-    return f"Video generated for prompt: '{prompt}' ({duration}s @ {fps}fps). URL: https://placeholder.com/video.mp4"
-
-@mcp.tool
 async def chat(message: str, context: str = "") -> str:
     """
     Process a chat message and return a response using Gemini AI.
-    This tool can be used to handle general conversation or query processing 
-    before deciding to generate media.
+    This tool should ONLY be used for general conversation, questions, or clarification.
+    
+    CRITICAL: 
+    - If the user asks to generate an IMAGE, use the 'generate_image' tool.
+    - If the user asks to generate a VIDEO, use the 'generate_video' tool.
+    DO NOT attempt to generate media or ASCII art within this chat response.
     
     Args:
         message: The user's message.
