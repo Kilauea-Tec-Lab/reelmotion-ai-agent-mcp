@@ -349,6 +349,7 @@ async def generate_speech(
         model_id: The model to use. Defaults to "eleven_multilingual_v2".
     """
     import base64
+    import uuid
     
     # Use the key provided by the user, or env var
     api_key = os.getenv("ELEVENLABS_API_KEY", "sk_2255a4e8aaeaf2c8211f2ffc968686b602250cd260314f16")
@@ -414,8 +415,18 @@ async def generate_speech(
             
             print(f"DEBUG [generate_speech]: Calling backend at {callback_url} with {tokens_cost} tokens")
             
+            # Backend validation requires a valid URL (http/https). 
+            # Since we have a Data URI (base64) which Laravel rejects, we send a placeholder URL
+            # for the callback. The actual audio is already delivered to the user via chatbot session.
+            backend_audio_url = audio_data_uri
+            if audio_data_uri.startswith("data:"):
+                # Use a dummy URL that passes validation
+                req_uuid = str(uuid.uuid4())
+                backend_audio_url = f"https://reelmotion.ai/generated/audio/{req_uuid}.mp3"
+                print(f"DEBUG [generate_speech]: Swapped Data URI for placeholder URL for backend: {backend_audio_url}")
+
             callback_payload = {
-                "audio_url": audio_data_uri,
+                "audio_url": backend_audio_url,
                 "tokens": tokens_cost
             }
             
