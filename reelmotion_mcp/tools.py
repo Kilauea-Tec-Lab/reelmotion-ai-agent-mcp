@@ -406,7 +406,7 @@ async def generate_speech(
                 backend_url = backend_url[:-1]
             
             # Construct endpoint URL
-            callback_url = f"{backend_url}/ai/mcp-voice-generation"
+            callback_url = f"{backend_url}/api/ai/mcp-voice-generation"
             
             # Calculate tokens: ~1 token per 10 characters, min 10
             calculated_tokens = len(text) // 10
