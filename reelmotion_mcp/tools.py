@@ -373,72 +373,74 @@ async def generate_speech(
     print(f"DEBUG: Generating speech for text: '{text[:50]}...' with voice {voice_id}")
     
     try:
+        # First: Generate speech with ElevenLabs
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(url, json=data, headers=headers)
             response.raise_for_status()
+            audio_content = response.content
             
-            # Convert binary audio to base64 Data URI
-            audio_base64 = base64.b64encode(response.content).decode('utf-8')
-            audio_data_uri = f"data:audio/mpeg;base64,{audio_base64}"
-            
-            # Save to chatbot session
-            from chatbot import get_chatbot
-            from request_context import get_conversation_uuid
-            
-            conversation_uuid = get_conversation_uuid() or "default"
-            chatbot = get_chatbot(conversation_uuid)
-            
-            print(f"DEBUG: Speech generated size: {len(response.content)} bytes")
-            await chatbot.add_generated_file(audio_data_uri, "audio")
-            
-            # --- BACKEND CALLBACK START ---
-            # Consume the backend endpoint to register tool usage and deduct tokens
-            backend_url = os.getenv("BACKEND_URL")
-            api_token = get_api_token() or os.getenv("API_TOKEN")
+        # Convert binary audio to base64 Data URI
+        audio_base64 = base64.b64encode(audio_content).decode('utf-8')
+        audio_data_uri = f"data:audio/mpeg;base64,{audio_base64}"
+        
+        # Save to chatbot session
+        from chatbot import get_chatbot
+        from request_context import get_conversation_uuid
+        
+        conversation_uuid = get_conversation_uuid() or "default"
+        chatbot = get_chatbot(conversation_uuid)
+        
+        print(f"DEBUG: Speech generated size: {len(audio_content)} bytes")
+        await chatbot.add_generated_file(audio_data_uri, "audio")
+        
+        # --- BACKEND CALLBACK START ---
+        # Consume the backend endpoint to register tool usage and deduct tokens
+        backend_url = os.getenv("BACKEND_URL")
+        api_token = get_api_token() or os.getenv("API_TOKEN")
 
-            if backend_url and api_token:
-                # Ensure backend_url doesn't end with slash if we append
-                if backend_url.endswith("/"):
-                    backend_url = backend_url[:-1]
-                
-                # Construct endpoint URL
-                # Assuming BACKEND_URL points to the base API (e.g. http://localhost:8000/api)
-                # The user specified 'ai/mcp-voice-generation'
-                callback_url = f"{backend_url}/ai/mcp-voice-generation"
-                
-                # Calculate tokens: Assuming ~1 token per 10 characters, min 10
-                # User Request: "el minimo de tokens es de 10"
-                calculated_tokens = len(text) // 10
-                tokens_cost = max(10, calculated_tokens)
-                
-                print(f"DEBUG: Registering voice generation at {callback_url} with cost {tokens_cost} tokens")
-                
-                callback_payload = {
-                    "audio_url": audio_data_uri,
-                    "tokens": tokens_cost
-                }
-                
-                callback_headers = {
-                    "Authorization": f"Bearer {api_token}",
-                    "Content-Type": "application/json",
-                    "Accept": "application/json"
-                }
+        print(f"DEBUG [generate_speech]: backend_url={backend_url}, api_token={'SET' if api_token else 'NOT SET'}")
 
+        if backend_url and api_token:
+            # Ensure backend_url doesn't end with slash if we append
+            if backend_url.endswith("/"):
+                backend_url = backend_url[:-1]
+            
+            # Construct endpoint URL
+            callback_url = f"{backend_url}/ai/mcp-voice-generation"
+            
+            # Calculate tokens: ~1 token per 10 characters, min 10
+            calculated_tokens = len(text) // 10
+            tokens_cost = max(10, calculated_tokens)
+            
+            print(f"DEBUG [generate_speech]: Calling backend at {callback_url} with {tokens_cost} tokens")
+            
+            callback_payload = {
+                "audio_url": audio_data_uri,
+                "tokens": tokens_cost
+            }
+            
+            callback_headers = {
+                "Authorization": f"Bearer {api_token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+            }
+
+            # Use a SEPARATE client for the backend callback
+            async with httpx.AsyncClient(timeout=30.0) as callback_client:
                 try:
-                    # Use a separate request to the backend
-                    callback_response = await client.post(callback_url, json=callback_payload, headers=callback_headers)
-                    # We log but do not fail the whole operation if usage tracking fails
+                    callback_response = await callback_client.post(callback_url, json=callback_payload, headers=callback_headers)
+                    print(f"DEBUG [generate_speech]: Backend response status: {callback_response.status_code}")
                     if callback_response.status_code >= 200 and callback_response.status_code < 300:
-                        print(f"DEBUG: Backend usage registration successful: {callback_response.status_code}")
+                        print(f"DEBUG [generate_speech]: Backend callback SUCCESS: {callback_response.text[:200]}")
                     else:
-                        print(f"WARNING: Backend usage registration failed: {callback_response.status_code} - {callback_response.text}")
+                        print(f"WARNING [generate_speech]: Backend callback FAILED: {callback_response.status_code} - {callback_response.text}")
                 except Exception as cb_exc:
-                    print(f"WARNING: Exception calling backend usage endpoint: {cb_exc}")
-            else:
-                 print("DEBUG: Skipping backend usage registration (missing BACKEND_URL or API_TOKEN)")
-            # --- BACKEND CALLBACK END ---
+                    print(f"ERROR [generate_speech]: Exception calling backend: {cb_exc}")
+        else:
+            print(f"WARNING [generate_speech]: Skipping backend callback - backend_url={backend_url}, api_token={'SET' if api_token else 'NOT SET'}")
+        # --- BACKEND CALLBACK END ---
 
-            return f"Audio generado exitosamente ({len(response.content)} bytes). Enlace generado automáticamente."
+        return f"Audio generado exitosamente ({len(audio_content)} bytes). Enlace generado automáticamente."
             
     except Exception as e:
         print(f"ERROR generating speech: {e}")
