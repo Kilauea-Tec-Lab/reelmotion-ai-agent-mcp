@@ -134,10 +134,13 @@ async def chat_endpoint(request: Request):
         session_manager = get_session_manager()
         await session_manager.clear_sent_files(conversation_uuid)
         
-        return JSONResponse({
+        final_response = {
             "response": response,
             "files": files
-        })
+        }
+        print(f"DEBUG [server.py]: Final response being sent: {final_response}")
+        
+        return JSONResponse(final_response)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
