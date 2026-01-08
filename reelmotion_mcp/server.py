@@ -14,7 +14,7 @@ from starlette.responses import JSONResponse
 
 from chatbot import get_chatbot
 from prompts import REELMOTION_SYSTEM_PROMPT
-from tools import generate_image as generate_image_impl, generate_video as generate_video_impl
+from tools import generate_image as generate_image_impl, generate_video as generate_video_impl, generate_speech as generate_speech_impl
 from request_context import set_api_token, set_conversation_uuid
 from session_manager import get_session_manager
 
@@ -226,6 +226,22 @@ def generate_video(
         reference_video: URL of reference video (only for runway-aleph)
     """
     return generate_video_impl(prompt, model, duration, aspect_ratio, reference_image, reference_video)
+
+@mcp.tool
+async def generate_speech(
+    text: str,
+    voice_id: str = "21m00Tcm4TlvDq8ikWAM",
+    model_id: str = "eleven_multilingual_v2"
+) -> str:
+    """
+    Generate speech/audio from text using the ElevenLabs API.
+    
+    Args:
+        text: The text content to convert to speech.
+        voice_id: The ID of the voice to use. Defaults to "Rachel" (21m00Tcm4TlvDq8ikWAM).
+        model_id: The model ID to use. Defaults to "eleven_multilingual_v2".
+    """
+    return await generate_speech_impl(text, voice_id, model_id)
 
 @mcp.tool
 async def chat(message: str, context: str = "") -> str:

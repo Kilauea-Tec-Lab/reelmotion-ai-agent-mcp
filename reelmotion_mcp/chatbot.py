@@ -6,8 +6,9 @@ import google.generativeai as genai
 from dotenv import load_dotenv
 
 from prompts import REELMOTION_SYSTEM_PROMPT
-from tools import generate_image, generate_video
+from tools import generate_image, generate_video, generate_speech
 from session_manager import get_session_manager
+from request_context import set_conversation_uuid
 
 # Load environment variables
 load_dotenv()
@@ -111,6 +112,13 @@ class GeminiChatbot:
              you MUST execute the tool again WITHOUT QUESTIONING, using the same parameters.
         9. Reference images are NOT lost after errors - they persist in the session.
         10. ALWAYS try when the user asks, even if there were previous errors.
+        
+        CRITICAL RULES FOR 'generate_speech' TOOL:
+        1. Use this tool when user asks to generate speech, audio, voiceover, or "say something".
+        2. 'voice_id' default is "Rachel" (21m00Tcm4TlvDq8ikWAM).
+        3. 'model_id' default is "eleven_multilingual_v2".
+        4. If user asks for a specific voice style (e.g., deep male, excited female), inform them that currently only "Rachel" is available unless they provide a specific Voice ID.
+        5. NEVER mention the output URL/Data URI in the conversation text. The audio player will appear automatically.
         """
         
         full_system_prompt = f"{REELMOTION_SYSTEM_PROMPT}\n\n{tool_instructions}"
@@ -118,7 +126,7 @@ class GeminiChatbot:
         self.model = genai.GenerativeModel(
             self.model_name, 
             system_instruction=full_system_prompt,
-            tools=[generate_image, generate_video]
+            tools=[generate_image, generate_video, generate_speech]
         )
         self.chat_session = None
         
@@ -212,6 +220,9 @@ class GeminiChatbot:
         Returns:
             The chatbot's response
         """
+        # Ensure the conversation context is set for tools
+        set_conversation_uuid(self.conversation_uuid)
+
         try:
             if not self.chat_session:
                 await self.start_chat()
@@ -320,6 +331,11 @@ class GeminiChatbot:
                                     url = url.rstrip('.,;)\'')
                                     print(f"DEBUG [chatbot]: Auto-saving generated video URL: {url}")
                                     await self.add_generated_file(url, "video")
+                        
+                        elif func_name == "generate_speech":
+                            print(f"DEBUG [chatbot]: Calling generate_speech...")
+                            tool_result = await generate_speech(**func_args)
+                            print(f"DEBUG [chatbot]: generate_speech returned: {tool_result[:200] if tool_result else 'None'}...")
                                     
                         else:
                             print(f"ERROR [chatbot]: Unknown function: {func_name}")
