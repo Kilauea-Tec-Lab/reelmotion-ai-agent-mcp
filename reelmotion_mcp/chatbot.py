@@ -117,7 +117,15 @@ class GeminiChatbot:
         1. Use this tool when user asks to generate speech, audio, voiceover, or "say something".
         2. 'voice_id' default is "Rachel" (21m00Tcm4TlvDq8ikWAM).
         3. 'model_id' default is "eleven_multilingual_v2".
-        4. If user asks for a specific voice style (e.g., deep male, excited female), inform them that currently only "Rachel" is available unless they provide a specific Voice ID.
+        4. AVAILABLE VOICES (If user asks for voices, list them by gender/style):
+           - MALE: 
+             Adam (Deep), Antoni (Balanced), Bill (Trustworthy), Brian (Deep), Callum (Hoarse), 
+             Charlie (Australian Casual), Chris (Casual), Daniel (British Authoritative), 
+             Eric (Deep), George (British Warm), Harry (Anxious), Josh (Deep), 
+             Liam (Young), River (Neutral), Roger (Laid-back), Will (Friendly).
+           - FEMALE: 
+             Alice (British News), Domi (Strong), Elli (Young), Jessica (Expressive), 
+             Laura (Upbeat), Lily (British Warm), Matilda (Warm), Rachel (Professional), Sarah (Soft).
         5. NEVER mention the output URL/Data URI in the conversation text. The audio player will appear automatically.
         """
         

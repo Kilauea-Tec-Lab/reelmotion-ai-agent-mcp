@@ -346,6 +346,32 @@ async def generate_speech(
     Args:
         text: The text to convert to speech.
         voice_id: The ID of the voice to use. Defaults to "Rachel" (21m00Tcm4TlvDq8ikWAM).
+                 Available voices:
+                 - Adam (Male, American, Deep): pNInz6obpgDQGcFmaJgB
+                 - Alice (Female, British, News): Xb7hH8MSUJpSbSDYk0k2
+                 - Antoni (Male, American, Balanced): ErXwobaYiN019PkySvjV
+                 - Bill (Male, American, Trustworthy): pqHfZKP75CvOlQylNhV4
+                 - Brian (Male, American, Deep): nPczCjzI2devNBz1zQrb
+                 - Callum (Male, American, Hoarse): N2lVS1w4EtoT3dr4eOWO
+                 - Charlie (Male, Australian, Casual): IKne3meq5aSn9XLyUdCD
+                 - Chris (Male, American, Casual): iP95p4xoKVk53GoZ742B
+                 - Daniel (Male, British, Authoritative): onwK4e9ZLuTAKqWW03F9
+                 - Domi (Female, American, Strong): AZnzlk1XvdvUeBnXmlld
+                 - Elli (Female, American, Young): MF3mGyEYCl7XYWbV9V6O
+                 - Eric (Male, American, Deep): cjVigY5qzO86Huf0OWal
+                 - George (Male, British, Warm): JBFqnCBsd6RMkjVDRZzb
+                 - Harry (Male, American, Anxious): SOYHLrjzK2X1ezoPC6cr
+                 - Jessica (Female, American, Expressive): cgSgspJ2msm6clMCkdW9
+                 - Josh (Male, American, Deep): TxGEqnHWrfWFTfGW9XjX
+                 - Laura (Female, American, Upbeat): FGY2WhTYpPnrIDTdsKH5
+                 - Liam (Male, American, Young): TX3LPaxmHKxFdv7VOQHJ
+                 - Lily (Female, British, Warm): pFZP5JQG7iQjIQuC4Bku
+                 - Matilda (Female, American, Warm): XrExE9yKIg1WjnnlVkGX
+                 - Rachel (Female, American, Calm): 21m00Tcm4TlvDq8ikWAM
+                 - River (Male, American, Neutral): SAz9YHcvj6GT2YYXdXww
+                 - Roger (Male, American, Casual): CwhRBWXzGAHq8TQ4Fs17
+                 - Sarah (Female, American, Soft): EXAVITQu4vr4xnSDxMaL
+                 - Will (Male, American, Friendly): bIHbv24MWmeRgasZH58o
         model_id: The model to use. Defaults to "eleven_multilingual_v2".
     """
     import base64
