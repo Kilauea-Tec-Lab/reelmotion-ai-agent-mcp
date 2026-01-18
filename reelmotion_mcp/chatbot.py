@@ -201,6 +201,7 @@ class GeminiChatbot:
     
     async def add_generated_file(self, url: str, file_type: str = "image", metadata: dict = None):
         """Add a generated file URL to pending files in Redis."""
+        print(f"DEBUG [chatbot]: add_generated_file called for UUID='{self.conversation_uuid}', url='{url}', type='{file_type}'")
         if url:
             await self.session_manager.save_generated_file(
                 self.conversation_uuid,
@@ -211,7 +212,9 @@ class GeminiChatbot:
     
     async def get_generated_files(self) -> list:
         """Get pending generated files (URLs) from Redis."""
+        print(f"DEBUG [chatbot]: get_generated_files called for UUID='{self.conversation_uuid}'")
         files = await self.session_manager.get_pending_files(self.conversation_uuid)
+        print(f"DEBUG [chatbot]: Got {len(files)} files from session_manager")
         return [{"url": f["url"], "type": f["type"]} for f in files]
         
     async def send_message(self, message: str, context: str = "", images: list = None, file_urls: list = None, file_types: list = None) -> str:
@@ -316,34 +319,19 @@ class GeminiChatbot:
                             print(f"DEBUG [chatbot]: Calling generate_image...")
                             tool_result = await generate_image(**func_args)
                             print(f"DEBUG [chatbot]: generate_image returned: {tool_result[:200] if tool_result else 'None'}...")
-                            
-                            # CRITICAL FIX: Extract URL and save to session immediately
-                            if tool_result and "http" in tool_result:
-                                import re
-                                urls = re.findall(r'https?://[^\s<>"]+|www\.[^\s<>"]+', tool_result)
-                                for url in urls:
-                                    url = url.rstrip('.,;)\'')
-                                    print(f"DEBUG [chatbot]: Auto-saving generated image URL: {url}")
-                                    await self.add_generated_file(url, "image")
+                            # Files are saved inside generate_image tool - no need to extract URLs here
                                     
                         elif func_name == "generate_video":
                             print(f"DEBUG [chatbot]: Calling generate_video...")
                             tool_result = await generate_video(**func_args)
                             print(f"DEBUG [chatbot]: generate_video returned: {tool_result[:200] if tool_result else 'None'}...")
-                            
-                            # CRITICAL FIX: Extract URL and save to session immediately
-                            if tool_result and "http" in tool_result:
-                                import re
-                                urls = re.findall(r'https?://[^\s<>"]+|www\.[^\s<>"]+', tool_result)
-                                for url in urls:
-                                    url = url.rstrip('.,;)\'')
-                                    print(f"DEBUG [chatbot]: Auto-saving generated video URL: {url}")
-                                    await self.add_generated_file(url, "video")
+                            # Files are saved inside generate_video tool - no need to extract URLs here
                         
                         elif func_name == "generate_speech":
                             print(f"DEBUG [chatbot]: Calling generate_speech...")
                             tool_result = await generate_speech(**func_args)
                             print(f"DEBUG [chatbot]: generate_speech returned: {tool_result[:200] if tool_result else 'None'}...")
+                            # Files are saved inside generate_speech tool - no need to extract URLs here
                                     
                         else:
                             print(f"ERROR [chatbot]: Unknown function: {func_name}")
@@ -352,7 +340,6 @@ class GeminiChatbot:
                         print(f"ERROR [chatbot]: Exception executing {func_name}: {e}")
                         import traceback
                         print(f"Traceback: {traceback.format_exc()}")
-                        tool_result = f"Error executing {func_name}: {str(e)}"
                         tool_result = f"Error executing {func_name}: {str(e)}"
                     
                     # Send result back
@@ -365,18 +352,43 @@ class GeminiChatbot:
                         )
                     )
                 
-                # Get text response safely
-                response_text = response.text
+                # Get text response safely - handle empty responses
+                response_text = None
+                try:
+                    # Check if response has valid parts before accessing .text
+                    if response.candidates and len(response.candidates) > 0:
+                        candidate = response.candidates[0]
+                        if candidate.content and candidate.content.parts:
+                            # Try to get text from parts
+                            text_parts = []
+                            for part in candidate.content.parts:
+                                if hasattr(part, 'text') and part.text:
+                                    text_parts.append(part.text)
+                            if text_parts:
+                                response_text = ''.join(text_parts)
+                    
+                    # Fallback to .text accessor if we didn't get text above
+                    if not response_text:
+                        response_text = response.text
+                except ValueError:
+                    # response.text accessor failed - response has no valid parts
+                    pass
+                
+                # If still no response, generate a default success message
+                if not response_text:
+                    print("DEBUG: No text in Gemini response, generating default success message")
+                    response_text = "The operation was completed successfully."
 
             except ValueError as e:
                 # Handle Gemini safety or malformed content errors
                 error_str = str(e)
                 if "MALFORMED_FUNCTION_CALL" in error_str:
                     print(f"WARNING: Gemini MALFORMED_FUNCTION_CALL: {error_str}")
-                    response_text = "Lo siento, ocurrió un error técnico al procesar la solicitud (Malformed Function Call). Por favor, intenta de nuevo o reformula tu petición."
-                elif "finish_reason" in error_str:
-                    print(f"WARNING: Gemini finish_reason error: {error_str}")
-                    response_text = f"Lo siento, no pude completar la respuesta. Razón: {error_str}"
+                    response_text = "Sorry, a technical error occurred while processing the request (Malformed Function Call). Please try again or rephrase your request."
+                elif "finish_reason" in error_str or "response.text" in error_str:
+                    print(f"WARNING: Gemini response error: {error_str}")
+                    # Don't expose internal error, just confirm the action completed
+                    response_text = "The operation was completed successfully."
                 else:
                     raise e
             

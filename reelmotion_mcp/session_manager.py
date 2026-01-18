@@ -110,15 +110,22 @@ class SessionManager:
         }
         
         files_key = self._get_files_key(conversation_uuid)
+        print(f"DEBUG [session_manager]: Saving file to Redis key='{files_key}', url='{file_url}', type='{file_type}'")
         self.redis_client.lpush(files_key, json.dumps(file_info))
         self.redis_client.expire(files_key, self.FILE_TTL)
+        
+        # Verify it was saved
+        count = self.redis_client.llen(files_key)
+        print(f"DEBUG [session_manager]: File saved. Total files in '{files_key}': {count}")
         
         return file_info
     
     async def get_pending_files(self, conversation_uuid: str) -> List[Dict]:
         """Obtiene archivos pendientes de enviar al usuario."""
         files_key = self._get_files_key(conversation_uuid)
+        print(f"DEBUG [session_manager]: Getting pending files from Redis key='{files_key}'")
         file_list = self.redis_client.lrange(files_key, 0, -1)
+        print(f"DEBUG [session_manager]: Found {len(file_list)} files in Redis")
         
         return [json.loads(f) for f in file_list]
     

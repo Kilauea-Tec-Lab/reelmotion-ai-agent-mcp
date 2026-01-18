@@ -2,8 +2,43 @@ import os
 import httpx
 import json
 import asyncio
+import re
 from typing import Optional
 from request_context import get_api_token, get_conversation_uuid
+
+
+def clean_prompt_from_model_mentions(prompt: str) -> str:
+    """
+    Remove model name mentions from the prompt before sending to backend.
+    Examples:
+        - "anima este video con sora 2" -> "anima este video"
+        - "genera una imagen con GPT" -> "genera una imagen"
+        - "create a video using runway aleph" -> "create a video"
+    """
+    if not prompt:
+        return prompt
+    
+    # Patterns to remove (model names with common prefixes)
+    # Match patterns like "with sora 2", "con nano banana", "using veo 3.1", etc.
+    patterns = [
+        # English patterns
+        r'\s+(?:with|using|via|through|by)\s+(?:sora[-\s]?2(?:\s+pro)?|runway(?:[-\s]?aleph)?|veo[-\s]?3\.?1(?:[-\s]?(?:flash|ultra))?|nano[-\s]?banana|gpt|luma[-\s]?labs?|seedance[-\s]?pro|kling[-\s]?v1)\s*$',
+        # Spanish patterns
+        r'\s+(?:con|usando|mediante|por)\s+(?:sora[-\s]?2(?:\s+pro)?|runway(?:[-\s]?aleph)?|veo[-\s]?3\.?1(?:[-\s]?(?:flash|ultra))?|nano[-\s]?banana|gpt|luma[-\s]?labs?|seedance[-\s]?pro|kling[-\s]?v1)\s*$',
+        # Just model names at the end (without preposition)
+        r'\s+(?:sora[-\s]?2(?:\s+pro)?|runway[-\s]?aleph|veo[-\s]?3\.?1[-\s]?(?:flash|ultra))\s*$',
+    ]
+    
+    cleaned = prompt
+    for pattern in patterns:
+        cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE)
+    
+    # Strip trailing whitespace and punctuation that might be left over
+    cleaned = cleaned.rstrip(' ,.;:')
+    
+    print(f"DEBUG: Cleaned prompt from '{prompt}' to '{cleaned}'")
+    return cleaned if cleaned else prompt  # Return original if cleaning emptied it
+
 
 async def generate_image(
     prompt: str, 
@@ -28,6 +63,9 @@ async def generate_image(
     print(f"DEBUG: MCP Tool 'generate_image' called with prompt='{prompt}', model='{model}'")
     print(f"DEBUG: Gemini passed reference_image='{reference_image}', reference_images='{reference_images}' (IGNORING THESE)")
     
+    # Clean prompt from model mentions before sending to backend
+    prompt = clean_prompt_from_model_mentions(prompt)
+    
     # Validate and normalize model
     allowed_models = ["Nano Banana", "GPT"]
     if model not in allowed_models:
@@ -49,7 +87,9 @@ async def generate_image(
     # Get reference files from chatbot session (URLs, not base64)
     from chatbot import get_chatbot
     conversation_uuid = get_conversation_uuid() or "default"
+    print(f"DEBUG [tools/generate_image]: Using conversation_uuid='{conversation_uuid}'")
     chatbot = get_chatbot(conversation_uuid)
+    print(f"DEBUG [tools/generate_image]: Chatbot instance uuid='{chatbot.conversation_uuid}'")
     
     # Get reference files (URLs) asynchronously
     context_files = await chatbot.get_reference_files()
@@ -198,6 +238,9 @@ async def generate_video(
     print(f"DEBUG: MCP Tool 'generate_video' called with prompt='{prompt}', model='{model}', duration={duration}")
     print(f"DEBUG: Gemini passed reference_image='{reference_image}', reference_video='{reference_video}' (IGNORING THESE)")
     
+    # Clean prompt from model mentions before sending to backend
+    prompt = clean_prompt_from_model_mentions(prompt)
+    
     # Convert duration to int if it's float
     duration = int(duration)
     print(f"DEBUG: Duration converted to int: {duration}")
@@ -253,7 +296,9 @@ async def generate_video(
     # Get reference files from chatbot session (URLs, not base64)
     from chatbot import get_chatbot
     conversation_uuid = get_conversation_uuid() or "default"
+    print(f"DEBUG [tools/generate_video]: Using conversation_uuid='{conversation_uuid}'")
     chatbot = get_chatbot(conversation_uuid)
+    print(f"DEBUG [tools/generate_video]: Chatbot instance uuid='{chatbot.conversation_uuid}'")
     context_files = await chatbot.get_reference_files()
     print(f"DEBUG: Retrieved {len(context_files) if context_files else 0} reference files from chatbot session")
     

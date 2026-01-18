@@ -117,7 +117,9 @@ async def chat_endpoint(request: Request):
              return JSONResponse({"error": "Message is required"}, status_code=400)
 
         # Crear chatbot con UUID de conversación
+        print(f"DEBUG [server.py]: Creating/getting chatbot for UUID='{conversation_uuid}'")
         chatbot = get_chatbot(conversation_uuid)
+        print(f"DEBUG [server.py]: Chatbot instance uuid='{chatbot.conversation_uuid}'")
         
         # Store reference file URLs in chatbot session (persists across messages)
         if file_urls:
