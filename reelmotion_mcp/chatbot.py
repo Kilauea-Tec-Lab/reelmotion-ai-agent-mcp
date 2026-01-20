@@ -404,7 +404,7 @@ Please generate a SHORT, friendly response to the user confirming the operation 
                             print(f"DEBUG: Failed to get followup response: {e}")
                             response_text = self._generate_contextual_success_message(last_tool_result)
                     else:
-                        response_text = "✅ Done!"
+                        response_text = "error|resonse_empty"
 
             except ValueError as e:
                 # Handle Gemini safety or malformed content errors
