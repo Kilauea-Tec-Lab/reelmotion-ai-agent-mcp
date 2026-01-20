@@ -26,6 +26,8 @@ EXPOSE 8080
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
+ENV PORT=8080
+ENV HOST=0.0.0.0
 
-# Use shell form to expand PORT env variable (defaults to 8080 for Cloud Run)
-CMD python reelmotion_mcp/server.py http --host 0.0.0.0 --port ${PORT:-8080}
+# Use exec form - PORT is read from env inside the script
+CMD ["python", "reelmotion_mcp/server.py", "http"]
