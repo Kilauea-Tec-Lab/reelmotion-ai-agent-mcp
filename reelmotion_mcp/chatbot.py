@@ -377,13 +377,34 @@ class GeminiChatbot:
                     # response.text accessor failed - response has no valid parts
                     pass
                 
-                # If still no response, generate a default success message
+                # If still no response, ask Gemini to generate a proper user-friendly message
                 if not response_text:
-                    print("DEBUG: No text in Gemini response, generating default success message")
+                    print("DEBUG: No text in Gemini response, asking Gemini to generate proper response")
                     if last_tool_result:
-                        response_text = str(last_tool_result)
+                        # Ask Gemini to generate a user-friendly response based on the tool result
+                        try:
+                            followup_prompt = f"""The tool was executed successfully. Here is the result:
+{last_tool_result}
+
+Please generate a SHORT, friendly response to the user confirming the operation was successful. 
+- If an image was generated, tell them their image is ready.
+- If a video was generated, tell them their video is ready.
+- If audio/speech was generated, tell them their audio is ready.
+- NEVER mention URLs or technical details.
+- Respond in the same language the user was using.
+- Keep it brief and friendly (1-2 sentences max)."""
+                            
+                            followup_response = await self.chat_session.send_message_async(followup_prompt)
+                            if followup_response.text:
+                                response_text = followup_response.text
+                            else:
+                                # Fallback to contextual message based on tool result
+                                response_text = self._generate_contextual_success_message(last_tool_result)
+                        except Exception as e:
+                            print(f"DEBUG: Failed to get followup response: {e}")
+                            response_text = self._generate_contextual_success_message(last_tool_result)
                     else:
-                        response_text = "The operation was completed successfully."
+                        response_text = "✅ Done!"
 
             except ValueError as e:
                 # Handle Gemini safety or malformed content errors
@@ -424,6 +445,19 @@ class GeminiChatbot:
         """Reset the chat session and clear Redis data."""
         self.chat_session = None
         await self.session_manager.delete_session(self.conversation_uuid)
+    
+    def _generate_contextual_success_message(self, tool_result: str) -> str:
+        """Generate a contextual success message based on tool result."""
+        tool_result_lower = tool_result.lower() if tool_result else ""
+        
+        if "image" in tool_result_lower or "imagen" in tool_result_lower:
+            return "🎨 ¡Tu imagen está lista! / Your image is ready!"
+        elif "video" in tool_result_lower or "vídeo" in tool_result_lower:
+            return "🎬 ¡Tu video está listo! / Your video is ready!"
+        elif "audio" in tool_result_lower or "speech" in tool_result_lower or "voz" in tool_result_lower:
+            return "🔊 ¡Tu audio está listo! / Your audio is ready!"
+        else:
+            return "✅ ¡Listo! / Done!"
 
 
 # Cache de chatbots por UUID con timestamp de último acceso

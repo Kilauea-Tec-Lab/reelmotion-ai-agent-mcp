@@ -45,3 +45,7 @@ fastmcp run server.py:mcp
 ## Integration with Laravel
 
 Laravel can interact with this MCP server by spawning it as a subprocess and communicating via Standard Input/Output (STDIO) using the JSON-RPC protocol defined by MCP.
+
+## Comando para produccion
+
+gcloud compute ssh reelmotion-vm --zone=us-central1-a --command="cd /home/Victor/reelmotion-ai-agent-mcp && ./deploy.sh"
