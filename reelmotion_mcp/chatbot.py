@@ -306,6 +306,7 @@ class GeminiChatbot:
             
             # Handle function calls manually
             try:
+                last_tool_result = None
                 while response.parts and response.parts[0].function_call:
                     fc = response.parts[0].function_call
                     func_name = fc.name
@@ -342,6 +343,8 @@ class GeminiChatbot:
                         print(f"Traceback: {traceback.format_exc()}")
                         tool_result = f"Error executing {func_name}: {str(e)}"
                     
+                    last_tool_result = tool_result
+                    
                     # Send result back
                     response = await self.chat_session.send_message_async(
                         genai.protos.Part(
@@ -377,7 +380,10 @@ class GeminiChatbot:
                 # If still no response, generate a default success message
                 if not response_text:
                     print("DEBUG: No text in Gemini response, generating default success message")
-                    response_text = "The operation was completed successfully."
+                    if last_tool_result:
+                        response_text = str(last_tool_result)
+                    else:
+                        response_text = "The operation was completed successfully."
 
             except ValueError as e:
                 # Handle Gemini safety or malformed content errors
@@ -388,7 +394,10 @@ class GeminiChatbot:
                 elif "finish_reason" in error_str or "response.text" in error_str:
                     print(f"WARNING: Gemini response error: {error_str}")
                     # Don't expose internal error, just confirm the action completed
-                    response_text = "The operation was completed successfully."
+                    if last_tool_result:
+                        response_text = str(last_tool_result)
+                    else:
+                        response_text = "The operation was completed successfully."
                 else:
                     raise e
             
