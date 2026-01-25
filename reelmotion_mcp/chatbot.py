@@ -419,14 +419,44 @@ Please generate a SHORT, friendly response to the user confirming the operation 
                             print(f"DEBUG: Failed to get followup response: {e}")
                             response_text = self._generate_contextual_success_message(last_tool_result)
                     else:
-                        response_text = "error|resonse_empty"
+                        # Last-resort recovery: ask Gemini to produce a user-facing reply (no tool calls)
+                        try:
+                            recovery_prompt = f"""No tool was executed and the response had no text.
+User message: {message}
+
+Please respond to the user directly, in the user's language. Do NOT call any tools.
+If the user requested an image or video, ask for the required model/cost/confirmation steps per the rules.
+Keep it brief and helpful."""
+                            recovery_response = await self.chat_session.send_message_async(recovery_prompt)
+                            if recovery_response.text:
+                                response_text = recovery_response.text
+                            else:
+                                response_text = "error|resonse_empty"
+                        except Exception as e:
+                            print(f"DEBUG: Failed to get recovery response: {e}")
+                            response_text = "error|resonse_empty"
 
             except ValueError as e:
                 # Handle Gemini safety or malformed content errors
                 error_str = str(e)
                 if "MALFORMED_FUNCTION_CALL" in error_str:
                     print(f"WARNING: Gemini MALFORMED_FUNCTION_CALL: {error_str}")
-                    response_text = "Sorry, a technical error occurred while processing the request (Malformed Function Call). Please try again or rephrase your request."
+                    # Attempt recovery by asking Gemini for a user-facing reply (no tool calls)
+                    try:
+                        recovery_prompt = f"""The response had a malformed function call.
+User message: {message}
+
+Please respond to the user directly, in the user's language. Do NOT call any tools.
+If the user requested an image or video, ask for the required model/cost/confirmation steps per the rules.
+Keep it brief and helpful."""
+                        recovery_response = await self.chat_session.send_message_async(recovery_prompt)
+                        if recovery_response.text:
+                            response_text = recovery_response.text
+                        else:
+                            response_text = "error|resonse_empty"
+                    except Exception as e:
+                        print(f"DEBUG: Failed to get recovery response after MALFORMED_FUNCTION_CALL: {e}")
+                        response_text = "error|resonse_empty"
                 elif "finish_reason" in error_str or "response.text" in error_str:
                     print(f"WARNING: Gemini response error: {error_str}")
                     # Don't expose internal error, just confirm the action completed
