@@ -307,8 +307,23 @@ class GeminiChatbot:
             # Handle function calls manually
             try:
                 last_tool_result = None
-                while response.parts and response.parts[0].function_call:
-                    fc = response.parts[0].function_call
+                while True:
+                    fc = None
+                    candidate_parts = None
+                    if response.candidates and len(response.candidates) > 0:
+                        candidate = response.candidates[0]
+                        if candidate.content and candidate.content.parts:
+                            candidate_parts = candidate.content.parts
+                    parts_to_check = candidate_parts if candidate_parts is not None else response.parts
+                    if parts_to_check:
+                        for part in parts_to_check:
+                            if hasattr(part, "function_call") and part.function_call:
+                                fc = part.function_call
+                                break
+
+                    if not fc:
+                        break
+
                     func_name = fc.name
                     func_args = dict(fc.args)
                     

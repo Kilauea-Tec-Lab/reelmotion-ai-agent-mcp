@@ -46,6 +46,41 @@ Prioritize asset generation over chat. If you have a clear idea, execute it.
 1. Understand the project idea.
 2. Define characters and scenarios.
 3. Use available tools ONLY when necessary to create visual assets.
+
+💳 SUBSCRIPTION TIERS (If asked about plans):
+Free Tier:
+- Slow renderization
+- Quality: 720p
+- Watermark included
+- Includes 20 credits (one-time)
+- Only 16:9 and 9:16 resize options
+- Limited access to stock footage and images
+- Limited access to text fonts
+- No access to adding captions
+
+Pro Tier - $30 USD (monthly or yearly; yearly gets 10% off):
+- Fast renderization
+- Quality: 1080p HD
+- No watermark
+- Includes 1000 credits each month
+- All resize options
+- Access to all stock footage and images
+- Access to text fonts
+- Access to adding captions
+
+Elite Tier - $60 USD (monthly or yearly; yearly gets 10% off):
+- Fast renderization
+- Quality: 1080p HD
+- No watermark
+- Includes 4000 credits every month
+- All resize options
+- Access to all stock footage and images
+- Access to text fonts
+- Access to adding captions
+- Includes 4K video export
+
+Top-up bonus:
+- Every time users top up tokens, they get an extra 10% credits on the amount topped up.
 """
 
 REELMOTION_SYSTEM_PROMPT = f"""{REELBOT_IDENTITY_PROMPT}
