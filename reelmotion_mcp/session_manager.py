@@ -39,6 +39,10 @@ class SessionManager:
         """Genera key para imágenes de referencia."""
         return f"refs:{conversation_uuid}"
     
+    def _get_pending_action_key(self, conversation_uuid: str) -> str:
+        """Genera key para acción pendiente de confirmación."""
+        return f"pending_action:{conversation_uuid}"
+    
     async def create_session(self, conversation_uuid: str) -> Dict:
         """Crea una nueva sesión."""
         session_key = self._get_session_key(conversation_uuid)
@@ -152,6 +156,38 @@ class SessionManager:
             return json.loads(data)
         return []
     
+    async def save_pending_action(self, conversation_uuid: str, action: Dict):
+        """
+        Guarda una acción pendiente de confirmación del usuario.
+        Se usa para ejecutar directamente cuando el usuario confirma.
+        
+        action = {
+            "function": "generate_video" | "generate_image" | "generate_speech",
+            "args": {...},
+            "cost_message": "...",  # El mensaje que se mostró al usuario
+            "timestamp": "..."
+        }
+        """
+        key = self._get_pending_action_key(conversation_uuid)
+        action["timestamp"] = datetime.now().isoformat()
+        # TTL corto: 5 minutos para confirmación
+        self.redis_client.setex(key, 300, json.dumps(action))
+        print(f"DEBUG [session_manager]: Saved pending action '{action.get('function')}' for UUID='{conversation_uuid}'")
+    
+    async def get_pending_action(self, conversation_uuid: str) -> Optional[Dict]:
+        """Obtiene la acción pendiente de confirmación."""
+        key = self._get_pending_action_key(conversation_uuid)
+        data = self.redis_client.get(key)
+        if data:
+            return json.loads(data)
+        return None
+    
+    async def clear_pending_action(self, conversation_uuid: str):
+        """Elimina la acción pendiente después de ejecutarla."""
+        key = self._get_pending_action_key(conversation_uuid)
+        self.redis_client.delete(key)
+        print(f"DEBUG [session_manager]: Cleared pending action for UUID='{conversation_uuid}'")
+    
     # Mantener compatibilidad con métodos antiguos
     async def save_reference_images(self, conversation_uuid: str, images_b64: List[str]):
         """Legacy method - ahora guarda URLs."""
@@ -168,8 +204,9 @@ class SessionManager:
         session_key = self._get_session_key(conversation_uuid)
         files_key = self._get_files_key(conversation_uuid)
         refs_key = self._get_refs_key(conversation_uuid)
+        pending_key = self._get_pending_action_key(conversation_uuid)
         
-        self.redis_client.delete(session_key, files_key, refs_key)
+        self.redis_client.delete(session_key, files_key, refs_key, pending_key)
 
 
 # Singleton

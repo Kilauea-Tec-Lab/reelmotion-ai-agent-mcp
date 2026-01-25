@@ -1,6 +1,8 @@
 import os
 import base64
 import time
+import re
+import asyncio
 from typing import Optional
 import google.generativeai as genai
 from dotenv import load_dotenv
@@ -12,6 +14,71 @@ from request_context import set_conversation_uuid
 
 # Load environment variables
 load_dotenv()
+
+# Pattern matching for confirmations
+CONFIRMATION_PATTERNS = re.compile(
+    r'^(?:ok|okey|okay|si|sí|yes|dale|confirmo|confirmar|procede|proceed|hazlo|do it|'
+    r'adelante|claro|sure|yep|yeah|afirmativo|correcto|eso|exacto|perfecto|listo|va|'
+    r'venga|vamos|go|go ahead|lets go|let\'s go|bueno|bien|hecho|agreed|confirm|acepto|'
+    r'accept|y|s|1|👍|✅|done|ready|ok dale|si dale|ya|anda|órale|sale)[\s.,!?]*$',
+    re.IGNORECASE
+)
+
+# Pattern to detect when Gemini is asking for confirmation (cost question)
+COST_CONFIRMATION_PATTERN = re.compile(
+    r'(?:costará|cost|costar[aá]n|tokens?|créditos?|credits?|¿confirmas?|confirm|proceder|proceed)',
+    re.IGNORECASE
+)
+
+# Patterns to detect video model in conversation
+VIDEO_MODEL_PATTERNS = {
+    'sora-2': re.compile(r'\b(?:sora[-\s]?2(?!\s*pro))\b', re.IGNORECASE),
+    'sora-2-pro': re.compile(r'\bsora[-\s]?2[-\s]?pro\b', re.IGNORECASE),
+    'veo-3.1': re.compile(r'\bveo[-\s]?3\.?1(?!\s*(?:flash|ultra))\b', re.IGNORECASE),
+    'veo-3.1-flash': re.compile(r'\bveo[-\s]?3\.?1[-\s]?flash\b', re.IGNORECASE),
+    'veo-3.1-ultra': re.compile(r'\bveo[-\s]?3\.?1[-\s]?ultra\b', re.IGNORECASE),
+    'runway-aleph': re.compile(r'\brunway[-\s]?aleph\b', re.IGNORECASE),
+}
+
+# Patterns to extract duration
+DURATION_PATTERN = re.compile(r'(\d+)\s*(?:segundos?|seconds?|sec|s\b)', re.IGNORECASE)
+
+def is_confirmation(message: str) -> bool:
+    """Check if the message is a simple confirmation."""
+    cleaned = message.strip().lower()
+    return bool(CONFIRMATION_PATTERNS.match(cleaned))
+
+def detect_video_params_from_history(history: list) -> dict:
+    """
+    Try to extract video generation parameters from conversation history.
+    Returns dict with 'model', 'duration', 'prompt' if found.
+    """
+    params = {}
+    
+    # Search recent messages (last 10) for model and duration
+    recent = history[-10:] if len(history) > 10 else history
+    full_text = ' '.join([msg.get('content', '') for msg in recent])
+    
+    # Detect model
+    for model_name, pattern in VIDEO_MODEL_PATTERNS.items():
+        if pattern.search(full_text):
+            params['model'] = model_name
+            break
+    
+    # Detect duration
+    duration_match = DURATION_PATTERN.search(full_text)
+    if duration_match:
+        params['duration'] = int(duration_match.group(1))
+    
+    # Get the original prompt (first user message that mentions animation/video)
+    for msg in recent:
+        if msg.get('role') == 'user':
+            content = msg.get('content', '').lower()
+            if any(word in content for word in ['anima', 'animate', 'video', 'genera video', 'generate video']):
+                params['prompt'] = msg.get('content', '')
+                break
+    
+    return params
 
 # Configure Gemini
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
@@ -216,6 +283,72 @@ class GeminiChatbot:
         files = await self.session_manager.get_pending_files(self.conversation_uuid)
         print(f"DEBUG [chatbot]: Got {len(files)} files from session_manager")
         return [{"url": f["url"], "type": f["type"]} for f in files]
+    
+    async def save_pending_action(self, function_name: str, args: dict, cost_message: str = ""):
+        """Save a pending action waiting for user confirmation."""
+        action = {
+            "function": function_name,
+            "args": args,
+            "cost_message": cost_message
+        }
+        await self.session_manager.save_pending_action(self.conversation_uuid, action)
+    
+    async def get_pending_action(self) -> dict:
+        """Get pending action waiting for confirmation."""
+        return await self.session_manager.get_pending_action(self.conversation_uuid)
+    
+    async def clear_pending_action(self):
+        """Clear the pending action after execution."""
+        await self.session_manager.clear_pending_action(self.conversation_uuid)
+    
+    async def execute_pending_action(self) -> tuple[str, str]:
+        """
+        Execute a pending action directly without going through Gemini.
+        Returns (tool_result, response_text).
+        """
+        action = await self.get_pending_action()
+        if not action:
+            return None, None
+        
+        function_name = action.get("function")
+        args = action.get("args", {})
+        
+        print(f"DEBUG [chatbot]: Executing pending action '{function_name}' directly with args: {args}")
+        
+        tool_result = None
+        try:
+            if function_name == "generate_image":
+                tool_result = await generate_image(**args)
+            elif function_name == "generate_video":
+                tool_result = await generate_video(**args)
+            elif function_name == "generate_speech":
+                tool_result = await generate_speech(**args)
+            else:
+                return None, f"Error: Unknown pending function '{function_name}'"
+            
+            # Clear the pending action after successful execution
+            await self.clear_pending_action()
+            
+            # Generate success message
+            response_text = self._generate_contextual_success_message(tool_result)
+            return tool_result, response_text
+            
+        except Exception as e:
+            print(f"ERROR [chatbot]: Failed to execute pending action: {e}")
+            import traceback
+            print(f"Traceback: {traceback.format_exc()}")
+            await self.clear_pending_action()
+            return None, f"Error executing {function_name}: {str(e)}"
+    
+    def _extract_function_from_history(self) -> tuple[str, dict]:
+        """
+        Try to extract function call info from recent chat history.
+        Used for MALFORMED_FUNCTION_CALL recovery.
+        Returns (function_name, args) or (None, None).
+        """
+        # This is a best-effort extraction based on conversation context
+        # Will be implemented to parse the chat session history
+        return None, None
         
     async def send_message(self, message: str, context: str = "", images: list = None, file_urls: list = None, file_types: list = None) -> str:
         """
@@ -237,6 +370,31 @@ class GeminiChatbot:
         try:
             if not self.chat_session:
                 await self.start_chat()
+            
+            # === FAST PATH: Check for confirmation with pending action ===
+            if is_confirmation(message):
+                pending_action = await self.get_pending_action()
+                if pending_action:
+                    print(f"DEBUG [chatbot]: User confirmed! Executing pending action directly.")
+                    # Save user message
+                    await self.session_manager.add_message(
+                        self.conversation_uuid,
+                        "user",
+                        message
+                    )
+                    
+                    # Execute directly without going through Gemini
+                    tool_result, response_text = await self.execute_pending_action()
+                    
+                    if response_text:
+                        # Save response
+                        await self.session_manager.add_message(
+                            self.conversation_uuid,
+                            "assistant",
+                            response_text
+                        )
+                        return response_text
+                    # If execution failed, fall through to normal Gemini flow
             
             # Guardar mensaje del usuario en Redis
             await self.session_manager.add_message(
@@ -301,8 +459,29 @@ class GeminiChatbot:
             # Add the user's message
             parts.append(message)
             
-            # Send to Gemini
-            response = await self.chat_session.send_message_async(parts)
+            # Send to Gemini with timeout (60 seconds max for initial response)
+            GEMINI_TIMEOUT = 60  # seconds
+            try:
+                response = await asyncio.wait_for(
+                    self.chat_session.send_message_async(parts),
+                    timeout=GEMINI_TIMEOUT
+                )
+            except asyncio.TimeoutError:
+                print(f"WARNING: Gemini response timed out after {GEMINI_TIMEOUT}s")
+                # Check if we have a pending action to execute directly
+                pending_action = await self.get_pending_action()
+                if pending_action:
+                    print(f"DEBUG: Timeout recovery - executing pending action: {pending_action.get('function')}")
+                    tool_result, response_text = await self.execute_pending_action()
+                    if response_text:
+                        await self.session_manager.add_message(
+                            self.conversation_uuid,
+                            "assistant",
+                            response_text
+                        )
+                        return response_text
+                # No pending action - return timeout error
+                return "Lo siento, la operación tardó demasiado. Por favor intenta de nuevo. / Sorry, the operation took too long. Please try again."
             
             # Handle function calls manually
             try:
@@ -360,15 +539,29 @@ class GeminiChatbot:
                     
                     last_tool_result = tool_result
                     
-                    # Send result back
-                    response = await self.chat_session.send_message_async(
-                        genai.protos.Part(
-                            function_response=genai.protos.FunctionResponse(
-                                name=func_name,
-                                response={"result": tool_result}
-                            )
+                    # Send result back with timeout
+                    try:
+                        response = await asyncio.wait_for(
+                            self.chat_session.send_message_async(
+                                genai.protos.Part(
+                                    function_response=genai.protos.FunctionResponse(
+                                        name=func_name,
+                                        response={"result": tool_result}
+                                    )
+                                )
+                            ),
+                            timeout=30  # 30s for function result response
                         )
-                    )
+                    except asyncio.TimeoutError:
+                        print(f"WARNING: Gemini timed out processing function result")
+                        # If we have a tool result, just return a success message
+                        response_text = self._generate_contextual_success_message(tool_result)
+                        await self.session_manager.add_message(
+                            self.conversation_uuid,
+                            "assistant",
+                            response_text
+                        )
+                        return response_text
                 
                 # Get text response safely - handle empty responses
                 response_text = None
@@ -441,7 +634,21 @@ Keep it brief and helpful."""
                 error_str = str(e)
                 if "MALFORMED_FUNCTION_CALL" in error_str:
                     print(f"WARNING: Gemini MALFORMED_FUNCTION_CALL: {error_str}")
-                    # Attempt recovery by asking Gemini for a user-facing reply (no tool calls)
+                    
+                    # Try to execute pending action if we have one (user already confirmed)
+                    pending_action = await self.get_pending_action()
+                    if pending_action:
+                        print(f"DEBUG: MALFORMED recovery - executing pending action: {pending_action.get('function')}")
+                        tool_result, response_text = await self.execute_pending_action()
+                        if response_text:
+                            await self.session_manager.add_message(
+                                self.conversation_uuid,
+                                "assistant",
+                                response_text
+                            )
+                            return response_text
+                    
+                    # No pending action - ask Gemini to retry without tool calls
                     try:
                         recovery_prompt = f"""The response had a malformed function call.
 User message: {message}
@@ -466,6 +673,33 @@ Keep it brief and helpful."""
                         response_text = "The operation was completed successfully."
                 else:
                     raise e
+            
+            # === Detect cost confirmation and save pending action ===
+            if response_text and COST_CONFIRMATION_PATTERN.search(response_text):
+                # Gemini is asking for confirmation - extract params and save pending action
+                session = await self.session_manager.get_session(self.conversation_uuid)
+                history = session.get("messages", []) if session else []
+                
+                # Detect if this is video or image
+                response_lower = response_text.lower()
+                if any(word in response_lower for word in ['video', 'vídeo', 'animar', 'animate', 'sora', 'veo', 'runway']):
+                    params = detect_video_params_from_history(history)
+                    if params.get('model') and params.get('duration'):
+                        print(f"DEBUG: Detected video confirmation - saving pending action: {params}")
+                        await self.save_pending_action(
+                            "generate_video",
+                            {
+                                "prompt": params.get('prompt', 'animate the image'),
+                                "model": params['model'],
+                                "duration": params['duration']
+                            },
+                            response_text
+                        )
+                elif any(word in response_lower for word in ['imagen', 'image', 'gpt', 'nano banana']):
+                    # Detect image generation
+                    print(f"DEBUG: Detected image confirmation - would save pending action")
+                    # For images, we'd need to extract prompt and model from history
+                    # TODO: Add image param detection
             
             # Guardar respuesta del asistente en Redis
             await self.session_manager.add_message(
