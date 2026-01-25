@@ -76,12 +76,22 @@ def detect_video_params_from_history(history: list) -> dict:
     if duration_match:
         params['duration'] = int(duration_match.group(1))
     
-    # Get the original prompt (first user message that mentions animation/video)
-    for msg in recent:
+    # Get the prompt (most recent user message that's not a confirmation or model/duration selection)
+    for msg in reversed(recent):
         if msg.get('role') == 'user':
-            content = msg.get('content', '').lower()
-            if any(word in content for word in ['anima', 'animate', 'video', 'genera video', 'generate video']):
-                params['prompt'] = msg.get('content', '')
+            content = msg.get('content', '')
+            # Skip confirmation messages
+            if is_confirmation(content):
+                continue
+            # Skip model selection
+            if re.match(r'^(sora[-\s]?2|veo[-\s]?3|kling|runway|haiper|minimax)[-\s.!?]*$', content, re.IGNORECASE):
+                continue
+            # Skip duration-only messages like "5 seconds"
+            if re.match(r'^\d+\s*(seg|sec|segundo|second)s?[\.!?]*$', content, re.IGNORECASE):
+                continue
+            # This is likely the actual prompt
+            if len(content) > 3:
+                params['prompt'] = content
                 break
     
     return params
@@ -103,19 +113,22 @@ def detect_image_params_from_history(history: list) -> dict:
             params['model'] = model_name
             break
     
-    # Get the original prompt (first user message that mentions image generation)
-    for msg in recent:
+    # Get the prompt (most recent user message that's not a confirmation or model selection)
+    for msg in reversed(recent):
         if msg.get('role') == 'user':
-            content = msg.get('content', '').lower()
+            content = msg.get('content', '')
             # Skip confirmation messages
-            if is_confirmation(msg.get('content', '')):
+            if is_confirmation(content):
                 continue
             # Skip model selection messages
             if re.match(r'^(gpt|nano[-\s]?banana)[\s.,!?]*$', content, re.IGNORECASE):
                 continue
-            # This might be the actual prompt
-            if len(content) > 5:  # Reasonable prompt length
-                params['prompt'] = msg.get('content', '')
+            # Skip generic "create image" type messages (too vague)
+            if re.match(r'^(i want to create|quiero crear|genera?r?)\s+(an?\s+)?image?s?[\s.,!?]*$', content, re.IGNORECASE):
+                continue
+            # This is likely the actual prompt (skip very short messages)
+            if len(content) > 3:
+                params['prompt'] = content
                 break
     
     return params
@@ -512,7 +525,7 @@ class GeminiChatbot:
             parts.append(message)
             
             # Send to Gemini with timeout (60 seconds max for initial response)
-            GEMINI_TIMEOUT = 60  # seconds
+            GEMINI_TIMEOUT = 480  # seconds
             try:
                 response = await asyncio.wait_for(
                     self.chat_session.send_message_async(parts),
@@ -533,7 +546,7 @@ class GeminiChatbot:
                         )
                         return response_text
                 # No pending action - return timeout error
-                return "Lo siento, la operación tardó demasiado. Por favor intenta de nuevo. / Sorry, the operation took too long. Please try again."
+                return "Sorry, the operation took too long. Please try again."
             
             # Handle function calls manually
             try:
