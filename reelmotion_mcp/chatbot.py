@@ -61,16 +61,44 @@ def needs_clarification(message: str, has_ref_files: bool) -> tuple[bool, str]:
     """
     msg_lower = message.lower().strip()
     
-    # Very short/generic messages
+    # === CLEAR INTENT: VIDEO MODEL MENTIONED ===
+    video_model_keywords = ['sora', 'veo', 'kling', 'runway', 'haiper', 'minimax', 'aleph']
+    if any(model in msg_lower for model in video_model_keywords):
+        return False, ""  # Clear: wants to generate VIDEO
+    
+    # === CLEAR INTENT: IMAGE MODEL MENTIONED ===
+    image_model_keywords = ['gpt', 'nano', 'banana']
+    if any(model in msg_lower for model in image_model_keywords):
+        return False, ""  # Clear: wants to generate IMAGE
+    
+    # === CLEAR INTENT: ACTION KEYWORDS ===
+    video_action_keywords = ['video', 'anima', 'animate', 'movimiento', 'movement', 'mover']
+    if any(keyword in msg_lower for keyword in video_action_keywords):
+        return False, ""  # Clear: wants video
+    
+    image_action_keywords = ['imagen', 'image', 'foto', 'photo', 'picture', 'draw']
+    if any(keyword in msg_lower for keyword in image_action_keywords):
+        return False, ""  # Clear: wants image
+    
+    # === CLEAR INTENT: NUMBERS (likely answering duration/settings) ===
+    if re.match(r'^\d+$', msg_lower):
+        return False, ""  # Answering a question about duration/settings
+    
+    # === CLEAR INTENT: CONFIRMATION ===
+    if is_confirmation(msg_lower):
+        return False, ""  # Confirming an action
+    
+    # === AMBIGUOUS: Very short/generic messages ===
     if len(msg_lower) < 10 and not has_ref_files:
         # Generic creation requests without context
         if any(word in msg_lower for word in ['crea', 'genera', 'haz', 'make', 'create', 'generate']):
             return True, "¿Qué quieres crear exactamente? ¿Una imagen o un video?"
     
-    # Has reference file but unclear what to do with it
-    if has_ref_files:
-        # User just uploaded a file without clear instruction
-        if len(msg_lower) < 15:
+    # === AMBIGUOUS: Has reference file but VERY unclear what to do ===
+    if has_ref_files and len(msg_lower) < 5:
+        # Only very vague single words without context
+        vague_words = ['eso', 'esto', 'that', 'this', 'aquí', 'here']
+        if msg_lower in vague_words:
             return True, "¿Qué quieres hacer con esta imagen? ¿Generar un video a partir de ella o crear una nueva imagen similar?"
     
     return False, ""
