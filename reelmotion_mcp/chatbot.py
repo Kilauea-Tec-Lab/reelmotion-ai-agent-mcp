@@ -54,6 +54,27 @@ def is_confirmation(message: str) -> bool:
     cleaned = message.strip().lower()
     return bool(CONFIRMATION_PATTERNS.match(cleaned))
 
+def needs_clarification(message: str, has_ref_files: bool) -> tuple[bool, str]:
+    """
+    Check if a message is ambiguous and needs clarification.
+    Returns (needs_clarification, suggested_question)
+    """
+    msg_lower = message.lower().strip()
+    
+    # Very short/generic messages
+    if len(msg_lower) < 10 and not has_ref_files:
+        # Generic creation requests without context
+        if any(word in msg_lower for word in ['crea', 'genera', 'haz', 'make', 'create', 'generate']):
+            return True, "¿Qué quieres crear exactamente? ¿Una imagen o un video?"
+    
+    # Has reference file but unclear what to do with it
+    if has_ref_files:
+        # User just uploaded a file without clear instruction
+        if len(msg_lower) < 15:
+            return True, "¿Qué quieres hacer con esta imagen? ¿Generar un video a partir de ella o crear una nueva imagen similar?"
+    
+    return False, ""
+
 def detect_video_params_from_history(history: list) -> dict:
     """
     Try to extract video generation parameters from conversation history.
@@ -468,6 +489,18 @@ class GeminiChatbot:
                 message
             )
             
+            # === CHECK FOR AMBIGUITY BEFORE PROCESSING ===
+            ref_files = await self.get_reference_files()
+            needs_clarif, question = needs_clarification(message, bool(ref_files))
+            if needs_clarif:
+                print(f"DEBUG [chatbot]: Ambiguous request detected, asking for clarification")
+                await self.session_manager.add_message(
+                    self.conversation_uuid,
+                    "assistant",
+                    question
+                )
+                return question
+            
             # Prepare message parts
             parts = []
             
@@ -524,15 +557,21 @@ class GeminiChatbot:
             # Add the user's message
             parts.append(message)
             
-            # Send to Gemini with timeout (60 seconds max for initial response)
-            GEMINI_TIMEOUT = 480  # seconds
+            # Send to Gemini with timeout (20 seconds max for initial response)
+            GEMINI_TIMEOUT = 20  # seconds - if it takes longer, something is wrong
             try:
+                print(f"DEBUG [chatbot]: Sending message to Gemini (timeout={GEMINI_TIMEOUT}s)...")
+                import time
+                start_time = time.time()
                 response = await asyncio.wait_for(
                     self.chat_session.send_message_async(parts),
                     timeout=GEMINI_TIMEOUT
                 )
+                elapsed = time.time() - start_time
+                print(f"DEBUG [chatbot]: Gemini responded in {elapsed:.1f}s")
             except asyncio.TimeoutError:
-                print(f"WARNING: Gemini response timed out after {GEMINI_TIMEOUT}s")
+                elapsed = time.time() - start_time
+                print(f"WARNING: Gemini timed out after {elapsed:.1f}s without calling any tools")
                 # Check if we have a pending action to execute directly
                 pending_action = await self.get_pending_action()
                 if pending_action:
@@ -545,8 +584,16 @@ class GeminiChatbot:
                             response_text
                         )
                         return response_text
-                # No pending action - return timeout error
-                return "Sorry, the operation took too long. Please try again."
+                # No pending action - ask user to clarify
+                clarification = "Lo siento, no entendí bien qué quieres hacer. ¿Podrías ser más específico? Por ejemplo:\n" \
+                               "- '¿Quieres crear un **video** o una **imagen**?'\n" \
+                               "- Si tienes una imagen de referencia: '¿Quieres **animarla** o **generar una imagen similar**?'"
+                await self.session_manager.add_message(
+                    self.conversation_uuid,
+                    "assistant",
+                    clarification
+                )
+                return clarification
             
             # Handle function calls manually
             try:
@@ -819,7 +866,7 @@ Keep it brief and helpful."""
         elif "audio" in tool_result_lower or "speech" in tool_result_lower or "voz" in tool_result_lower:
             return "🔊 ¡Tu audio está listo! / Your audio is ready!"
         else:
-            return "✅ ¡Listo! / Done!"
+            return "Done!"
 
 
 # Cache de chatbots por UUID con timestamp de último acceso
