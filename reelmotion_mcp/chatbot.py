@@ -43,6 +43,12 @@ VIDEO_MODEL_PATTERNS = {
 # Patterns to extract duration
 DURATION_PATTERN = re.compile(r'(\d+)\s*(?:segundos?|seconds?|sec|s\b)', re.IGNORECASE)
 
+# Patterns to detect image model in conversation
+IMAGE_MODEL_PATTERNS = {
+    'GPT': re.compile(r'\bgpt\b', re.IGNORECASE),
+    'Nano Banana': re.compile(r'\bnano[-\s]?banana\b', re.IGNORECASE),
+}
+
 def is_confirmation(message: str) -> bool:
     """Check if the message is a simple confirmation."""
     cleaned = message.strip().lower()
@@ -75,6 +81,40 @@ def detect_video_params_from_history(history: list) -> dict:
         if msg.get('role') == 'user':
             content = msg.get('content', '').lower()
             if any(word in content for word in ['anima', 'animate', 'video', 'genera video', 'generate video']):
+                params['prompt'] = msg.get('content', '')
+                break
+    
+    return params
+
+def detect_image_params_from_history(history: list) -> dict:
+    """
+    Try to extract image generation parameters from conversation history.
+    Returns dict with 'model', 'prompt' if found.
+    """
+    params = {}
+    
+    # Search recent messages for model
+    recent = history[-10:] if len(history) > 10 else history
+    full_text = ' '.join([msg.get('content', '') for msg in recent])
+    
+    # Detect model
+    for model_name, pattern in IMAGE_MODEL_PATTERNS.items():
+        if pattern.search(full_text):
+            params['model'] = model_name
+            break
+    
+    # Get the original prompt (first user message that mentions image generation)
+    for msg in recent:
+        if msg.get('role') == 'user':
+            content = msg.get('content', '').lower()
+            # Skip confirmation messages
+            if is_confirmation(msg.get('content', '')):
+                continue
+            # Skip model selection messages
+            if re.match(r'^(gpt|nano[-\s]?banana)[\s.,!?]*$', content, re.IGNORECASE):
+                continue
+            # This might be the actual prompt
+            if len(content) > 5:  # Reasonable prompt length
                 params['prompt'] = msg.get('content', '')
                 break
     
@@ -311,9 +351,21 @@ class GeminiChatbot:
             return None, None
         
         function_name = action.get("function")
-        args = action.get("args", {})
+        args = action.get("args", {}).copy()  # Copy to avoid modifying original
         
         print(f"DEBUG [chatbot]: Executing pending action '{function_name}' directly with args: {args}")
+        
+        # Get reference images if needed and not already in args
+        ref_files = await self.get_reference_files()
+        if ref_files and function_name in ["generate_image", "generate_video"]:
+            ref_urls = [f["url"] for f in ref_files if f.get("type") == "image"]
+            if ref_urls:
+                if function_name == "generate_image" and "reference_images" not in args:
+                    args["reference_images"] = ref_urls
+                    print(f"DEBUG [chatbot]: Added {len(ref_urls)} reference images to pending action")
+                elif function_name == "generate_video" and "reference_image" not in args:
+                    args["reference_image"] = ref_urls[0]
+                    print(f"DEBUG [chatbot]: Added reference image to pending video action")
         
         tool_result = None
         try:
@@ -680,26 +732,44 @@ Keep it brief and helpful."""
                 session = await self.session_manager.get_session(self.conversation_uuid)
                 history = session.get("messages", []) if session else []
                 
+                # Get reference images for the action
+                ref_files = await self.get_reference_files()
+                ref_urls = [f["url"] for f in ref_files if f.get("type") == "image"] if ref_files else []
+                
                 # Detect if this is video or image
                 response_lower = response_text.lower()
                 if any(word in response_lower for word in ['video', 'vídeo', 'animar', 'animate', 'sora', 'veo', 'runway']):
                     params = detect_video_params_from_history(history)
                     if params.get('model') and params.get('duration'):
-                        print(f"DEBUG: Detected video confirmation - saving pending action: {params}")
+                        action_args = {
+                            "prompt": params.get('prompt', 'animate the image'),
+                            "model": params['model'],
+                            "duration": params['duration']
+                        }
+                        if ref_urls:
+                            action_args["reference_image"] = ref_urls[0]
+                        print(f"DEBUG: Saving pending VIDEO action: {action_args}")
                         await self.save_pending_action(
                             "generate_video",
-                            {
-                                "prompt": params.get('prompt', 'animate the image'),
-                                "model": params['model'],
-                                "duration": params['duration']
-                            },
+                            action_args,
                             response_text
                         )
                 elif any(word in response_lower for word in ['imagen', 'image', 'gpt', 'nano banana']):
                     # Detect image generation
-                    print(f"DEBUG: Detected image confirmation - would save pending action")
-                    # For images, we'd need to extract prompt and model from history
-                    # TODO: Add image param detection
+                    params = detect_image_params_from_history(history)
+                    if params.get('model'):
+                        action_args = {
+                            "prompt": params.get('prompt', 'generate image'),
+                            "model": params['model']
+                        }
+                        if ref_urls:
+                            action_args["reference_images"] = ref_urls
+                        print(f"DEBUG: Saving pending IMAGE action: {action_args}")
+                        await self.save_pending_action(
+                            "generate_image",
+                            action_args,
+                            response_text
+                        )
             
             # Guardar respuesta del asistente en Redis
             await self.session_manager.add_message(
