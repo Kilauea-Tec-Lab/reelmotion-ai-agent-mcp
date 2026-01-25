@@ -132,7 +132,8 @@ async def generate_image(
             payload["reference_images"] = [f["url"] for f in image_files]
 
         try:
-            with httpx.Client(timeout=60.0) as client:
+            timeout = httpx.Timeout(180.0, connect=10.0)
+            with httpx.Client(timeout=timeout) as client:
                 response = client.post(url, json=payload, headers=headers)
                 response.raise_for_status()
                 result = response.json()
@@ -175,7 +176,8 @@ async def generate_image(
         }
 
         try:
-            with httpx.Client(timeout=60.0) as client:
+            timeout = httpx.Timeout(180.0, connect=10.0)
+            with httpx.Client(timeout=timeout) as client:
                 response = client.post(url, json=payload, headers=headers)
                 response.raise_for_status()
                 result = response.json()
