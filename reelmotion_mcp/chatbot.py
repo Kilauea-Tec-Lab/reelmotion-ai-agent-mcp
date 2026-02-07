@@ -38,6 +38,7 @@ VIDEO_MODEL_PATTERNS = {
     'veo-3.1-flash': re.compile(r'\bveo[-\s]?3\.?1[-\s]?flash\b', re.IGNORECASE),
     'veo-3.1-ultra': re.compile(r'\bveo[-\s]?3\.?1[-\s]?ultra\b', re.IGNORECASE),
     'runway-aleph': re.compile(r'\brunway[-\s]?aleph\b', re.IGNORECASE),
+    'runway-4.5': re.compile(r'\brunway[-\s]?4\.?5\b', re.IGNORECASE),
 }
 
 # Patterns to extract duration
@@ -235,7 +236,7 @@ class GeminiChatbot:
         1. VIDEO GENERATION INTENT:
            - "Anima/Animate" + reference to image/video = generate_video tool
            - "Crea/Create video" = generate_video tool
-           - Mentions video models: Sora 2, Sora 2 Pro, Veo 3.1, Runway Aleph, etc.
+           - Mentions video models: Sora 2, Sora 2 Pro, Veo 3.1, Runway Aleph, Runway 4.5, etc.
            - Example: "Anima esta imagen con sora 2" = EXECUTE generate_video with model sora-2
            - Example: "Animate this with runway" = EXECUTE generate_video with model runway-aleph
         
@@ -293,6 +294,7 @@ class GeminiChatbot:
         3. BEFORE calling generate_video, you MUST ALWAYS:
            a) Ask: "Which video model do you want to use?" (in user's language) and list options with costs AND DURATIONS:
               - Runway Aleph (19 tokens/sec) - 5 or 10 seconds - video-to-video (editing)
+              - Runway 4.5 (25 tokens/sec) - 5, 8 or 10 seconds - high quality
               - Veo 3.1 (48 tokens/sec) - 8 seconds - high quality
               - Veo 3.1 Flash (21 tokens/sec) - 8 seconds - fast and economical
               - Veo 3.1 Ultra (60 tokens/sec) - 8 seconds - maximum Veo quality
@@ -305,6 +307,7 @@ class GeminiChatbot:
               - Sora 2 / Sora 2 Pro: ONLY 4, 8 or 12 seconds
               - Veo 3.1 / Veo 3.1 Flash / Veo 3.1 Ultra: ONLY 8 seconds
               - Runway Aleph: 5 or 10 seconds
+              - Runway 4.5: 5, 8 or 10 seconds
            f) If duration is NOT valid, inform user of correct options and ask to choose a valid one
            g) Calculate and show: "This will cost X tokens (Y tokens/sec × Z seconds). Confirm?" (in user's language)
            h) Wait for explicit confirmation before proceeding
@@ -312,7 +315,7 @@ class GeminiChatbot:
            - 'veo-3.1' (NOT 'veo 3.1' or 'Veo 3.1')
            - 'veo-3.1-flash' (NOT 'veo 3.1 flash')
            - 'veo-3.1-ultra' (NOT 'veo 3.1 ultra')
-           - 'runway-aleph', 'sora-2', 'sora-2-pro'
+           - 'runway-aleph', 'runway-4.5', 'sora-2', 'sora-2-pro'
         5. If there are attached images, use them as reference automatically.
         6. For Runway Aleph, if there's an attached VIDEO, use it as reference (video-to-video).
         7. NEVER mention video URLs in your responses - they are sent automatically.

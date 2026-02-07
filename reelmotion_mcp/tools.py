@@ -228,10 +228,11 @@ async def generate_video(
     - Kling V1: 35 tokens/sec (5-10s)
     - Sora 2: 15 tokens/sec (4, 8, or 12s only)
     - Sora 2 Pro: 30 tokens/sec (4, 8, or 12s only)
+    - Runway 4.5: 25 tokens/sec (5, 8, or 10s only)
     
     Args:
         prompt: Description of the video to generate (exact user text, NO modifications)
-        model: AI model to use. Options: 'runway', 'runway-aleph', 'veo-3.1', 
+        model: AI model to use. Options: 'runway', 'runway-aleph', 'runway-4.5', 'veo-3.1', 
                'veo-3.1-flash', 'veo-3.1-ultra', 'luma-labs', 'seedance-pro', 'kling-v1', 
                'sora-2', 'sora-2-pro'
         duration: Video duration in seconds. Valid durations depend on model (see above)
@@ -251,7 +252,7 @@ async def generate_video(
     
     # Validate model
     allowed_models = [
-        "runway", "runway-aleph", "veo-3.1", "veo-3.1-flash", "veo-3.1-ultra",
+        "runway", "runway-aleph", "runway-4.5", "veo-3.1", "veo-3.1-flash", "veo-3.1-ultra",
         "luma-labs", "seedance-pro", "kling-v1", "sora-2", "sora-2-pro"
     ]
     
@@ -269,6 +270,7 @@ async def generate_video(
         "seedance-pro": [5],
         "runway": [5, 10],
         "runway-aleph": [5, 10],
+        "runway-4.5": [5, 8, 10],
         "kling-v1": [5, 10]
     }
     
