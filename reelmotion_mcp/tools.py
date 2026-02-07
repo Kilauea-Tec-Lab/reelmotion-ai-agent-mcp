@@ -54,7 +54,7 @@ async def generate_image(
     
     Args:
         prompt: The description of the image to generate.
-        model: The model to use. MUST be one of: 'Nano Banana', 'GPT'. Defaults to 'GPT'.
+        model: The model to use. MUST be one of: 'Nano Banana', 'GPT', 'Freepik'. Defaults to 'GPT'.
         image_type: 1 (text only), 2 (text + image), 3 (text + multiple images). Defaults to 1.
         quantity: Number of images to generate. Defaults to 1.
         reference_image: URL or base64 of reference image (for type 2).
@@ -67,13 +67,15 @@ async def generate_image(
     prompt = clean_prompt_from_model_mentions(prompt)
     
     # Validate and normalize model
-    allowed_models = ["Nano Banana", "GPT"]
+    allowed_models = ["Nano Banana", "GPT", "Freepik"]
     if model not in allowed_models:
         # Attempt normalization for common variations (e.g. "Nano Banana 2" -> "Nano Banana")
         if "nano" in model.lower():
             model = "Nano Banana"
         elif "gpt" in model.lower():
             model = "GPT"
+        elif "freepik" in model.lower():
+            model = "Freepik"
         else:
             return f"Error: Invalid model '{model}'. Allowed models are: {', '.join(allowed_models)}"
             

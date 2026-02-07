@@ -47,6 +47,7 @@ DURATION_PATTERN = re.compile(r'(\d+)\s*(?:segundos?|seconds?|sec|s\b)', re.IGNO
 IMAGE_MODEL_PATTERNS = {
     'GPT': re.compile(r'\bgpt\b', re.IGNORECASE),
     'Nano Banana': re.compile(r'\bnano[-\s]?banana\b', re.IGNORECASE),
+    'Freepik': re.compile(r'\bfreepik\b', re.IGNORECASE),
 }
 
 def is_confirmation(message: str) -> bool:
@@ -67,7 +68,7 @@ def needs_clarification(message: str, has_ref_files: bool) -> tuple[bool, str]:
         return False, ""  # Clear: wants to generate VIDEO
     
     # === CLEAR INTENT: IMAGE MODEL MENTIONED ===
-    image_model_keywords = ['gpt', 'nano', 'banana']
+    image_model_keywords = ['gpt', 'nano', 'banana', 'freepik']
     if any(model in msg_lower for model in image_model_keywords):
         return False, ""  # Clear: wants to generate IMAGE
     
@@ -225,7 +226,30 @@ class GeminiChatbot:
         - If user writes in Spanish, respond in Spanish
         - If user writes in English, respond in English
         - If user switches language, switch with them immediately
-        - Keep technical terms and model names in their original form (e.g., "Nano Banana", "GPT")
+        - Keep technical terms and model names in their original form (e.g., "Nano Banana", "GPT", "Freepik")
+        
+        MCP ACTION DETECTION (CRITICAL - APPLY FIRST):
+        Before responding, ALWAYS analyze if the user wants to execute an MCP tool action.
+        Look for these patterns:
+        
+        1. VIDEO GENERATION INTENT:
+           - "Anima/Animate" + reference to image/video = generate_video tool
+           - "Crea/Create video" = generate_video tool
+           - Mentions video models: Sora 2, Sora 2 Pro, Veo 3.1, Runway Aleph, etc.
+           - Example: "Anima esta imagen con sora 2" = EXECUTE generate_video with model sora-2
+           - Example: "Animate this with runway" = EXECUTE generate_video with model runway-aleph
+        
+        2. IMAGE GENERATION INTENT:
+           - "Genera/Generate imagen/image" = generate_image tool
+           - "Crea/Create una imagen" = generate_image tool
+           - Mentions image models: GPT, Nano Banana, Freepik
+           - Example: "Genera una imagen con Freepik" = EXECUTE generate_image with model Freepik
+        
+        3. SPEECH/AUDIO INTENT:
+           - "Di/Say", "Voz/Voice", "Audio", "Narración/Narration" = generate_speech tool
+        
+        IMPORTANT: When you detect an MCP action, DO NOT just describe what you could do.
+        Instead, START the workflow for that tool (ask for missing parameters, confirm cost, etc.)
         
         PROJECT CREATION WORKFLOW (NEW):
         If the user wants to create a "project" (a complete video production, story, or multiple assets), YOU MUST FOLLOW THIS STRICT PROCESS:
@@ -253,11 +277,11 @@ class GeminiChatbot:
         3. If user writes "Change the suit", the prompt sent to the tool must be "Change the suit".
         4. If there are attached images, always pass them in 'reference_images'.
         5. BEFORE calling generate_image, you MUST ALWAYS:
-           a) Ask: "Which model do you want to use: Nano Banana or GPT?" (in user's language)
+           a) Ask: "Which model do you want to use: Nano Banana, GPT, or Freepik?" (in user's language)
            b) Wait for user's response with chosen model
            c) Inform the cost: "This will cost X tokens (10 tokens per image × quantity)" (in user's language)
            d) Wait for explicit confirmation before proceeding
-        6. Available models are ONLY: 'Nano Banana' and 'GPT'. Freepik is NO longer available.
+        6. Available models are: 'Nano Banana', 'GPT', and 'Freepik' (all cost 10 tokens per image).
         7. DO NOT assume the model - ALWAYS ask the user which one to use.
         8. NEVER mention URLs in your responses - images/videos are sent automatically to the user.
         9. IF THERE'S AN ERROR: Inform the user of the error, but if user says "try again" or "retry" (or "intentar de nuevo", "reintentar"),
