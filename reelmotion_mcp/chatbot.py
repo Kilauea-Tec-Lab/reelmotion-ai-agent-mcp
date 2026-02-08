@@ -272,6 +272,16 @@ class GeminiChatbot:
            - You must still ask for Model, Cost, and Confirmation for EACH individual asset as per the tool rules.
            - Example: "Okay, let's start with Scene 1. We need an image of the hero. Which model do you want to use: Nano Banana or GPT?"
         
+        ⛔ ABSOLUTE PROHIBITION - FALSE COMPLETION MESSAGES:
+        - NEVER say "Done!", "Ready!", "Your video is ready", "Tu video está listo", "Your image is ready", 
+          "Tu imagen está lista", "generado exitosamente", or ANY completion/success message UNLESS
+          you have ACTUALLY called a tool (generate_image, generate_video, generate_speech) in THIS 
+          SPECIFIC interaction AND the tool returned a success result.
+        - If a tool was NOT called in the current interaction, you MUST NOT claim something was generated.
+        - If a tool returned an error, you MUST inform the user about the error, not claim success.
+        - If you are unsure whether a tool succeeded, say so honestly.
+        - When in doubt, ASK the user what they need rather than claiming something is done.
+        
         CRITICAL RULES FOR 'generate_image' TOOL:
         1. The 'prompt' parameter MUST BE EXACTLY the LITERAL TEXT the user entered.
         2. FORBIDDEN to modify, improve, summarize, translate, or reinterpret the user's text for the prompt.
@@ -289,6 +299,7 @@ class GeminiChatbot:
            you MUST execute the tool again without hesitation.
         
         CRITICAL RULES FOR 'generate_video' TOOL:
+        ⛔ REMINDER: NEVER say "video ready/listo" unless generate_video was ACTUALLY called AND returned success.
         1. The 'prompt' parameter MUST BE EXACTLY the LITERAL TEXT the user entered.
         2. FORBIDDEN to modify, improve, summarize, translate, or reinterpret the user's text.
         3. BEFORE calling generate_video, you MUST ALWAYS:
@@ -488,8 +499,11 @@ class GeminiChatbot:
             # Clear the pending action after successful execution
             await self.clear_pending_action()
             
-            # Generate success message
-            response_text = self._generate_contextual_success_message(tool_result)
+            # Generate success message - tool WAS actually called here
+            response_text = self._generate_contextual_success_message(tool_result, tool_was_called=True)
+            if not response_text:
+                # Fallback if message generation returns None (shouldn't happen for pending actions)
+                response_text = tool_result if tool_result else "⚠️ No se pudo determinar el resultado de la operación."
             return tool_result, response_text
             
         except Exception as e:
@@ -671,6 +685,7 @@ class GeminiChatbot:
             # Handle function calls manually
             try:
                 last_tool_result = None
+                tool_was_actually_called = False  # Track if ANY tool was actually executed
                 while True:
                     fc = None
                     candidate_parts = None
@@ -723,6 +738,7 @@ class GeminiChatbot:
                         tool_result = f"Error executing {func_name}: {str(e)}"
                     
                     last_tool_result = tool_result
+                    tool_was_actually_called = True
                     
                     # Send result back with timeout
                     try:
@@ -739,14 +755,24 @@ class GeminiChatbot:
                         )
                     except asyncio.TimeoutError:
                         print(f"WARNING: Gemini timed out processing function result")
-                        # If we have a tool result, just return a success message
-                        response_text = self._generate_contextual_success_message(tool_result)
+                        # If we have a tool result AND tool was actually called, return success
+                        if tool_was_actually_called and tool_result:
+                            response_text = self._generate_contextual_success_message(tool_result, tool_was_called=True)
+                            if response_text:
+                                await self.session_manager.add_message(
+                                    self.conversation_uuid,
+                                    "assistant",
+                                    response_text
+                                )
+                                return response_text
+                        # No tool was called or result is empty - inform user
+                        error_msg = "⚠️ Hubo un problema procesando tu solicitud. Por favor, intenta de nuevo."
                         await self.session_manager.add_message(
                             self.conversation_uuid,
                             "assistant",
-                            response_text
+                            error_msg
                         )
-                        return response_text
+                        return error_msg
                 
                 # Get text response safely - handle empty responses
                 response_text = None
@@ -770,13 +796,22 @@ class GeminiChatbot:
                     # response.text accessor failed - response has no valid parts
                     pass
                 
-                # If still no response, ask Gemini to generate a proper user-friendly message
+                # If still no response, handle based on whether a tool was ACTUALLY called
                 if not response_text:
-                    print("DEBUG: No text in Gemini response, asking Gemini to generate proper response")
-                    if last_tool_result:
-                        # Ask Gemini to generate a user-friendly response based on the tool result
-                        try:
-                            followup_prompt = f"""The tool was executed successfully. Here is the result:
+                    print(f"DEBUG: No text in Gemini response. tool_was_actually_called={tool_was_actually_called}")
+                    
+                    if tool_was_actually_called and last_tool_result:
+                        # Tool WAS called - check if it succeeded or failed
+                        tool_result_lower = last_tool_result.lower() if last_tool_result else ""
+                        is_error = tool_result_lower.startswith("error")
+                        
+                        if is_error:
+                            # Tool was called but FAILED - tell the user what went wrong
+                            response_text = f"⚠️ Hubo un problema al generar tu contenido: {last_tool_result}\nPor favor, intenta de nuevo o ajusta los parámetros."
+                        else:
+                            # Tool was called and SUCCEEDED - generate success message
+                            try:
+                                followup_prompt = f"""The tool was executed successfully. Here is the result:
 {last_tool_result}
 
 Please generate a SHORT, friendly response to the user confirming the operation was successful. 
@@ -786,33 +821,36 @@ Please generate a SHORT, friendly response to the user confirming the operation 
 - NEVER mention URLs or technical details.
 - Respond in the same language the user was using.
 - Keep it brief and friendly (1-2 sentences max)."""
-                            
-                            followup_response = await self.chat_session.send_message_async(followup_prompt)
-                            if followup_response.text:
-                                response_text = followup_response.text
-                            else:
-                                # Fallback to contextual message based on tool result
-                                response_text = self._generate_contextual_success_message(last_tool_result)
-                        except Exception as e:
-                            print(f"DEBUG: Failed to get followup response: {e}")
-                            response_text = self._generate_contextual_success_message(last_tool_result)
+                                
+                                followup_response = await self.chat_session.send_message_async(followup_prompt)
+                                if followup_response.text:
+                                    response_text = followup_response.text
+                                else:
+                                    response_text = self._generate_contextual_success_message(last_tool_result, tool_was_called=True)
+                            except Exception as e:
+                                print(f"DEBUG: Failed to get followup response: {e}")
+                                response_text = self._generate_contextual_success_message(last_tool_result, tool_was_called=True)
                     else:
-                        # Last-resort recovery: ask Gemini to produce a user-facing reply (no tool calls)
+                        # NO tool was called - NEVER say "Done" or "Your video is ready"
+                        # Ask Gemini to produce a real response
+                        print("DEBUG: No tool was called and no text response - recovering")
                         try:
-                            recovery_prompt = f"""No tool was executed and the response had no text.
+                            recovery_prompt = f"""IMPORTANT: No tool was executed. The previous response had no text.
 User message: {message}
 
-Please respond to the user directly, in the user's language. Do NOT call any tools.
-If the user requested an image or video, ask for the required model/cost/confirmation steps per the rules.
+You MUST respond to the user directly, in the user's language. Do NOT call any tools.
+Do NOT say "Done", "Ready", "Your video/image is ready" or any completion message.
+If the user requested an image or video, ask for the missing parameters (model, duration, cost confirmation).
+If you cannot determine what the user wants, ask them to clarify.
 Keep it brief and helpful."""
                             recovery_response = await self.chat_session.send_message_async(recovery_prompt)
                             if recovery_response.text:
                                 response_text = recovery_response.text
                             else:
-                                response_text = "error|resonse_empty"
+                                response_text = "⚠️ No pude procesar tu solicitud. ¿Podrías intentar de nuevo con más detalles?"
                         except Exception as e:
                             print(f"DEBUG: Failed to get recovery response: {e}")
-                            response_text = "error|resonse_empty"
+                            response_text = "⚠️ No pude procesar tu solicitud. ¿Podrías intentar de nuevo con más detalles?"
 
             except ValueError as e:
                 # Handle Gemini safety or malformed content errors
@@ -845,17 +883,19 @@ Keep it brief and helpful."""
                         if recovery_response.text:
                             response_text = recovery_response.text
                         else:
-                            response_text = "error|resonse_empty"
+                            response_text = "⚠️ No pude procesar tu solicitud. ¿Podrías intentar de nuevo con más detalles?"
                     except Exception as e:
                         print(f"DEBUG: Failed to get recovery response after MALFORMED_FUNCTION_CALL: {e}")
-                        response_text = "error|resonse_empty"
+                        response_text = "⚠️ No pude procesar tu solicitud. ¿Podrías intentar de nuevo con más detalles?"
                 elif "finish_reason" in error_str or "response.text" in error_str:
                     print(f"WARNING: Gemini response error: {error_str}")
-                    # Don't expose internal error, just confirm the action completed
-                    if last_tool_result:
-                        response_text = str(last_tool_result)
+                    if tool_was_actually_called and last_tool_result:
+                        # Tool was called - show its result
+                        result_msg = self._generate_contextual_success_message(last_tool_result, tool_was_called=True)
+                        response_text = result_msg if result_msg else str(last_tool_result)
                     else:
-                        response_text = "The operation was completed successfully."
+                        # No tool was called - ask user to retry
+                        response_text = "⚠️ Hubo un problema procesando tu solicitud. Por favor, intenta de nuevo."
                 else:
                     raise e
             
@@ -928,9 +968,31 @@ Keep it brief and helpful."""
         self.chat_session = None
         await self.session_manager.delete_session(self.conversation_uuid)
     
-    def _generate_contextual_success_message(self, tool_result: str) -> str:
-        """Generate a contextual success message based on tool result."""
-        tool_result_lower = tool_result.lower() if tool_result else ""
+    def _generate_contextual_success_message(self, tool_result: str, tool_was_called: bool = False) -> str:
+        """Generate a contextual success message based on tool result.
+        
+        CRITICAL: Only returns success messages if tool_was_called is True AND
+        the tool_result indicates actual success (contains 'exitosamente' / 'successfully').
+        Otherwise returns an informative error/status message.
+        """
+        if not tool_result or not tool_was_called:
+            # No tool was executed - NEVER return a success message
+            return None
+        
+        tool_result_lower = tool_result.lower()
+        
+        # Check if the tool result indicates an actual error
+        if tool_result_lower.startswith("error"):
+            return f"⚠️ Hubo un problema al procesar tu solicitud: {tool_result}"
+        
+        # Only return success if the tool result confirms success
+        is_success = any(word in tool_result_lower for word in [
+            'exitosamente', 'successfully', 'generado', 'generated', 'generada'
+        ])
+        
+        if not is_success:
+            # Tool returned but result is unclear - return the raw result
+            return tool_result
         
         if "image" in tool_result_lower or "imagen" in tool_result_lower:
             return "🎨 ¡Tu imagen está lista! / Your image is ready!"
@@ -939,7 +1001,7 @@ Keep it brief and helpful."""
         elif "audio" in tool_result_lower or "speech" in tool_result_lower or "voz" in tool_result_lower:
             return "🔊 ¡Tu audio está listo! / Your audio is ready!"
         else:
-            return "Done!"
+            return tool_result
 
 
 # Cache de chatbots por UUID con timestamp de último acceso
