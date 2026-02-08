@@ -117,11 +117,15 @@ def detect_video_params_from_history(history: list) -> dict:
     # Search recent messages (last 10) for model and duration
     recent = history[-10:] if len(history) > 10 else history
     
-    # Detect model from ALL recent messages
-    full_text = ' '.join([msg.get('content', '') for msg in recent])
-    for model_name, pattern in VIDEO_MODEL_PATTERNS.items():
-        if pattern.search(full_text):
-            params['model'] = model_name
+    # Detect model from MOST RECENT messages first (priority to latest mention)
+    # This prevents older model mentions from overriding the current one
+    for msg in reversed(recent):
+        content = msg.get('content', '')
+        for model_name, pattern in VIDEO_MODEL_PATTERNS.items():
+            if pattern.search(content):
+                params['model'] = model_name
+                break
+        if 'model' in params:
             break
     
     # Detect duration ONLY from ASSISTANT messages (where we mention the cost/duration)
@@ -129,19 +133,24 @@ def detect_video_params_from_history(history: list) -> dict:
     for msg in reversed(recent):
         if msg.get('role') == 'assistant':
             content = msg.get('content', '')
-            # Look for duration mentioned by assistant (e.g., "4 segundos", "12 seconds")
-            duration_match = re.search(r'(\d+)\s*(?:segundos?|seconds?)', content, re.IGNORECASE)
-            if duration_match:
-                params['duration'] = int(duration_match.group(1))
+            # Priority 1: Look for cost calculation pattern like "X tokens/seg × Y segundos" or "X tokens/second * Y seconds"
+            cost_match = re.search(r'[×x\*]\s*(\d+)\s*(?:segundos?|seconds?)', content, re.IGNORECASE)
+            if cost_match:
+                params['duration'] = int(cost_match.group(1))
+                break
+            # Priority 2: Look for "video de X segundos" pattern
+            video_dur_match = re.search(r'(?:video\s+de|duración\s+de?)\s*(\d+)\s*(?:segundos?|seconds?)', content, re.IGNORECASE)
+            if video_dur_match:
+                params['duration'] = int(video_dur_match.group(1))
                 break
     
     # If no duration found in assistant messages, try user messages (but be more careful)
     if 'duration' not in params:
         for msg in reversed(recent):
             if msg.get('role') == 'user':
-                content = msg.get('content', '')
-                # Only match standalone duration (e.g., "4", "8 segundos")
-                if re.match(r'^\d+\s*(?:segundos?|seconds?|seg|sec)?[\s.,!?]*$', content, re.IGNORECASE):
+                content = msg.get('content', '').strip()
+                # Only match standalone duration (e.g., "4", "8 segundos", "5s")
+                if re.match(r'^\d+\s*(?:segundos?|seconds?|seg|sec|s)?[\s.,!?]*$', content, re.IGNORECASE):
                     duration_match = re.match(r'^(\d+)', content)
                     if duration_match:
                         params['duration'] = int(duration_match.group(1))
@@ -154,11 +163,11 @@ def detect_video_params_from_history(history: list) -> dict:
             # Skip confirmation messages
             if is_confirmation(content):
                 continue
-            # Skip STANDALONE model selection (just "sora 2" alone)
-            if re.match(r'^\s*(sora[-\s]?2|veo[-\s]?3|kling|runway|haiper|minimax)\s*[.,!?]*$', content, re.IGNORECASE):
+            # Skip STANDALONE model selection (just "sora 2" alone, "kling v3 omni pro", etc.)
+            if re.match(r'^\s*(sora[-\s]?2[-\s]?(?:pro)?|veo[-\s]?3\.?1[-\s]?(?:flash|ultra)?|kling[-\s]?(?:v?3[-\s]?omni[-\s]?(?:pro|std))?|runway[-\s]?(?:aleph|4\.?5)?|haiper|minimax)\s*[.,!?]*$', content, re.IGNORECASE):
                 continue
-            # Skip duration-only messages like "5 seconds" or just "4"
-            if re.match(r'^\s*\d+\s*(?:segundos?|seconds?|seg|sec)?\s*[\.!?]*$', content, re.IGNORECASE):
+            # Skip duration-only messages like "5 seconds", "5s", or just "4"
+            if re.match(r'^\s*\d+\s*(?:segundos?|seconds?|seg|sec|s)?\s*[\.!?]*$', content, re.IGNORECASE):
                 continue
             # This is likely the actual prompt - USE IT AS IS, don't modify it
             if len(content) > 3:
@@ -917,8 +926,10 @@ Keep it brief and helpful."""
                 
                 # Detect if this is video or image
                 response_lower = response_text.lower()
-                if any(word in response_lower for word in ['video', 'vídeo', 'animar', 'animate', 'sora', 'veo', 'runway']):
-                    params = detect_video_params_from_history(history)
+                if any(word in response_lower for word in ['video', 'vídeo', 'animar', 'animate', 'sora', 'veo', 'runway', 'kling']):
+                    # Include the current response_text in history for better param detection
+                    history_with_current = history + [{'role': 'assistant', 'content': response_text}]
+                    params = detect_video_params_from_history(history_with_current)
                     if params.get('model') and params.get('duration'):
                         action_args = {
                             "prompt": params.get('prompt', 'animate the image'),
