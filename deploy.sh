@@ -1,5 +1,8 @@
 #!/bin/bash
 
+#Comand Upload Project to server
+#gcloud compute ssh reelmotion-vm --zone=us-central1-a --command="cd reelmotion-ai-agent-mcp ; git fetch origin ; git reset --hard origin/main ; bash deploy.sh"
+
 set -euo pipefail
 
 echo "🚀 Starting ReelMotion deployment..."

@@ -226,6 +226,8 @@ async def generate_video(
     - Luma Labs: 13 tokens/sec (5s only)
     - Seedance Pro: 15 tokens/sec (5s only)
     - Kling V1: 35 tokens/sec (5-10s)
+    - Kling V3 Omni Pro: 8 tokens/sec (3-15s) - text/image-to-video
+    - Kling V3 Omni Std: 6 tokens/sec (3-15s) - video-to-video
     - Sora 2: 15 tokens/sec (4, 8, or 12s only)
     - Sora 2 Pro: 30 tokens/sec (4, 8, or 12s only)
     - Runway 4.5: 25 tokens/sec (5, 8, or 10s only)
@@ -234,11 +236,11 @@ async def generate_video(
         prompt: Description of the video to generate (exact user text, NO modifications)
         model: AI model to use. Options: 'runway', 'runway-aleph', 'runway-4.5', 'veo-3.1', 
                'veo-3.1-flash', 'veo-3.1-ultra', 'luma-labs', 'seedance-pro', 'kling-v1', 
-               'sora-2', 'sora-2-pro'
+               'kling-v3-omni-pro', 'kling-v3-omni-std', 'sora-2', 'sora-2-pro'
         duration: Video duration in seconds. Valid durations depend on model (see above)
         aspect_ratio: '16:9', '9:16', or '1:1'. Defaults to '16:9'
         reference_image: URL of reference image (for image-to-video models)
-        reference_video: URL of reference video (only for Runway Aleph video-to-video)
+        reference_video: URL of reference video (for video-to-video models)
     """
     print(f"DEBUG: MCP Tool 'generate_video' called with prompt='{prompt}', model='{model}', duration={duration}")
     print(f"DEBUG: Gemini passed reference_image='{reference_image}', reference_video='{reference_video}' (IGNORING THESE)")
@@ -253,7 +255,8 @@ async def generate_video(
     # Validate model
     allowed_models = [
         "runway", "runway-aleph", "runway-4.5", "veo-3.1", "veo-3.1-flash", "veo-3.1-ultra",
-        "luma-labs", "seedance-pro", "kling-v1", "sora-2", "sora-2-pro"
+        "luma-labs", "seedance-pro", "kling-v1", "sora-2", "sora-2-pro",
+        "kling-v3-omni-pro", "kling-v3-omni-std"
     ]
     
     if model not in allowed_models:
@@ -271,7 +274,9 @@ async def generate_video(
         "runway": [5, 10],
         "runway-aleph": [5, 10],
         "runway-4.5": [5, 8, 10],
-        "kling-v1": [5, 10]
+        "kling-v1": [5, 10],
+        "kling-v3-omni-pro": list(range(3, 16)),  # 3 to 15 seconds
+        "kling-v3-omni-std": list(range(3, 16))   # 3 to 15 seconds
     }
     
     if model in duration_rules:
@@ -331,11 +336,20 @@ async def generate_video(
         image_file = next((f for f in context_files if f.get("type") == "image"), None)
         video_file = next((f for f in context_files if f.get("type") == "video"), None)
         
-        if video_file and model == "runway-aleph":
-            # Runway Aleph acepta video-to-video
-            payload["reference_video"] = video_file["url"]
-            print(f"DEBUG: Using reference video URL: {video_file['url']}")
-        elif image_file:
+        processed_video = False
+        if video_file:
+            if model == "runway-aleph":
+                # Runway Aleph acepta video-to-video
+                payload["reference_video"] = video_file["url"]
+                print(f"DEBUG: Using reference video URL (runway-aleph): {video_file['url']}")
+                processed_video = True
+            elif model in ["kling-v3-omni-std", "kling-v3-omni-pro"]:
+                # Kling V3 acepta video-to-video via media_url
+                payload["media_url"] = video_file["url"]
+                print(f"DEBUG: Using reference video URL (kling-v3): {video_file['url']}")
+                processed_video = True
+        
+        if not processed_video and image_file:
             # Usar imagen de referencia
             payload["reference_image"] = image_file["url"]
             print(f"DEBUG: Using reference image URL: {image_file['url']}")

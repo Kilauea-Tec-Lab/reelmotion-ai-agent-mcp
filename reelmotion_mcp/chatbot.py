@@ -39,6 +39,8 @@ VIDEO_MODEL_PATTERNS = {
     'veo-3.1-ultra': re.compile(r'\bveo[-\s]?3\.?1[-\s]?ultra\b', re.IGNORECASE),
     'runway-aleph': re.compile(r'\brunway[-\s]?aleph\b', re.IGNORECASE),
     'runway-4.5': re.compile(r'\brunway[-\s]?4\.?5\b', re.IGNORECASE),
+    'kling-v3-omni-pro': re.compile(r'\bkling[-\s]?v?3[-\s]?omni[-\s]?pro\b', re.IGNORECASE),
+    'kling-v3-omni-std': re.compile(r'\bkling[-\s]?v?3[-\s]?omni[-\s]?std\b', re.IGNORECASE),
 }
 
 # Patterns to extract duration
@@ -311,6 +313,8 @@ class GeminiChatbot:
               - Veo 3.1 Ultra (60 tokens/sec) - 8 seconds - maximum Veo quality
               - Sora 2 (15 tokens/sec) - ONLY 4, 8 or 12 seconds
               - Sora 2 Pro (30 tokens/sec) - ONLY 4, 8 or 12 seconds - maximum quality
+              - Kling V3 Omni Pro (8 tokens/sec) - 3 to 15 seconds - text/image-to-video
+              - Kling V3 Omni Std (6 tokens/sec) - 3 to 15 seconds - video-to-video
            b) Wait for the user to choose the model
            c) Ask: "How many seconds duration?" (in user's language) and MENTION valid options for the chosen model
            d) Wait for duration
@@ -319,6 +323,7 @@ class GeminiChatbot:
               - Veo 3.1 / Veo 3.1 Flash / Veo 3.1 Ultra: ONLY 8 seconds
               - Runway Aleph: 5 or 10 seconds
               - Runway 4.5: 5, 8 or 10 seconds
+              - Kling V3 Omni Pro / Std: 3 to 15 seconds (integer)
            f) If duration is NOT valid, inform user of correct options and ask to choose a valid one
            g) Calculate and show: "This will cost X tokens (Y tokens/sec × Z seconds). Confirm?" (in user's language)
            h) Wait for explicit confirmation before proceeding
@@ -327,8 +332,9 @@ class GeminiChatbot:
            - 'veo-3.1-flash' (NOT 'veo 3.1 flash')
            - 'veo-3.1-ultra' (NOT 'veo 3.1 ultra')
            - 'runway-aleph', 'runway-4.5', 'sora-2', 'sora-2-pro'
+           - 'kling-v3-omni-pro', 'kling-v3-omni-std'
         5. If there are attached images, use them as reference automatically.
-        6. For Runway Aleph, if there's an attached VIDEO, use it as reference (video-to-video).
+        6. For Runway Aleph OR Kling V3 Omni Std, if there's an attached VIDEO, use it as reference (video-to-video).
         7. NEVER mention video URLs in your responses - they are sent automatically.
         8. IF THERE'S AN ERROR (404, timeout, missing config, etc.):
            - Inform user of the error clearly and simply (in user's language)
@@ -995,11 +1001,11 @@ Keep it brief and helpful."""
             return tool_result
         
         if "image" in tool_result_lower or "imagen" in tool_result_lower:
-            return "🎨 ¡Tu imagen está lista! / Your image is ready!"
+            return "Your image is ready!"
         elif "video" in tool_result_lower or "vídeo" in tool_result_lower:
-            return "🎬 ¡Tu video está listo! / Your video is ready!"
+            return "Your video is ready!"
         elif "audio" in tool_result_lower or "speech" in tool_result_lower or "voz" in tool_result_lower:
-            return "🔊 ¡Tu audio está listo! / Your audio is ready!"
+            return "Your audio is ready!"
         else:
             return tool_result
 
