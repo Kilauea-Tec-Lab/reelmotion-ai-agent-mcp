@@ -359,7 +359,7 @@ async def generate_video(
     print(f"DEBUG: Headers: Authorization={'Bearer ***' if api_token else 'None'}, Content-Type=application/json")
     
     try:
-        with httpx.Client(timeout=1800.0) as client:  # 30 minutes timeout for long video generation
+        with httpx.Client(timeout=12000.0) as client:  # 200 minutes timeout for very long video generation
             print(f"DEBUG: Making POST request to {url}")
             response = client.post(url, json=payload, headers=headers)
             print(f"DEBUG: Response status code: {response.status_code}")
