@@ -279,14 +279,16 @@ class GeminiChatbot:
         
         # Critical tool usage instructions
         tool_instructions = """
-        LANGUAGE ADAPTATION:
-        - Default language: English
-        - AUTOMATICALLY DETECT the user's language from their messages
-        - RESPOND in the SAME language the user is using
-        - If user writes in Spanish, respond in Spanish
-        - If user writes in English, respond in English
-        - If user switches language, switch with them immediately
+        LANGUAGE ADAPTATION (CRITICAL - HIGHEST PRIORITY):
+        - AUTOMATICALLY DETECT the user's language from their VERY FIRST message
+        - RESPOND in the SAME language the user is using FROM THE START - do NOT default to English
+        - If the user writes in Spanish, ALL your responses MUST be in Spanish from that point on
+        - If the user writes in English, respond in English
+        - If the user switches language mid-conversation (e.g., "habla en español"), switch IMMEDIATELY and maintain that language for ALL subsequent responses
+        - This applies to ALL messages: questions, confirmations, cost information, error messages, EVERYTHING
         - Keep technical terms and model names in their original form (e.g., "Nano Banana", "GPT", "Freepik")
+        - Example: If user says "Quiero crear una imagen" → respond in Spanish: "¿Qué deseas que muestre la imagen? Descríbelo en detalle."
+        - Example: If user says "I want to create an image" → respond in English: "What do you want the image to show? Describe it in detail."
         
         MCP ACTION DETECTION (CRITICAL - APPLY FIRST):
         Before responding, ALWAYS analyze if the user wants to execute an MCP tool action.
@@ -342,25 +344,35 @@ class GeminiChatbot:
         - When in doubt, ASK the user what they need rather than claiming something is done.
         
         CRITICAL RULES FOR 'generate_image' TOOL:
-        1. The 'prompt' parameter MUST BE EXACTLY the LITERAL TEXT the user provided (or the refined version if user accepted help).
-        2. FORBIDDEN to modify the user's final prompt without their consent.
+        1. ⚠️ PROMPT PARAMETER RULE (EXTREMELY IMPORTANT):
+           - The 'prompt' parameter you pass to generate_image MUST be the DESCRIPTIVE TEXT that describes what the image should show.
+           - This is the prompt agreed upon during the workflow (Step 1 and Step 2 below).
+           - NEVER use a user's conversational reply (like "ok", "si", "habla en español", "gpt", "confirmo") as the prompt.
+           - The prompt MUST ALWAYS be a description of the desired image content.
+           - If you helped refine the prompt in Step 2 and the user accepted it, use THAT REFINED VERSION as the prompt.
+           - If the user declined help, use their ORIGINAL DESCRIPTIVE TEXT from Step 1.
+           - Example: If user described "una selva tropical" and you refined it to "Una exuberante selva tropical vista desde primera persona...", and user accepted → use the refined version.
+           - Example: WRONG: prompt="si, pero habla en español" ← This is a conversational message, NOT a prompt!
+           - Example: CORRECT: prompt="Una exuberante selva tropical vista desde una perspectiva en primera persona" ← This describes the image.
+        2. FORBIDDEN to modify the user's agreed-upon prompt without their consent.
         3. If there are attached images, always pass them in 'reference_images'.
         4. BEFORE calling generate_image, you MUST ALWAYS follow this EXACT workflow IN ORDER:
            STEP 1 - ASK FOR THE PROMPT FIRST:
            - Ask: "What do you want the image to show? Describe it in detail." (in user's language)
            - If the user already provided a clear prompt/description in their message, take that as the prompt and move to Step 2.
-           - Wait for the user's response.
+           - Wait for the user's response. SAVE this descriptive text mentally as THE_PROMPT.
            STEP 2 - OFFER TO HELP WITH THE PROMPT:
            - Ask: "Would you like me to help you refine or improve your prompt for better results?" (in user's language)
-           - If user says YES: Help them craft a better, more detailed prompt. Show the improved version and ask for approval.
-           - If user says NO or skips: Keep their original prompt as-is and proceed.
+           - If user says YES: Help them craft a better, more detailed prompt. Show the improved version and ask for approval. If approved, UPDATE THE_PROMPT to the refined version.
+           - If user says NO or skips: Keep THE_PROMPT as-is and proceed.
+           - ⚠️ Any messages the user sends during this step that are NOT descriptive content (e.g., "sí", "ok", "habla en español") are conversational — do NOT replace THE_PROMPT with them.
            STEP 3 - ASK FOR THE MODEL:
            - Ask: "Which model do you want to use: Nano Banana, GPT, or Freepik?" (in user's language)
            - Wait for user's response with chosen model.
            STEP 4 - CONFIRM COST AND EXECUTE:
            - Inform the cost: "This will cost 10 tokens. Confirm?" (in user's language)
            - Wait for explicit confirmation before proceeding.
-           - Once confirmed, CALL the tool immediately.
+           - Once confirmed, CALL the tool immediately using THE_PROMPT (the descriptive text, NOT the confirmation message).
         5. Available models are: 'Nano Banana', 'GPT', and 'Freepik' (all cost 10 tokens per image).
         6. DO NOT assume the model - ALWAYS ask the user which one to use.
         7. NEVER mention URLs in your responses - images/videos are sent automatically to the user.
@@ -369,18 +381,25 @@ class GeminiChatbot:
         
         CRITICAL RULES FOR 'generate_video' TOOL:
         ⛔ REMINDER: NEVER say "video ready/listo" unless generate_video was ACTUALLY called AND returned success.
-        1. The 'prompt' parameter MUST BE EXACTLY the LITERAL TEXT the user provided (or the refined version if user accepted help).
-        2. FORBIDDEN to modify the user's final prompt without their consent.
+        1. ⚠️ PROMPT PARAMETER RULE (EXTREMELY IMPORTANT):
+           - The 'prompt' parameter you pass to generate_video MUST be the DESCRIPTIVE TEXT that describes what the video should show.
+           - This is the prompt agreed upon during the workflow (Step 1 and Step 2 below).
+           - NEVER use a user's conversational reply (like "ok", "si", "habla en español", "sora 2", "confirmo") as the prompt.
+           - The prompt MUST ALWAYS be a description of the desired video content/action.
+           - If you helped refine the prompt in Step 2 and the user accepted it, use THAT REFINED VERSION.
+           - If the user declined help, use their ORIGINAL DESCRIPTIVE TEXT from Step 1.
+        2. FORBIDDEN to modify the user's agreed-upon prompt without their consent.
         3. BEFORE calling generate_video, you MUST ALWAYS follow this EXACT workflow IN ORDER:
            STEP 1 - ASK FOR THE PROMPT FIRST (ALWAYS):
            - Ask: "What do you want the video to show? Describe the action, scene, or animation you want." (in user's language)
            - If the user already provided a clear prompt/description in their message, take that as the prompt and move to Step 2.
            - If the user has an attached image and says something like "animate this" or "create a video from this", ask them to describe what movement/action they want.
-           - Wait for the user's response.
+           - Wait for the user's response. SAVE this descriptive text mentally as THE_PROMPT.
            STEP 2 - OFFER TO HELP WITH THE PROMPT:
            - Ask: "Would you like me to help you refine or improve your prompt for better results?" (in user's language)
-           - If user says YES: Help them craft a better, more detailed, cinematic prompt. Show the improved version and ask for approval.
-           - If user says NO or skips: Keep their original prompt as-is and proceed.
+           - If user says YES: Help them craft a better, more detailed, cinematic prompt. Show the improved version and ask for approval. If approved, UPDATE THE_PROMPT to the refined version.
+           - If user says NO or skips: Keep THE_PROMPT as-is and proceed.
+           - ⚠️ Any messages the user sends during this step that are NOT descriptive content (e.g., "sí", "ok", "habla en español") are conversational — do NOT replace THE_PROMPT with them.
            STEP 3 - ASK FOR MODEL AND DURATION:
            - Ask: "Which video model do you want to use?" (in user's language) and list options with costs AND DURATIONS:
               - Runway Aleph (19 tokens/sec) - 5 or 10 seconds - video-to-video (editing)
