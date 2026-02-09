@@ -342,27 +342,47 @@ class GeminiChatbot:
         - When in doubt, ASK the user what they need rather than claiming something is done.
         
         CRITICAL RULES FOR 'generate_image' TOOL:
-        1. The 'prompt' parameter MUST BE EXACTLY the LITERAL TEXT the user entered.
-        2. FORBIDDEN to modify, improve, summarize, translate, or reinterpret the user's text for the prompt.
-        3. If user writes "Change the suit", the prompt sent to the tool must be "Change the suit".
-        4. If there are attached images, always pass them in 'reference_images'.
-        5. BEFORE calling generate_image, you MUST ALWAYS:
-           a) Ask: "Which model do you want to use: Nano Banana, GPT, or Freepik?" (in user's language)
-           b) Wait for user's response with chosen model
-           c) Inform the cost: "This will cost X tokens (10 tokens per image × quantity)" (in user's language)
-           d) Wait for explicit confirmation before proceeding
-        6. Available models are: 'Nano Banana', 'GPT', and 'Freepik' (all cost 10 tokens per image).
-        7. DO NOT assume the model - ALWAYS ask the user which one to use.
-        8. NEVER mention URLs in your responses - images/videos are sent automatically to the user.
-        9. IF THERE'S AN ERROR: Inform the user of the error, but if user says "try again" or "retry" (or "intentar de nuevo", "reintentar"),
+        1. The 'prompt' parameter MUST BE EXACTLY the LITERAL TEXT the user provided (or the refined version if user accepted help).
+        2. FORBIDDEN to modify the user's final prompt without their consent.
+        3. If there are attached images, always pass them in 'reference_images'.
+        4. BEFORE calling generate_image, you MUST ALWAYS follow this EXACT workflow IN ORDER:
+           STEP 1 - ASK FOR THE PROMPT FIRST:
+           - Ask: "What do you want the image to show? Describe it in detail." (in user's language)
+           - If the user already provided a clear prompt/description in their message, take that as the prompt and move to Step 2.
+           - Wait for the user's response.
+           STEP 2 - OFFER TO HELP WITH THE PROMPT:
+           - Ask: "Would you like me to help you refine or improve your prompt for better results?" (in user's language)
+           - If user says YES: Help them craft a better, more detailed prompt. Show the improved version and ask for approval.
+           - If user says NO or skips: Keep their original prompt as-is and proceed.
+           STEP 3 - ASK FOR THE MODEL:
+           - Ask: "Which model do you want to use: Nano Banana, GPT, or Freepik?" (in user's language)
+           - Wait for user's response with chosen model.
+           STEP 4 - CONFIRM COST AND EXECUTE:
+           - Inform the cost: "This will cost 10 tokens. Confirm?" (in user's language)
+           - Wait for explicit confirmation before proceeding.
+           - Once confirmed, CALL the tool immediately.
+        5. Available models are: 'Nano Banana', 'GPT', and 'Freepik' (all cost 10 tokens per image).
+        6. DO NOT assume the model - ALWAYS ask the user which one to use.
+        7. NEVER mention URLs in your responses - images/videos are sent automatically to the user.
+        8. IF THERE'S AN ERROR: Inform the user of the error, but if user says "try again" or "retry" (or "intentar de nuevo", "reintentar"),
            you MUST execute the tool again without hesitation.
         
         CRITICAL RULES FOR 'generate_video' TOOL:
         ⛔ REMINDER: NEVER say "video ready/listo" unless generate_video was ACTUALLY called AND returned success.
-        1. The 'prompt' parameter MUST BE EXACTLY the LITERAL TEXT the user entered.
-        2. FORBIDDEN to modify, improve, summarize, translate, or reinterpret the user's text.
-        3. BEFORE calling generate_video, you MUST ALWAYS:
-           a) Ask: "Which video model do you want to use?" (in user's language) and list options with costs AND DURATIONS:
+        1. The 'prompt' parameter MUST BE EXACTLY the LITERAL TEXT the user provided (or the refined version if user accepted help).
+        2. FORBIDDEN to modify the user's final prompt without their consent.
+        3. BEFORE calling generate_video, you MUST ALWAYS follow this EXACT workflow IN ORDER:
+           STEP 1 - ASK FOR THE PROMPT FIRST (ALWAYS):
+           - Ask: "What do you want the video to show? Describe the action, scene, or animation you want." (in user's language)
+           - If the user already provided a clear prompt/description in their message, take that as the prompt and move to Step 2.
+           - If the user has an attached image and says something like "animate this" or "create a video from this", ask them to describe what movement/action they want.
+           - Wait for the user's response.
+           STEP 2 - OFFER TO HELP WITH THE PROMPT:
+           - Ask: "Would you like me to help you refine or improve your prompt for better results?" (in user's language)
+           - If user says YES: Help them craft a better, more detailed, cinematic prompt. Show the improved version and ask for approval.
+           - If user says NO or skips: Keep their original prompt as-is and proceed.
+           STEP 3 - ASK FOR MODEL AND DURATION:
+           - Ask: "Which video model do you want to use?" (in user's language) and list options with costs AND DURATIONS:
               - Runway Aleph (19 tokens/sec) - 5 or 10 seconds - video-to-video (editing)
               - Runway 4.5 (25 tokens/sec) - 5, 8 or 10 seconds - high quality
               - Veo 3.1 (48 tokens/sec) - 8 seconds - high quality
@@ -372,18 +392,20 @@ class GeminiChatbot:
               - Sora 2 Pro (30 tokens/sec) - ONLY 4, 8 or 12 seconds - maximum quality
               - Kling V3 Omni Pro (8 tokens/sec) - 3 to 15 seconds - text/image-to-video
               - Kling V3 Omni Std (6 tokens/sec) - 3 to 15 seconds - video-to-video
-           b) Wait for the user to choose the model
-           c) Ask: "How many seconds duration?" (in user's language) and MENTION valid options for the chosen model
-           d) Wait for duration
-           e) VALIDATE that duration is compatible with the model:
+           - Wait for the user to choose the model
+           - Then ask: "How many seconds duration?" (in user's language) and MENTION valid options for the chosen model
+           - Wait for duration
+           - VALIDATE that duration is compatible with the model:
               - Sora 2 / Sora 2 Pro: ONLY 4, 8 or 12 seconds
               - Veo 3.1 / Veo 3.1 Flash / Veo 3.1 Ultra: ONLY 8 seconds
               - Runway Aleph: 5 or 10 seconds
               - Runway 4.5: 5, 8 or 10 seconds
               - Kling V3 Omni Pro / Std: 3 to 15 seconds (integer)
-           f) If duration is NOT valid, inform user of correct options and ask to choose a valid one
-           g) Calculate and show: "This will cost X tokens (Y tokens/sec × Z seconds). Confirm?" (in user's language)
-           h) Wait for explicit confirmation before proceeding
+           - If duration is NOT valid, inform user of correct options and ask to choose a valid one
+           STEP 4 - CONFIRM COST AND EXECUTE:
+           - Calculate and show: "This will cost X tokens (Y tokens/sec × Z seconds). Confirm?" (in user's language)
+           - Wait for explicit confirmation before proceeding
+           - Once confirmed, CALL the tool immediately.
         4. IMPORTANT: When calling the tool, use EXACT names:
            - 'veo-3.1' (NOT 'veo 3.1' or 'Veo 3.1')
            - 'veo-3.1-flash' (NOT 'veo 3.1 flash')
