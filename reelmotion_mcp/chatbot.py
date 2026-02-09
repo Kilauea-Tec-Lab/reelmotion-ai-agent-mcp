@@ -53,6 +53,12 @@ IMAGE_MODEL_PATTERNS = {
     'GPT': re.compile(r'\bgpt\b', re.IGNORECASE),
 }
 
+# Pattern to detect validation/acceptance of a refined prompt
+REFINED_PROMPT_ACCEPTANCE_PATTERN = re.compile(
+    r'(?:me gusta|i like|prefiero|prefer|usa|use|utiliza|usar)\s+(?:ese|esa|el|la|that|this)\s+(?:prompt|descripci[óo]n|versión|version|text)',
+    re.IGNORECASE
+)
+
 def is_confirmation(message: str) -> bool:
     """Check if the message is a simple confirmation."""
     cleaned = message.strip().lower()
@@ -174,9 +180,31 @@ def detect_video_params_from_history(history: list) -> dict:
                         break
     
     # Get the prompt (most recent user message that's not a confirmation or model/duration selection)
-    for msg in reversed(recent):
+    recent_reversed = list(reversed(recent))
+    for i, msg in enumerate(recent_reversed):
         if msg.get('role') == 'user':
             content = msg.get('content', '')
+            
+            # Check for refined prompt acceptance FIRST
+            if REFINED_PROMPT_ACCEPTANCE_PATTERN.search(content):
+                # Search previous ASSISTANT messages for the refined prompt
+                for j in range(i + 1, len(recent_reversed)):
+                    prev_msg = recent_reversed[j]
+                    if prev_msg.get('role') == 'assistant':
+                         cand = prev_msg.get('content', '')
+                         quote_match = re.search(r'["\u201c]([^"\u201d]{15,})["\u201d]', cand)
+                         if quote_match:
+                             params['prompt'] = quote_match.group(1)
+                         else:
+                             cleaned = re.sub(r'^(?:Here is|Aquí tienes|Esta es|Propuesta|Aquí hay).*:[\r\n\s]*', '', cand, flags=re.IGNORECASE)
+                             cleaned = re.sub(r'[\r\n\s]*(?:Do you like|Te gusta|Te parece|Qué te parece|¿|Confirmas).*$', '', cleaned, flags=re.IGNORECASE | re.DOTALL)
+                             cleaned = cleaned.strip()
+                             if len(cleaned) > 10:
+                                params['prompt'] = cleaned
+                         break
+                if 'prompt' in params:
+                    break
+
             # Skip confirmation messages
             if is_confirmation(content):
                 continue
@@ -239,9 +267,35 @@ def detect_image_params_from_history(history: list) -> dict:
                         break
     
     # Get the prompt (most recent user message that's not a confirmation or model selection)
-    for msg in reversed(recent):
+    recent_reversed = list(reversed(recent))
+    for i, msg in enumerate(recent_reversed):
         if msg.get('role') == 'user':
             content = msg.get('content', '')
+            
+            # Check for refined prompt acceptance FIRST (e.g. "me gusta ese prompt")
+            if REFINED_PROMPT_ACCEPTANCE_PATTERN.search(content):
+                # Search previous ASSISTANT messages for the refined prompt
+                for j in range(i + 1, len(recent_reversed)):
+                    prev_msg = recent_reversed[j]
+                    if prev_msg.get('role') == 'assistant':
+                         cand = prev_msg.get('content', '')
+                         # Extract text between quotes if possible (often refined prompts are quoted)
+                         quote_match = re.search(r'["\u201c]([^"\u201d]{15,})["\u201d]', cand)
+                         if quote_match:
+                             params['prompt'] = quote_match.group(1)
+                         else:
+                             # Cleaning heuristics:
+                             # Remove common preambles like "Here is..."
+                             cleaned = re.sub(r'^(?:Here is|Aquí tienes|Esta es|Propuesta|Aquí hay).*:[\r\n\s]*', '', cand, flags=re.IGNORECASE)
+                             # Remove questions/confirmations at the end
+                             cleaned = re.sub(r'[\r\n\s]*(?:Do you like|Te gusta|Te parece|Qué te parece|¿|Confirmas).*$', '', cleaned, flags=re.IGNORECASE | re.DOTALL)
+                             cleaned = cleaned.strip()
+                             if len(cleaned) > 10:
+                                params['prompt'] = cleaned
+                         break
+                if 'prompt' in params:
+                    break
+
             # Skip confirmation messages
             if is_confirmation(content):
                 continue
@@ -347,13 +401,14 @@ class GeminiChatbot:
         1. ⚠️ PROMPT PARAMETER RULE (EXTREMELY IMPORTANT):
            - The 'prompt' parameter you pass to generate_image MUST be the DESCRIPTIVE TEXT that describes what the image should show.
            - This is the prompt agreed upon during the workflow (Step 1 and Step 2 below).
-           - NEVER use a user's conversational reply (like "ok", "si", "habla en español", "gpt", "confirmo") as the prompt.
+           - NEVER use a user's conversational reply (like "ok", "si", "habla en español", "gpt", "confirmo", "me gusta ese prompt") as the prompt.
            - The prompt MUST ALWAYS be a description of the desired image content.
-           - If you helped refine the prompt in Step 2 and the user accepted it, use THAT REFINED VERSION as the prompt.
+           - 🚨 REFINED PROMPT RULE: If you helped refine the prompt in Step 2 and the user accepted it (e.g., said "me gusta", "sí", "ok", "usa ese"), YOU MUST USE THE REFINED TEXT YOU WROTE IN YOUR PREVIOUS MESSAGE as the prompt parameter. DO NOT use the user's confirmation message.
            - If the user declined help, use their ORIGINAL DESCRIPTIVE TEXT from Step 1.
-           - Example: If user described "una selva tropical" and you refined it to "Una exuberante selva tropical vista desde primera persona...", and user accepted → use the refined version.
-           - Example: WRONG: prompt="si, pero habla en español" ← This is a conversational message, NOT a prompt!
-           - Example: CORRECT: prompt="Una exuberante selva tropical vista desde una perspectiva en primera persona" ← This describes the image.
+           - Example 1 (Standard): User: "una selva" -> Assistant refines to "Una exuberante selva..." -> User: "si" -> PROMPT="Una exuberante selva..." (NOT "si").
+           - Example 2 (The Refined Prompt Case): User: "me gusta ese prompt" -> PROMPT="[The refined prompt text from YOUR previous message]" (NOT "me gusta ese prompt").
+           - Example 3 (Language Switch): User: "si, pero habla en español" -> PROMPT="[The agreed description]" (NOT "si, pero habla en español").
+        2. FORBIDDEN to modify the user's agreed-upon prompt without their consent.
         2. FORBIDDEN to modify the user's agreed-upon prompt without their consent.
         3. If there are attached images, always pass them in 'reference_images'.
         4. BEFORE calling generate_image, you MUST ALWAYS follow this EXACT workflow IN ORDER:
@@ -384,9 +439,9 @@ class GeminiChatbot:
         1. ⚠️ PROMPT PARAMETER RULE (EXTREMELY IMPORTANT):
            - The 'prompt' parameter you pass to generate_video MUST be the DESCRIPTIVE TEXT that describes what the video should show.
            - This is the prompt agreed upon during the workflow (Step 1 and Step 2 below).
-           - NEVER use a user's conversational reply (like "ok", "si", "habla en español", "sora 2", "confirmo") as the prompt.
+           - NEVER use a user's conversational reply (like "ok", "si", "habla en español", "sora 2", "confirmo", "me gusta") as the prompt.
            - The prompt MUST ALWAYS be a description of the desired video content/action.
-           - If you helped refine the prompt in Step 2 and the user accepted it, use THAT REFINED VERSION.
+           - 🚨 REFINED PROMPT RULE: If you helped refine the prompt in Step 2 and the user accepted it (e.g., "me gusta", "sí", "ok"), YOU MUST USE THE REFINED TEXT YOU WROTE IN YOUR PREVIOUS MESSAGE as the prompt parameter. DO NOT use the user's confirmation message.
            - If the user declined help, use their ORIGINAL DESCRIPTIVE TEXT from Step 1.
         2. FORBIDDEN to modify the user's agreed-upon prompt without their consent.
         3. BEFORE calling generate_video, you MUST ALWAYS follow this EXACT workflow IN ORDER:
@@ -1116,15 +1171,10 @@ Keep it brief and helpful."""
         if not is_success:
             # Tool returned but result is unclear - return the raw result
             return tool_result
-        
-        if "image" in tool_result_lower or "imagen" in tool_result_lower:
-            return "Your image is ready!"
-        elif "video" in tool_result_lower or "vídeo" in tool_result_lower:
-            return "Your video is ready!"
-        elif "audio" in tool_result_lower or "speech" in tool_result_lower or "voz" in tool_result_lower:
-            return "Your audio is ready!"
-        else:
-            return tool_result
+            
+        # Success detected - return raw result so LLM can generate localized message
+        # DO NOT return hardcoded English strings like "Your image is ready!"
+        return tool_result
 
 
 # Cache de chatbots por UUID con timestamp de último acceso
