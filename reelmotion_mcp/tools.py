@@ -22,11 +22,11 @@ def clean_prompt_from_model_mentions(prompt: str) -> str:
     # Match patterns like "with sora 2", "con nano banana", "using veo 3.1", etc.
     patterns = [
         # English patterns
-        r'\s+(?:with|using|via|through|by)\s+(?:sora[-\s]?2(?:\s+pro)?|runway(?:[-\s]?aleph)?|veo[-\s]?3\.?1(?:[-\s]?(?:flash|ultra))?|nano[-\s]?banana|gpt|luma[-\s]?labs?|seedance[-\s]?pro|kling[-\s]?v1)\s*$',
+        r'\s+(?:with|using|via|through|by)\s+(?:sora[-\s]?2(?:\s+pro)?|runway(?:[-\s]?(?:aleph|4\.?5))?|veo[-\s]?3\.?1(?:[-\s]?(?:flash|ultra))?|nano[-\s]?banana|gpt|freepik|luma[-\s]?labs?|seedance[-\s]?pro|kling[-\s]?(?:v?3[-\s]?omni[-\s]?(?:pro|std)|v1))\s*$',
         # Spanish patterns
-        r'\s+(?:con|usando|mediante|por)\s+(?:sora[-\s]?2(?:\s+pro)?|runway(?:[-\s]?aleph)?|veo[-\s]?3\.?1(?:[-\s]?(?:flash|ultra))?|nano[-\s]?banana|gpt|luma[-\s]?labs?|seedance[-\s]?pro|kling[-\s]?v1)\s*$',
+        r'\s+(?:con|usando|mediante|por)\s+(?:sora[-\s]?2(?:\s+pro)?|runway(?:[-\s]?(?:aleph|4\.?5))?|veo[-\s]?3\.?1(?:[-\s]?(?:flash|ultra))?|nano[-\s]?banana|gpt|freepik|luma[-\s]?labs?|seedance[-\s]?pro|kling[-\s]?(?:v?3[-\s]?omni[-\s]?(?:pro|std)|v1))\s*$',
         # Just model names at the end (without preposition)
-        r'\s+(?:sora[-\s]?2(?:\s+pro)?|runway[-\s]?aleph|veo[-\s]?3\.?1[-\s]?(?:flash|ultra))\s*$',
+        r'\s+(?:sora[-\s]?2(?:\s+pro)?|runway[-\s]?(?:aleph|4\.?5)|veo[-\s]?3\.?1[-\s]?(?:flash|ultra)|kling[-\s]?v?3[-\s]?omni[-\s]?(?:pro|std))\s*$',
     ]
     
     cleaned = prompt
@@ -160,7 +160,7 @@ async def generate_image(
                 print("DEBUG: Reference files cleared after use")
                 
                 # Return simple success message instead of full JSON
-                return f"Imágenes generadas exitosamente con {model}."
+                return f"Images generated successfully with {model}."
         except Exception as e:
             print(f"Error generating image (with context images): {e}")
             return f"Error generating image: {str(e)}"
@@ -200,7 +200,7 @@ async def generate_image(
                         await chatbot.add_generated_file(images_data["url"], "image")
                 
                 # Return simple success message instead of full JSON
-                return f"Imágenes generadas exitosamente con {model}."
+                return f"Images generated successfully with {model}."
         except Exception as e:
             print(f"Error generating image (text-only): {e}")
             return f"Error generating image: {str(e)}"
@@ -380,7 +380,7 @@ async def generate_video(
                 await chatbot.clear_reference_files()
                 print("DEBUG: Reference files cleared after video generation")
                 
-                return f"Video generado exitosamente con {model}."
+                return f"Video generated successfully with {model}."
             else:
                 print(f"DEBUG: No video_url found in response")
                 return f"Video generation initiated but URL not immediately available. Check status later."
@@ -542,7 +542,7 @@ async def generate_speech(
             print(f"WARNING [generate_speech]: Skipping backend callback - backend_url={backend_url}, api_token={'SET' if api_token else 'NOT SET'}")
         # --- BACKEND CALLBACK END ---
 
-        return f"Audio generado exitosamente ({len(audio_content)} bytes). Enlace generado automáticamente."
+        return f"Audio generated successfully ({len(audio_content)} bytes). Link generated automatically."
             
     except Exception as e:
         print(f"ERROR generating speech: {e}")

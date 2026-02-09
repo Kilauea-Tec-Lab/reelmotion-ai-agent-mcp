@@ -114,7 +114,11 @@ async def chat_endpoint(request: Request):
             set_api_token(str(token))
 
         if not message:
-             return JSONResponse({"error": "Message is required"}, status_code=400)
+            # If files are attached but no message, use a default analysis prompt
+            if file_urls:
+                message = "Analyze this file"
+            else:
+                return JSONResponse({"error": "Message is required"}, status_code=400)
 
         # Crear chatbot con UUID de conversación
         print(f"DEBUG [server.py]: Creating/getting chatbot for UUID='{conversation_uuid}'")
@@ -193,7 +197,7 @@ def generate_image(
     
     Args:
         prompt: The description of the image to generate.
-        model: The model to use. MUST be one of: 'Nano Banana', 'GPT'. Defaults to 'GPT'.
+        model: The model to use. MUST be one of: 'Nano Banana', 'GPT', 'Freepik'. Defaults to 'GPT'.
         image_type: 1 (text only), 2 (text + image), 3 (text + multiple images). Defaults to 1.
         quantity: Number of images to generate. Defaults to 1.
         reference_image: URL or base64 of reference image (for type 2).
@@ -216,11 +220,14 @@ def generate_video(
     
     Token costs per second and valid durations:
     - runway-aleph: 19 tokens/sec (5-10s) - video-to-video editing
+    - runway-4.5: 25 tokens/sec (5, 8, or 10s) - high quality
     - veo-3.1: 48 tokens/sec (8s only)
     - veo-3.1-flash: 21 tokens/sec (8s only)
     - veo-3.1-ultra: 60 tokens/sec (8s only) - maximum quality
     - sora-2: 15 tokens/sec (4, 8, or 12s only)
     - sora-2-pro: 30 tokens/sec (4, 8, or 12s only)
+    - kling-v3-omni-pro: 8 tokens/sec (3-15s) - text/image-to-video
+    - kling-v3-omni-std: 6 tokens/sec (3-15s) - video-to-video
     
     Args:
         prompt: Description of the video to generate (exact user text, NO modifications)

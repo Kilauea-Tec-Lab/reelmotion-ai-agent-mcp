@@ -48,9 +48,9 @@ DURATION_PATTERN = re.compile(r'(\d+)\s*(?:segundos?|seconds?|sec|s\b)', re.IGNO
 
 # Patterns to detect image model in conversation
 IMAGE_MODEL_PATTERNS = {
-    'GPT': re.compile(r'\bgpt\b', re.IGNORECASE),
     'Nano Banana': re.compile(r'\bnano[-\s]?banana\b', re.IGNORECASE),
     'Freepik': re.compile(r'\bfreepik\b', re.IGNORECASE),
+    'GPT': re.compile(r'\bgpt\b', re.IGNORECASE),
 }
 
 def is_confirmation(message: str) -> bool:
@@ -114,19 +114,36 @@ def detect_video_params_from_history(history: list) -> dict:
     """
     params = {}
     
-    # Search recent messages (last 10) for model and duration
-    recent = history[-10:] if len(history) > 10 else history
+    # Search recent messages (last 14) for model and duration
+    recent = history[-14:] if len(history) > 14 else history
     
-    # Detect model from MOST RECENT messages first (priority to latest mention)
-    # This prevents older model mentions from overriding the current one
+    # Detect model from MOST RECENT USER messages first (priority to user's explicit selection)
+    # This prevents assistant messages (which list ALL models) from matching the wrong one
     for msg in reversed(recent):
-        content = msg.get('content', '')
-        for model_name, pattern in VIDEO_MODEL_PATTERNS.items():
-            if pattern.search(content):
-                params['model'] = model_name
+        if msg.get('role') == 'user':
+            content = msg.get('content', '')
+            for model_name, pattern in VIDEO_MODEL_PATTERNS.items():
+                if pattern.search(content):
+                    params['model'] = model_name
+                    break
+            if 'model' in params:
                 break
-        if 'model' in params:
-            break
+    
+    # If no model found in user messages, check assistant's CONFIRMATION messages
+    # (e.g., "You've selected Kling V3 Omni Std") but NOT model listing messages
+    if 'model' not in params:
+        for msg in reversed(recent):
+            if msg.get('role') == 'assistant':
+                content = msg.get('content', '')
+                # Only check confirmation-style messages, not model listings
+                confirmation_phrases = ['selected', 'chosen', 'elegido', 'seleccionado', 'usaremos', 'you\'ve chosen']
+                if any(phrase in content.lower() for phrase in confirmation_phrases):
+                    for model_name, pattern in VIDEO_MODEL_PATTERNS.items():
+                        if pattern.search(content):
+                            params['model'] = model_name
+                            break
+                    if 'model' in params:
+                        break
     
     # Detect duration ONLY from ASSISTANT messages (where we mention the cost/duration)
     # This prevents picking up random numbers from user messages
@@ -169,10 +186,18 @@ def detect_video_params_from_history(history: list) -> dict:
             # Skip duration-only messages like "5 seconds", "5s", or just "4"
             if re.match(r'^\s*\d+\s*(?:segundos?|seconds?|seg|sec|s)?\s*[\.!?]*$', content, re.IGNORECASE):
                 continue
+            # Skip generic video/image creation messages (too vague to be a prompt)
+            if re.match(r'^\s*(?:i want to |quiero |me gustaría )?(?:create|make|genera[rt]?|crea[rt]?|haz(?:me)?)\s+(?:a\s+|un\s+|una\s+)?(?:video|vídeo|imagen|image|clip)\s*[.,!?]*$', content, re.IGNORECASE):
+                continue
+            # Skip cost-related questions (not a prompt)
+            if re.match(r'^.*(?:cost|token|cuánto|cuanto|precio|price|how much|what will).*(?:cost|token|cuánto|cuanto)?.*$', content, re.IGNORECASE) and len(content) < 60:
+                continue
+            # Skip very short messages that are likely answers to questions, not prompts
+            if len(content) <= 3:
+                continue
             # This is likely the actual prompt - USE IT AS IS, don't modify it
-            if len(content) > 3:
-                params['prompt'] = content
-                break
+            params['prompt'] = content
+            break
     
     return params
 
@@ -184,14 +209,34 @@ def detect_image_params_from_history(history: list) -> dict:
     params = {}
     
     # Search recent messages for model
-    recent = history[-10:] if len(history) > 10 else history
-    full_text = ' '.join([msg.get('content', '') for msg in recent])
+    recent = history[-14:] if len(history) > 14 else history
     
-    # Detect model
-    for model_name, pattern in IMAGE_MODEL_PATTERNS.items():
-        if pattern.search(full_text):
-            params['model'] = model_name
-            break
+    # Detect model from MOST RECENT USER messages first (priority to user's explicit selection)
+    # This prevents matching 'GPT' from the bot's model listing message
+    for msg in reversed(recent):
+        if msg.get('role') == 'user':
+            content = msg.get('content', '').strip()
+            for model_name, pattern in IMAGE_MODEL_PATTERNS.items():
+                if pattern.search(content):
+                    params['model'] = model_name
+                    break
+            if 'model' in params:
+                break
+    
+    # If no model found in user messages, check assistant CONFIRMATION messages only
+    if 'model' not in params:
+        for msg in reversed(recent):
+            if msg.get('role') == 'assistant':
+                content = msg.get('content', '')
+                # Only check confirmation-style messages, not model listings
+                confirmation_phrases = ['chosen', 'selected', 'elegido', 'seleccionado', 'usaremos', 'using', 'usaré']
+                if any(phrase in content.lower() for phrase in confirmation_phrases):
+                    for model_name, pattern in IMAGE_MODEL_PATTERNS.items():
+                        if pattern.search(content):
+                            params['model'] = model_name
+                            break
+                    if 'model' in params:
+                        break
     
     # Get the prompt (most recent user message that's not a confirmation or model selection)
     for msg in reversed(recent):
@@ -200,11 +245,14 @@ def detect_image_params_from_history(history: list) -> dict:
             # Skip confirmation messages
             if is_confirmation(content):
                 continue
-            # Skip model selection messages
-            if re.match(r'^(gpt|nano[-\s]?banana)[\s.,!?]*$', content, re.IGNORECASE):
+            # Skip model selection messages (standalone model names)
+            if re.match(r'^\s*(?:gpt|nano[-\s]?banana|freepik)\s*[.,!?]*$', content, re.IGNORECASE):
                 continue
             # Skip generic "create image" type messages (too vague)
-            if re.match(r'^(i want to create|quiero crear|genera?r?)\s+(an?\s+)?image?s?[\s.,!?]*$', content, re.IGNORECASE):
+            if re.match(r'^\s*(?:i want to |quiero |me gustaría )?(?:create|make|genera[rt]?|crea[rt]?|haz(?:me)?)\s+(?:a\s+|an\s+|un\s+|una\s+)?(?:image|imagen|picture|foto|photo)s?\s*[.,!?]*$', content, re.IGNORECASE):
+                continue
+            # Skip cost-related questions
+            if re.match(r'^.*(?:cost|token|cuánto|cuanto|precio|price|how much).*$', content, re.IGNORECASE) and len(content) < 60:
                 continue
             # This is likely the actual prompt (skip very short messages)
             if len(content) > 3:
@@ -924,11 +972,28 @@ Keep it brief and helpful."""
                 ref_files = await self.get_reference_files()
                 ref_urls = [f["url"] for f in ref_files if f.get("type") == "image"] if ref_files else []
                 
-                # Detect if this is video or image
+                # Include the current response_text in history for better param detection
+                history_with_current = history + [{'role': 'assistant', 'content': response_text}]
+                
+                # Detect if this is video or image by checking BOTH response AND conversation history
                 response_lower = response_text.lower()
-                if any(word in response_lower for word in ['video', 'vídeo', 'animar', 'animate', 'sora', 'veo', 'runway', 'kling']):
-                    # Include the current response_text in history for better param detection
-                    history_with_current = history + [{'role': 'assistant', 'content': response_text}]
+                history_text = ' '.join([m.get('content', '') for m in history[-10:]]).lower()
+                
+                is_video_context = any(word in response_lower for word in ['video', 'vídeo', 'animar', 'animate', 'sora', 'veo', 'runway', 'kling'])
+                is_image_context = any(word in response_lower for word in ['imagen', 'image', 'foto', 'picture'])
+                
+                # If response doesn't have clear keywords, check conversation history
+                if not is_video_context and not is_image_context:
+                    # Check if tokens/sec pattern exists (video-specific)
+                    if re.search(r'tokens?/se[cg]', response_lower) or re.search(r'tokens?/se[cg]', history_text):
+                        is_video_context = True
+                    # Check conversation history for video model mentions
+                    elif any(word in history_text for word in ['video', 'vídeo', 'sora', 'veo', 'runway', 'kling']):
+                        is_video_context = True
+                    elif any(word in history_text for word in ['imagen', 'image', 'gpt', 'nano banana', 'freepik']):
+                        is_image_context = True
+                
+                if is_video_context:
                     params = detect_video_params_from_history(history_with_current)
                     if params.get('model') and params.get('duration'):
                         action_args = {
@@ -944,9 +1009,9 @@ Keep it brief and helpful."""
                             action_args,
                             response_text
                         )
-                elif any(word in response_lower for word in ['imagen', 'image', 'gpt', 'nano banana']):
+                elif is_image_context:
                     # Detect image generation
-                    params = detect_image_params_from_history(history)
+                    params = detect_image_params_from_history(history_with_current)
                     if params.get('model'):
                         action_args = {
                             "prompt": params.get('prompt', 'generate image'),
@@ -1000,7 +1065,7 @@ Keep it brief and helpful."""
         
         # Check if the tool result indicates an actual error
         if tool_result_lower.startswith("error"):
-            return f"⚠️ Hubo un problema al procesar tu solicitud: {tool_result}"
+            return f"⚠️ There was a problem processing your request: {tool_result}"
         
         # Only return success if the tool result confirms success
         is_success = any(word in tool_result_lower for word in [
