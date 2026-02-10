@@ -303,10 +303,17 @@ def detect_video_params_from_history(history: list) -> dict:
             if re.match(r'^\s*\d+\s*(?:segundos?|seconds?|seg|sec|s)?\s*[\.!?]*$', content, re.IGNORECASE):
                 continue
             # Skip generic video/image creation messages (too vague to be a prompt)
-            if re.match(r'^\s*(?:i want to |quiero |me gustaría )?(?:create|make|genera[rt]?|crea[rt]?|haz(?:me)?)\s+(?:a\s+|un\s+|una\s+)?(?:video|vídeo|imagen|image|clip)\s*[.,!?]*$', content, re.IGNORECASE):
+            if re.match(r'^\s*(?:i want to |quiero |me gustaría )?(?:create|make|genera[rt]?|crea[rt]?|haz(?:me)?|anima[rt]?|animate)\s+(?:a\s+|un\s+|una\s+)?(?:video|vídeo|imagen|image|clip)\s*[.,!?]*$', content, re.IGNORECASE):
                 continue
+            # Skip creation COMMANDS that include model names or durations (these are instructions, NOT descriptive prompts)
+            # e.g., "Genera un video de esta imagen con veo 3.1 fast de 4s" or "Create a video with sora 2 pro 8 seconds"
+            if re.search(r'(?:crea[rt]?|genera[rt]?|make|create|haz(?:me)?|anima[rt]?|animate)\s+.*(?:video|vídeo|imagen|image|clip)', content, re.IGNORECASE):
+                has_video_model = any(p.search(content) for p in VIDEO_MODEL_PATTERNS.values())
+                has_image_model = any(p.search(content) for p in IMAGE_MODEL_PATTERNS.values())
+                has_duration = bool(DURATION_PATTERN.search(content))
+                if has_video_model or has_image_model or has_duration:
+                    continue
             # Skip cost-related questions (not a prompt)
-            if re.match(r'^.*(?:cost|token|cuánto|cuanto|precio|price|how much|what will).*(?:cost|token|cuánto|cuanto)?.*$', content, re.IGNORECASE) and len(content) < 60:
                 continue
             # Skip language-change requests (not descriptive prompts)
             if re.search(r'\b(?:speak|talk|habla|responde)\s+(?:in\s+)?(?:english|español|spanish|inglés)\b', content, re.IGNORECASE) and len(content) < 60:
@@ -465,6 +472,13 @@ def detect_image_params_from_history(history: list) -> dict:
             # Skip generic "create image" type messages (too vague)
             if re.match(r'^\s*(?:i want to |quiero |me gustaría )?(?:create|make|genera[rt]?|crea[rt]?|haz(?:me)?)\s+(?:a\s+|an\s+|un\s+|una\s+)?(?:image|imagen|picture|foto|photo)s?\s*[.,!?]*$', content, re.IGNORECASE):
                 continue
+            # Skip creation COMMANDS that include model names or durations (instructions, NOT descriptive prompts)
+            # e.g., "Genera una imagen con GPT de una rana" or "Create an image with Freepik"
+            if re.search(r'(?:crea[rt]?|genera[rt]?|make|create|haz(?:me)?)\s+.*(?:image|imagen|picture|foto|photo)', content, re.IGNORECASE):
+                has_image_model = any(p.search(content) for p in IMAGE_MODEL_PATTERNS.values())
+                has_video_model = any(p.search(content) for p in VIDEO_MODEL_PATTERNS.values())
+                if has_image_model or has_video_model:
+                    continue
             # Skip cost-related questions
             if re.match(r'^.*(?:cost|token|cuánto|cuanto|precio|price|how much).*$', content, re.IGNORECASE) and len(content) < 60:
                 continue
@@ -630,7 +644,12 @@ class GeminiChatbot:
         3. BEFORE calling generate_video, you MUST ALWAYS follow this EXACT workflow IN ORDER:
            STEP 1 - ASK FOR THE PROMPT FIRST (ALWAYS):
            - Ask: "What do you want the video to show? Describe the action, scene, or animation you want." (in user's language)
-           - If the user already provided a clear prompt/description in their message, take that as the prompt and move to Step 2.
+           - If the user already provided a clear DESCRIPTIVE prompt in their message (NOT just a command), take that as the prompt and move to Step 2.
+           - ⚠️ COMMAND vs PROMPT DISTINCTION (CRITICAL):
+             - A COMMAND is an instruction like "Genera un video de esta imagen con veo 3.1 flash de 4s" or "Create a video with sora 2" → This is NOT a prompt. You MUST still ask for a descriptive prompt.
+             - A PROMPT is a description like "Una rana saltando entre lianas en la selva, con gotas de agua cayendo" → This IS a prompt.
+             - If the message contains a model name (sora, veo, runway, kling) or duration (Xs, X seconds), it's a COMMAND, not a prompt.
+             - ALWAYS ask: "Describe the motion/animation you want for the video" even if the user provided a command with all other parameters.
            - If the user has an attached image and says something like "animate this" or "create a video from this", ask them to describe what movement/action they want.
            - Wait for the user's response. SAVE this descriptive text mentally as THE_PROMPT.
            STEP 2 - OFFER TO HELP WITH THE PROMPT:
