@@ -20,7 +20,8 @@ CONFIRMATION_PATTERNS = re.compile(
     r'^(?:ok|okey|okay|si|sí|yes|dale|confirmo|confirmar|procede|proceed|hazlo|do it|'
     r'adelante|claro|sure|yep|yeah|afirmativo|correcto|eso|exacto|perfecto|listo|va|'
     r'venga|vamos|go|go ahead|lets go|let\'s go|bueno|bien|hecho|agreed|confirm|acepto|'
-    r'accept|y|s|1|👍|✅|done|ready|ok dale|si dale|ya|anda|órale|sale)[\s.,!?]*$',
+    r'accept|y|s|1|👍|✅|done|ready|ok dale|si dale|ya|anda|órale|sale|'
+    r'approve|approved|apruebo|aprobado|yes\s+please|si\s+por\s+favor|sí\s+por\s+favor)[\s.,!?]*$',
     re.IGNORECASE
 )
 
@@ -123,26 +124,46 @@ def detect_video_params_from_history(history: list) -> dict:
     # Search recent messages (last 14) for model and duration
     recent = history[-14:] if len(history) > 14 else history
     
-    # Detect model from MOST RECENT USER messages first (priority to user's explicit selection)
-    # This prevents assistant messages (which list ALL models) from matching the wrong one
+    # Priority 0: Check the MOST RECENT assistant cost/confirmation message for the model
+    # This is the MOST AUTHORITATIVE source as it reflects the final agreed-upon model
+    # (e.g., when user changes model mid-conversation like "make it std")
     for msg in reversed(recent):
-        if msg.get('role') == 'user':
+        if msg.get('role') == 'assistant':
             content = msg.get('content', '')
-            for model_name, pattern in VIDEO_MODEL_PATTERNS.items():
-                if pattern.search(content):
-                    params['model'] = model_name
-                    break
+            content_lower = content.lower()
+            # Only check messages that look like cost confirmations (not model listings)
+            is_cost_confirm = any(word in content_lower for word in ['cost', 'costará', '×', 'tokens/se'])
+            has_model_listing = any(listing in content for listing in ['- Runway', '- Veo', '- Sora', '- Kling'])
+            if is_cost_confirm and not has_model_listing:
+                for model_name, pattern in VIDEO_MODEL_PATTERNS.items():
+                    if pattern.search(content):
+                        params['model'] = model_name
+                        break
             if 'model' in params:
                 break
+            break  # Only check the MOST RECENT assistant message
     
-    # If no model found in user messages, check assistant's CONFIRMATION messages
+    # Priority 1: Detect model from MOST RECENT USER messages
+    # This prevents assistant messages (which list ALL models) from matching the wrong one
+    if 'model' not in params:
+        for msg in reversed(recent):
+            if msg.get('role') == 'user':
+                content = msg.get('content', '')
+                for model_name, pattern in VIDEO_MODEL_PATTERNS.items():
+                    if pattern.search(content):
+                        params['model'] = model_name
+                        break
+                if 'model' in params:
+                    break
+    
+    # Priority 2: If no model found in user messages, check assistant's CONFIRMATION messages
     # (e.g., "You've selected Kling V3 Omni Std") but NOT model listing messages
     if 'model' not in params:
         for msg in reversed(recent):
             if msg.get('role') == 'assistant':
                 content = msg.get('content', '')
                 # Only check confirmation-style messages, not model listings
-                confirmation_phrases = ['selected', 'chosen', 'elegido', 'seleccionado', 'usaremos', 'you\'ve chosen']
+                confirmation_phrases = ['selected', 'chosen', 'elegido', 'seleccionado', 'usaremos', 'you\'ve chosen', 'using the', 'you want']
                 if any(phrase in content.lower() for phrase in confirmation_phrases):
                     for model_name, pattern in VIDEO_MODEL_PATTERNS.items():
                         if pattern.search(content):
@@ -185,17 +206,39 @@ def detect_video_params_from_history(history: list) -> dict:
         if msg.get('role') == 'user':
             content = msg.get('content', '')
             
-            # Check for refined prompt acceptance FIRST
-            if REFINED_PROMPT_ACCEPTANCE_PATTERN.search(content):
+            # --- INTELLIGENT CONTEXTUAL ACCEPTANCE CHECK ---
+            # Check if this message is accepting/approving a refined prompt proposed by the assistant
+            # This handles explicit patterns ("use that prompt") AND contextual ones ("sure", "looks good", "ok")
+            
+            # 1. Is explicit pattern?
+            is_explicit = REFINED_PROMPT_ACCEPTANCE_PATTERN.search(content)
+            
+            # 2. Is contextual acceptance? (Assistant asked to approve/refine + User says something short/positive)
+            is_contextual = False
+            if i + 1 < len(recent_reversed):
+                prev_msg = recent_reversed[i+1]
+                if prev_msg.get('role') == 'assistant':
+                    prev_text = prev_msg.get('content', '').lower()
+                    # Did assistant propose something?
+                    if any(x in prev_text for x in ['refined prompt', 'prompt refinado', 'improved prompt', 'approve', 'confirm', 'te parece', 'do you like', 'how about']):
+                         # Is user response compatible with acceptance?
+                         if len(content.split()) < 15: # Not a full long description
+                             # Check for negative words or change requests
+                             if not any(neg in content.lower() for neg in ['no', 'bad', 'wrong', 'mal', 'incorrect', 'change', 'cambia', 'don\'t', 'not']):
+                                 is_contextual = True
+
+            if is_explicit or is_contextual:
                 # Search previous ASSISTANT messages for the refined prompt
                 for j in range(i + 1, len(recent_reversed)):
                     prev_msg = recent_reversed[j]
                     if prev_msg.get('role') == 'assistant':
                          cand = prev_msg.get('content', '')
+                         # Priority 1: Text between quotes (refined prompts are usually quoted)
                          quote_match = re.search(r'["\u201c]([^"\u201d]{15,})["\u201d]', cand)
                          if quote_match:
                              params['prompt'] = quote_match.group(1)
                          else:
+                             # Priority 2: Cleaning heuristics if not quoted
                              cleaned = re.sub(r'^(?:Here is|Aquí tienes|Esta es|Propuesta|Aquí hay).*:[\r\n\s]*', '', cand, flags=re.IGNORECASE)
                              cleaned = re.sub(r'[\r\n\s]*(?:Do you like|Te gusta|Te parece|Qué te parece|¿|Confirmas).*$', '', cleaned, flags=re.IGNORECASE | re.DOTALL)
                              cleaned = cleaned.strip()
@@ -204,9 +247,22 @@ def detect_video_params_from_history(history: list) -> dict:
                          break
                 if 'prompt' in params:
                     break
-
-            # Skip confirmation messages
+            
+            # Skip confirmation messages - but check for refined prompt in preceding assistant message
             if is_confirmation(content):
+                # When user confirms/approves, the preceding assistant message may contain the refined prompt
+                for j in range(i + 1, len(recent_reversed)):
+                    prev_msg = recent_reversed[j]
+                    if prev_msg.get('role') == 'assistant':
+                        cand = prev_msg.get('content', '')
+                        # Don't extract from model listing messages
+                        if not any(listing in cand for listing in ['- Runway', '- Veo', '- Sora', '- Kling']):
+                            quote_match = re.search(r'["\u201c]([^"\u201d]{15,})["\u201d]', cand)
+                            if quote_match:
+                                params['prompt'] = quote_match.group(1)
+                        break
+                if 'prompt' in params:
+                    break
                 continue
             # Skip STANDALONE model selection (just "sora 2" alone, "kling v3 omni pro", etc.)
             if re.match(r'^\s*(sora[-\s]?2[-\s]?(?:pro)?|veo[-\s]?3\.?1[-\s]?(?:flash|ultra)?|kling[-\s]?(?:v?3[-\s]?omni[-\s]?(?:pro|std))?|runway[-\s]?(?:aleph|4\.?5)?|haiper|minimax)\s*[.,!?]*$', content, re.IGNORECASE):
@@ -220,12 +276,35 @@ def detect_video_params_from_history(history: list) -> dict:
             # Skip cost-related questions (not a prompt)
             if re.match(r'^.*(?:cost|token|cuánto|cuanto|precio|price|how much|what will).*(?:cost|token|cuánto|cuanto)?.*$', content, re.IGNORECASE) and len(content) < 60:
                 continue
+            # Skip language-change requests (not descriptive prompts)
+            if re.search(r'\b(?:speak|talk|habla|responde)\s+(?:in\s+)?(?:english|español|spanish|inglés)\b', content, re.IGNORECASE) and len(content) < 60:
+                continue
+            # Skip model/parameter change requests (not descriptive prompts)
+            if len(content) < 80 and re.search(r'\b(?:make\s+it|change\s+(?:it\s+)?to|switch\s+to|cambia|hazlo)\b', content, re.IGNORECASE) and re.search(r'\b(?:std|pro|flash|ultra|aleph|standard)\b', content, re.IGNORECASE):
+                continue
+            # Skip questions (not descriptive prompts)
+            if content.strip().endswith('?') and len(content) < 60:
+                continue
             # Skip very short messages that are likely answers to questions, not prompts
             if len(content) <= 3:
                 continue
             # This is likely the actual prompt - USE IT AS IS, don't modify it
             params['prompt'] = content
             break
+    
+    # Fallback: If no prompt found from user messages, look in assistant messages for quoted text
+    # (refined prompts are usually shown between quotes in assistant responses)
+    if 'prompt' not in params:
+        for msg in reversed(recent):
+            if msg.get('role') == 'assistant':
+                content = msg.get('content', '')
+                # Don't extract from model listing messages
+                if any(listing in content for listing in ['- Runway', '- Veo', '- Sora', '- Kling']):
+                    continue
+                quote_match = re.search(r'["\u201c]([^"\u201d]{15,})["\u201d]', content)
+                if quote_match:
+                    params['prompt'] = quote_match.group(1)
+                    break
     
     return params
 
@@ -272,8 +351,28 @@ def detect_image_params_from_history(history: list) -> dict:
         if msg.get('role') == 'user':
             content = msg.get('content', '')
             
-            # Check for refined prompt acceptance FIRST (e.g. "me gusta ese prompt")
-            if REFINED_PROMPT_ACCEPTANCE_PATTERN.search(content):
+            # --- INTELLIGENT CONTEXTUAL ACCEPTANCE CHECK ---
+            # Check if this message is accepting/approving a refined prompt proposed by the assistant
+            # This handles explicit patterns ("use that prompt") AND contextual ones ("sure", "looks good", "ok")
+            
+            # 1. Is explicit pattern?
+            is_explicit = REFINED_PROMPT_ACCEPTANCE_PATTERN.search(content)
+            
+            # 2. Is contextual acceptance? (Assistant asked to approve/refine + User says something short/positive)
+            is_contextual = False
+            if i + 1 < len(recent_reversed):
+                prev_msg = recent_reversed[i+1]
+                if prev_msg.get('role') == 'assistant':
+                    prev_text = prev_msg.get('content', '').lower()
+                    # Did assistant propose something?
+                    if any(x in prev_text for x in ['refined prompt', 'prompt refinado', 'improved prompt', 'approve', 'confirm', 'te parece', 'do you like', 'how about']):
+                         # Is user response compatible with acceptance?
+                         if len(content.split()) < 15: # Not a full long description
+                             # Check for negative words or change requests
+                             if not any(neg in content.lower() for neg in ['no', 'bad', 'wrong', 'mal', 'incorrect', 'change', 'cambia', 'don\'t', 'not']):
+                                 is_contextual = True
+
+            if is_explicit or is_contextual:
                 # Search previous ASSISTANT messages for the refined prompt
                 for j in range(i + 1, len(recent_reversed)):
                     prev_msg = recent_reversed[j]
@@ -285,9 +384,7 @@ def detect_image_params_from_history(history: list) -> dict:
                              params['prompt'] = quote_match.group(1)
                          else:
                              # Cleaning heuristics:
-                             # Remove common preambles like "Here is..."
                              cleaned = re.sub(r'^(?:Here is|Aquí tienes|Esta es|Propuesta|Aquí hay).*:[\r\n\s]*', '', cand, flags=re.IGNORECASE)
-                             # Remove questions/confirmations at the end
                              cleaned = re.sub(r'[\r\n\s]*(?:Do you like|Te gusta|Te parece|Qué te parece|¿|Confirmas).*$', '', cleaned, flags=re.IGNORECASE | re.DOTALL)
                              cleaned = cleaned.strip()
                              if len(cleaned) > 10:
@@ -295,9 +392,22 @@ def detect_image_params_from_history(history: list) -> dict:
                          break
                 if 'prompt' in params:
                     break
-
-            # Skip confirmation messages
+            
+            # Skip confirmation messages - but check for refined prompt in preceding assistant message
             if is_confirmation(content):
+                # When user confirms/approves, the preceding assistant message may contain the refined prompt
+                for j in range(i + 1, len(recent_reversed)):
+                    prev_msg = recent_reversed[j]
+                    if prev_msg.get('role') == 'assistant':
+                        cand = prev_msg.get('content', '')
+                        # Don't extract from model listing messages
+                        if not any(listing in cand for listing in ['Nano Banana', 'GPT', 'Freepik']):
+                            quote_match = re.search(r'["\u201c]([^"\u201d]{15,})["\u201d]', cand)
+                            if quote_match:
+                                params['prompt'] = quote_match.group(1)
+                        break
+                if 'prompt' in params:
+                    break
                 continue
             # Skip model selection messages (standalone model names)
             if re.match(r'^\s*(?:gpt|nano[-\s]?banana|freepik)\s*[.,!?]*$', content, re.IGNORECASE):
@@ -308,10 +418,33 @@ def detect_image_params_from_history(history: list) -> dict:
             # Skip cost-related questions
             if re.match(r'^.*(?:cost|token|cuánto|cuanto|precio|price|how much).*$', content, re.IGNORECASE) and len(content) < 60:
                 continue
-            # This is likely the actual prompt (skip very short messages)
+            # Skip language-change requests (not descriptive prompts)
+            if re.search(r'\b(?:speak|talk|habla|responde)\s+(?:in\s+)?(?:english|español|spanish|inglés)\b', content, re.IGNORECASE) and len(content) < 60:
+                continue
+            # Skip questions (not descriptive prompts)
+            if content.strip().endswith('?') and len(content) < 60:
+                continue
+            # Skip very short messages that are likely answers to questions, not prompts
+            if len(content) <= 3:
+                continue
+            # This is likely the actual prompt (use as-is)
             if len(content) > 3:
                 params['prompt'] = content
                 break
+    
+    # Fallback: If no prompt found from user messages, look in assistant messages for quoted text
+    # (refined prompts are usually shown between quotes in assistant responses)
+    if 'prompt' not in params:
+        for msg in reversed(recent):
+            if msg.get('role') == 'assistant':
+                content = msg.get('content', '')
+                # Don't extract from model listing messages
+                if 'Nano Banana' in content and 'GPT' in content and 'Freepik' in content:
+                    continue
+                quote_match = re.search(r'["\u201c]([^"\u201d]{15,})["\u201d]', content)
+                if quote_match:
+                    params['prompt'] = quote_match.group(1)
+                    break
     
     return params
 
