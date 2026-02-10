@@ -17,11 +17,25 @@ load_dotenv()
 
 # Pattern matching for confirmations
 CONFIRMATION_PATTERNS = re.compile(
-    r'^(?:ok|okey|okay|si|sí|yes|dale|confirmo|confirmar|procede|proceed|hazlo|do it|'
-    r'adelante|claro|sure|yep|yeah|afirmativo|correcto|eso|exacto|perfecto|listo|va|'
-    r'venga|vamos|go|go ahead|lets go|let\'s go|bueno|bien|hecho|agreed|confirm|acepto|'
-    r'accept|y|s|1|👍|✅|done|ready|ok dale|si dale|ya|anda|órale|sale|'
-    r'approve|approved|apruebo|aprobado|yes\s+please|si\s+por\s+favor|sí\s+por\s+favor)[\s.,!?]*$',
+    r'^(?:'
+    # Multi-word patterns (more specific, checked first)
+    r'ok dale|si dale|yes\s+please|si\s+por\s+favor|sí\s+por\s+favor|'
+    r'go ahead|lets go|let\'s go|do it|'
+    r'me gusta\s+(?:ese|esa|eso|este|esta)|me encanta\s+(?:ese|esa|eso|este|esta)|'
+    r'me parece bien|suena bien|sounds good|looks good|that works|love it|like it|'
+    r'that\'s good|that\'s great|that\'s fine|'
+    r'está bien|esta bien|se ve bien|de acuerdo|'
+    r'está genial|esta genial|así está bien|así mero|eso mero|'
+    # Single/short word confirmations
+    r'ok|okey|okay|yes|sure|yep|yeah|go|agreed|confirm|accept|done|ready|'
+    r'proceed|approve|approved|nice|cool|awesome|amazing|'
+    r'si|sí|dale|confirmo|confirmar|procede|hazlo|adelante|claro|afirmativo|'
+    r'correcto|eso|exacto|perfecto|listo|va|venga|vamos|bueno|bien|hecho|'
+    r'acepto|apruebo|aprobado|ya|anda|órale|sale|'
+    # Acceptance/approval phrases (critical for refined prompt acceptance)
+    r'me gusta|me encanta|genial|excelente|fantástico|así|le doy|'
+    r'y|s|1|👍|✅'
+    r')[\s.,!?]*$',
     re.IGNORECASE
 )
 
@@ -219,8 +233,17 @@ def detect_video_params_from_history(history: list) -> dict:
                 prev_msg = recent_reversed[i+1]
                 if prev_msg.get('role') == 'assistant':
                     prev_text = prev_msg.get('content', '').lower()
-                    # Did assistant propose something?
-                    if any(x in prev_text for x in ['refined prompt', 'prompt refinado', 'improved prompt', 'approve', 'confirm', 'te parece', 'do you like', 'how about']):
+                    # Did assistant propose something? (covers both English and Spanish)
+                    proposal_phrases = [
+                        'refined prompt', 'prompt refinado', 'improved prompt',
+                        'approve', 'te parece', 'do you like', 'how about',
+                        'te gusta', 'prefieres', 'refinar', 'mejorar',
+                        'podríamos', 'algo como', 'something like',
+                        'sugiero', 'suggest', 'te gustaría', 'would you like',
+                        'aquí tienes', 'here is a', 'quieres que',
+                        'usar el tuyo', 'use your', 'tu original'
+                    ]
+                    if any(x in prev_text for x in proposal_phrases):
                          # Is user response compatible with acceptance?
                          if len(content.split()) < 15: # Not a full long description
                              # Check for negative words or change requests
@@ -233,6 +256,11 @@ def detect_video_params_from_history(history: list) -> dict:
                     prev_msg = recent_reversed[j]
                     if prev_msg.get('role') == 'assistant':
                          cand = prev_msg.get('content', '')
+                         # Skip cost confirmations and model listings - keep searching deeper
+                         if COST_CONFIRMATION_PATTERN.search(cand) and len(cand) < 80:
+                             continue
+                         if any(listing in cand for listing in ['- Runway', '- Veo', '- Sora', '- Kling']):
+                             continue
                          # Priority 1: Text between quotes (refined prompts are usually quoted)
                          quote_match = re.search(r'["\u201c]([^"\u201d]{15,})["\u201d]', cand)
                          if quote_match:
@@ -255,11 +283,15 @@ def detect_video_params_from_history(history: list) -> dict:
                     prev_msg = recent_reversed[j]
                     if prev_msg.get('role') == 'assistant':
                         cand = prev_msg.get('content', '')
-                        # Don't extract from model listing messages
-                        if not any(listing in cand for listing in ['- Runway', '- Veo', '- Sora', '- Kling']):
-                            quote_match = re.search(r'["\u201c]([^"\u201d]{15,})["\u201d]', cand)
-                            if quote_match:
-                                params['prompt'] = quote_match.group(1)
+                        # Skip cost confirmations and model listings - search deeper
+                        if COST_CONFIRMATION_PATTERN.search(cand) and len(cand) < 80:
+                            continue
+                        if any(listing in cand for listing in ['- Runway', '- Veo', '- Sora', '- Kling']):
+                            continue
+                        # Try to extract quoted prompt
+                        quote_match = re.search(r'["\u201c]([^"\u201d]{15,})["\u201d]', cand)
+                        if quote_match:
+                            params['prompt'] = quote_match.group(1)
                         break
                 if 'prompt' in params:
                     break
@@ -364,8 +396,17 @@ def detect_image_params_from_history(history: list) -> dict:
                 prev_msg = recent_reversed[i+1]
                 if prev_msg.get('role') == 'assistant':
                     prev_text = prev_msg.get('content', '').lower()
-                    # Did assistant propose something?
-                    if any(x in prev_text for x in ['refined prompt', 'prompt refinado', 'improved prompt', 'approve', 'confirm', 'te parece', 'do you like', 'how about']):
+                    # Did assistant propose something? (covers both English and Spanish)
+                    proposal_phrases = [
+                        'refined prompt', 'prompt refinado', 'improved prompt',
+                        'approve', 'te parece', 'do you like', 'how about',
+                        'te gusta', 'prefieres', 'refinar', 'mejorar',
+                        'podríamos', 'algo como', 'something like',
+                        'sugiero', 'suggest', 'te gustaría', 'would you like',
+                        'aquí tienes', 'here is a', 'quieres que',
+                        'usar el tuyo', 'use your', 'tu original'
+                    ]
+                    if any(x in prev_text for x in proposal_phrases):
                          # Is user response compatible with acceptance?
                          if len(content.split()) < 15: # Not a full long description
                              # Check for negative words or change requests
@@ -378,12 +419,17 @@ def detect_image_params_from_history(history: list) -> dict:
                     prev_msg = recent_reversed[j]
                     if prev_msg.get('role') == 'assistant':
                          cand = prev_msg.get('content', '')
-                         # Extract text between quotes if possible (often refined prompts are quoted)
+                         # Skip cost confirmations and model listings - keep searching deeper
+                         if COST_CONFIRMATION_PATTERN.search(cand) and len(cand) < 80:
+                             continue
+                         if any(listing in cand for listing in ['Nano Banana', 'GPT', 'Freepik']):
+                             continue
+                         # Priority 1: Text between quotes (refined prompts are usually quoted)
                          quote_match = re.search(r'["\u201c]([^"\u201d]{15,})["\u201d]', cand)
                          if quote_match:
                              params['prompt'] = quote_match.group(1)
                          else:
-                             # Cleaning heuristics:
+                             # Priority 2: Cleaning heuristics if not quoted
                              cleaned = re.sub(r'^(?:Here is|Aquí tienes|Esta es|Propuesta|Aquí hay).*:[\r\n\s]*', '', cand, flags=re.IGNORECASE)
                              cleaned = re.sub(r'[\r\n\s]*(?:Do you like|Te gusta|Te parece|Qué te parece|¿|Confirmas).*$', '', cleaned, flags=re.IGNORECASE | re.DOTALL)
                              cleaned = cleaned.strip()
@@ -400,11 +446,15 @@ def detect_image_params_from_history(history: list) -> dict:
                     prev_msg = recent_reversed[j]
                     if prev_msg.get('role') == 'assistant':
                         cand = prev_msg.get('content', '')
-                        # Don't extract from model listing messages
-                        if not any(listing in cand for listing in ['Nano Banana', 'GPT', 'Freepik']):
-                            quote_match = re.search(r'["\u201c]([^"\u201d]{15,})["\u201d]', cand)
-                            if quote_match:
-                                params['prompt'] = quote_match.group(1)
+                        # Skip cost confirmations and model listings - search deeper
+                        if COST_CONFIRMATION_PATTERN.search(cand) and len(cand) < 80:
+                            continue
+                        if any(listing in cand for listing in ['Nano Banana', 'GPT', 'Freepik']):
+                            continue
+                        # Try to extract quoted prompt
+                        quote_match = re.search(r'["\u201c]([^"\u201d]{15,})["\u201d]', cand)
+                        if quote_match:
+                            params['prompt'] = quote_match.group(1)
                         break
                 if 'prompt' in params:
                     break
