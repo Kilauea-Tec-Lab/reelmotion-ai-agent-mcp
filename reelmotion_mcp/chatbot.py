@@ -810,6 +810,7 @@ class GeminiChatbot:
           → "I'm going to generate the following speech:" (in user's language)
           → "Text: [THE_SPEECH_TEXT]"
           → "Voice: [THE_VOICE name]"
+          → "Cost: 5 tokens"
           → "Do you confirm?" (in user's language)
         - ⛔ DO NOT call the tool until the user explicitly confirms.
         - Once confirmed, CALL generate_speech immediately using:
@@ -1176,11 +1177,30 @@ class GeminiChatbot:
                         if candidate.content and candidate.content.parts:
                             candidate_parts = candidate.content.parts
                     parts_to_check = candidate_parts if candidate_parts is not None else response.parts
+                    
+                    # Debug: log all parts to understand Gemini's response
+                    if parts_to_check:
+                        for idx, part in enumerate(parts_to_check):
+                            has_fc = hasattr(part, 'function_call')
+                            has_text = hasattr(part, 'text') and part.text
+                            fc_name = None
+                            if has_fc:
+                                try:
+                                    fc_name = part.function_call.name if part.function_call else None
+                                except Exception:
+                                    pass
+                            print(f"DEBUG [parts]: Part {idx}: has_fc={has_fc}, fc_name={fc_name}, has_text={has_text}")
+                    
                     if parts_to_check:
                         for part in parts_to_check:
-                            if hasattr(part, "function_call") and part.function_call:
-                                fc = part.function_call
-                                break
+                            if hasattr(part, "function_call"):
+                                try:
+                                    fc_candidate = part.function_call
+                                    if fc_candidate and hasattr(fc_candidate, 'name') and fc_candidate.name:
+                                        fc = fc_candidate
+                                        break
+                                except Exception as e:
+                                    print(f"DEBUG [parts]: Error accessing function_call: {e}")
 
                     if not fc:
                         break
@@ -1326,7 +1346,45 @@ If the user requested an image or video, ask for the missing parameters (model, 
 If you cannot determine what the user wants, ask them to clarify.
 Keep it brief and helpful."""
                             recovery_response = await self.chat_session.send_message_async(recovery_prompt)
-                            if recovery_response.text:
+                            
+                            # Check if recovery response has a function_call (Gemini insists on calling tool)
+                            recovery_fc = None
+                            if recovery_response.candidates and len(recovery_response.candidates) > 0:
+                                rc = recovery_response.candidates[0]
+                                if rc.content and rc.content.parts:
+                                    for rpart in rc.content.parts:
+                                        if hasattr(rpart, 'function_call'):
+                                            try:
+                                                rfc = rpart.function_call
+                                                if rfc and hasattr(rfc, 'name') and rfc.name:
+                                                    recovery_fc = rfc
+                                                    break
+                                            except Exception:
+                                                pass
+                            
+                            if recovery_fc:
+                                # Recovery also wants to call a tool - execute it
+                                rfunc_name = recovery_fc.name
+                                rfunc_args = dict(recovery_fc.args)
+                                print(f"DEBUG: Recovery found function_call: {rfunc_name}({rfunc_args})")
+                                try:
+                                    if rfunc_name == "generate_image":
+                                        tool_result = await generate_image(**rfunc_args)
+                                    elif rfunc_name == "generate_video":
+                                        tool_result = await generate_video(**rfunc_args)
+                                    elif rfunc_name == "generate_speech":
+                                        tool_result = await generate_speech(**rfunc_args)
+                                    else:
+                                        tool_result = f"Error: Unknown function '{rfunc_name}'"
+                                    
+                                    tool_was_actually_called = True
+                                    last_tool_result = tool_result
+                                    response_text = self._generate_contextual_success_message(tool_result, tool_was_called=True)
+                                    print(f"DEBUG: Recovery tool execution success: {rfunc_name}")
+                                except Exception as te:
+                                    print(f"ERROR: Recovery tool execution failed: {te}")
+                                    response_text = f"⚠️ There was a problem: {str(te)}"
+                            elif recovery_response.text:
                                 response_text = recovery_response.text
                             else:
                                 response_text = "⚠️ I couldn't process your request. Could you try again with more details?"
