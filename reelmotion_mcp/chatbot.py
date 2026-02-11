@@ -923,7 +923,7 @@ class GeminiChatbot:
             response_text = self._generate_contextual_success_message(tool_result, tool_was_called=True)
             if not response_text:
                 # Fallback if message generation returns None (shouldn't happen for pending actions)
-                response_text = tool_result if tool_result else "⚠️ No se pudo determinar el resultado de la operación."
+                response_text = tool_result if tool_result else "⚠️ Could not determine the operation result."
             return tool_result, response_text
             
         except Exception as e:
@@ -1092,9 +1092,9 @@ class GeminiChatbot:
                         )
                         return response_text
                 # No pending action - ask user to clarify
-                clarification = "Lo siento, no entendí bien qué quieres hacer. ¿Podrías ser más específico? Por ejemplo:\n" \
-                               "- '¿Quieres crear un **video** o una **imagen**?'\n" \
-                               "- Si tienes una imagen de referencia: '¿Quieres **animarla** o **generar una imagen similar**?'"
+                clarification = "Sorry, I didn't quite understand what you want to do. Could you be more specific? For example:\n" \
+                               "- Do you want to create a **video** or an **image**?\n" \
+                               "- If you have a reference image: Do you want to **animate it** or **generate a similar image**?"
                 await self.session_manager.add_message(
                     self.conversation_uuid,
                     "assistant",
@@ -1186,7 +1186,7 @@ class GeminiChatbot:
                                 )
                                 return response_text
                         # No tool was called or result is empty - inform user
-                        error_msg = "⚠️ Hubo un problema procesando tu solicitud. Por favor, intenta de nuevo."
+                        error_msg = "⚠️ There was a problem processing your request. Please try again."
                         await self.session_manager.add_message(
                             self.conversation_uuid,
                             "assistant",
@@ -1227,7 +1227,7 @@ class GeminiChatbot:
                         
                         if is_error:
                             # Tool was called but FAILED - tell the user what went wrong
-                            response_text = f"⚠️ Hubo un problema al generar tu contenido: {last_tool_result}\nPor favor, intenta de nuevo o ajusta los parámetros."
+                            response_text = f"⚠️ There was a problem generating your content: {last_tool_result}\nPlease try again or adjust the parameters."
                         else:
                             # Tool was called and SUCCEEDED - generate success message
                             try:
@@ -1267,10 +1267,10 @@ Keep it brief and helpful."""
                             if recovery_response.text:
                                 response_text = recovery_response.text
                             else:
-                                response_text = "⚠️ No pude procesar tu solicitud. ¿Podrías intentar de nuevo con más detalles?"
+                                response_text = "⚠️ I couldn't process your request. Could you try again with more details?"
                         except Exception as e:
                             print(f"DEBUG: Failed to get recovery response: {e}")
-                            response_text = "⚠️ No pude procesar tu solicitud. ¿Podrías intentar de nuevo con más detalles?"
+                            response_text = "⚠️ I couldn't process your request. Could you try again with more details?"
 
             except ValueError as e:
                 # Handle Gemini safety or malformed content errors
@@ -1303,10 +1303,10 @@ Keep it brief and helpful."""
                         if recovery_response.text:
                             response_text = recovery_response.text
                         else:
-                            response_text = "⚠️ No pude procesar tu solicitud. ¿Podrías intentar de nuevo con más detalles?"
+                            response_text = "⚠️ I couldn't process your request. Could you try again with more details?"
                     except Exception as e:
                         print(f"DEBUG: Failed to get recovery response after MALFORMED_FUNCTION_CALL: {e}")
-                        response_text = "⚠️ No pude procesar tu solicitud. ¿Podrías intentar de nuevo con más detalles?"
+                        response_text = "⚠️ I couldn't process your request. Could you try again with more details?"
                 elif "finish_reason" in error_str or "response.text" in error_str:
                     print(f"WARNING: Gemini response error: {error_str}")
                     if tool_was_actually_called and last_tool_result:
@@ -1315,7 +1315,7 @@ Keep it brief and helpful."""
                         response_text = result_msg if result_msg else str(last_tool_result)
                     else:
                         # No tool was called - ask user to retry
-                        response_text = "⚠️ Hubo un problema procesando tu solicitud. Por favor, intenta de nuevo."
+                        response_text = "⚠️ There was a problem processing your request. Please try again."
                 else:
                     raise e
             
