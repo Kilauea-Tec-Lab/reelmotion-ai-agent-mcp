@@ -767,6 +767,11 @@ class GeminiChatbot:
              Alice (British News), Domi (Strong), Elli (Young), Jessica (Expressive), 
              Laura (Upbeat), Lily (British Warm), Matilda (Warm), Rachel (Professional), Sarah (Soft).
         5. NEVER mention the output URL/Data URI in the conversation text. The audio player will appear automatically.
+        
+        ═══════════════════════════════════════════════════
+        FINAL REMINDER (READ THIS LAST - HIGHEST PRIORITY)
+        ═══════════════════════════════════════════════════
+        LANGUAGE: Your response MUST be in the SAME language as the user's message. If the user writes in English, respond ONLY in English. If in Spanish, respond ONLY in Spanish. NO EXCEPTIONS.
         """
         
         full_system_prompt = f"{REELMOTION_SYSTEM_PROMPT}\n\n{tool_instructions}"
@@ -1059,8 +1064,8 @@ class GeminiChatbot:
             # Add the user's message
             parts.append(message)
             
-            # Send to Gemini with timeout (20 seconds max for initial response)
-            GEMINI_TIMEOUT = 20  # seconds - if it takes longer, something is wrong
+            # Send to Gemini with timeout (45 seconds max for initial response)
+            GEMINI_TIMEOUT = 45  # seconds - first messages with large system prompt can take longer
             try:
                 print(f"DEBUG [chatbot]: Sending message to Gemini (timeout={GEMINI_TIMEOUT}s)...")
                 import time
