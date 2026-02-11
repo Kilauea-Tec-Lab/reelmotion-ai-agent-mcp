@@ -229,26 +229,31 @@ def detect_video_params_from_history(history: list) -> dict:
             
             # 2. Is contextual acceptance? (Assistant asked to approve/refine + User says something short/positive)
             is_contextual = False
-            if i + 1 < len(recent_reversed):
-                prev_msg = recent_reversed[i+1]
-                if prev_msg.get('role') == 'assistant':
-                    prev_text = prev_msg.get('content', '').lower()
-                    # Did assistant propose something? (covers both English and Spanish)
-                    proposal_phrases = [
-                        'refined prompt', 'prompt refinado', 'improved prompt',
-                        'approve', 'te parece', 'do you like', 'how about',
-                        'te gusta', 'prefieres', 'refinar', 'mejorar',
-                        'podríamos', 'algo como', 'something like',
-                        'sugiero', 'suggest', 'te gustaría', 'would you like',
-                        'aquí tienes', 'here is a', 'quieres que',
-                        'usar el tuyo', 'use your', 'tu original'
-                    ]
-                    if any(x in prev_text for x in proposal_phrases):
-                         # Is user response compatible with acceptance?
-                         if len(content.split()) < 15: # Not a full long description
-                             # Check for negative words or change requests
-                             if not any(neg in content.lower() for neg in ['no', 'bad', 'wrong', 'mal', 'incorrect', 'change', 'cambia', 'don\'t', 'not']):
-                                 is_contextual = True
+            # Exclude model selections and duration-only messages from contextual acceptance
+            is_video_model_selection = re.match(r'^\s*(?:sora[-\s]?2[-\s]?(?:pro)?|veo[-\s]?3\.?1[-\s]?(?:flash|ultra)?|kling[-\s]?(?:v?3[-\s]?omni[-\s]?(?:pro|std))?|runway[-\s]?(?:aleph|4\.?5)?)\s*[.,!?]*$', content, re.IGNORECASE)
+            is_duration_selection = re.match(r'^\s*\d+\s*(?:segundos?|seconds?|seg|sec|s)?\s*[.,!?]*$', content, re.IGNORECASE)
+            if not is_video_model_selection and not is_duration_selection:
+                if i + 1 < len(recent_reversed):
+                    prev_msg = recent_reversed[i+1]
+                    if prev_msg.get('role') == 'assistant':
+                        prev_text = prev_msg.get('content', '').lower()
+                        # Did assistant propose something? (covers both English and Spanish)
+                        proposal_phrases = [
+                            'refined prompt', 'prompt refinado', 'improved prompt',
+                            'approve', 'te parece', 'do you like', 'how about',
+                            'te gusta', 'prefieres', 'refinar', 'mejorar',
+                            'podríamos', 'algo como', 'something like',
+                            'sugiero', 'suggest', 'te gustaría', 'would you like',
+                            'aquí tienes', 'here is a', 'quieres que',
+                            'usar el tuyo', 'use your', 'tu original'
+                        ]
+                        if any(x in prev_text for x in proposal_phrases):
+                             # Only SHORT messages (<=5 words) qualify as contextual acceptance
+                             # Longer messages are likely descriptive prompts, not acceptance
+                             if len(content.split()) <= 5:
+                                 # Check for negative words or change requests
+                                 if not any(neg in content.lower() for neg in ['no', 'bad', 'wrong', 'mal', 'incorrect', 'change', 'cambia', 'don\'t', 'not']):
+                                     is_contextual = True
 
             if is_explicit or is_contextual:
                 # Search previous ASSISTANT messages for the refined prompt
@@ -314,6 +319,7 @@ def detect_video_params_from_history(history: list) -> dict:
                 if has_video_model or has_image_model or has_duration:
                     continue
             # Skip cost-related questions (not a prompt)
+            if re.match(r'^.*(?:cost|token|cuánto|cuanto|precio|price|how much).*$', content, re.IGNORECASE) and len(content) < 60:
                 continue
             # Skip language-change requests (not descriptive prompts)
             if re.search(r'\b(?:speak|talk|habla|responde)\s+(?:in\s+)?(?:english|español|spanish|inglés)\b', content, re.IGNORECASE) and len(content) < 60:
@@ -399,26 +405,30 @@ def detect_image_params_from_history(history: list) -> dict:
             
             # 2. Is contextual acceptance? (Assistant asked to approve/refine + User says something short/positive)
             is_contextual = False
-            if i + 1 < len(recent_reversed):
-                prev_msg = recent_reversed[i+1]
-                if prev_msg.get('role') == 'assistant':
-                    prev_text = prev_msg.get('content', '').lower()
-                    # Did assistant propose something? (covers both English and Spanish)
-                    proposal_phrases = [
-                        'refined prompt', 'prompt refinado', 'improved prompt',
-                        'approve', 'te parece', 'do you like', 'how about',
-                        'te gusta', 'prefieres', 'refinar', 'mejorar',
-                        'podríamos', 'algo como', 'something like',
-                        'sugiero', 'suggest', 'te gustaría', 'would you like',
-                        'aquí tienes', 'here is a', 'quieres que',
-                        'usar el tuyo', 'use your', 'tu original'
-                    ]
-                    if any(x in prev_text for x in proposal_phrases):
-                         # Is user response compatible with acceptance?
-                         if len(content.split()) < 15: # Not a full long description
-                             # Check for negative words or change requests
-                             if not any(neg in content.lower() for neg in ['no', 'bad', 'wrong', 'mal', 'incorrect', 'change', 'cambia', 'don\'t', 'not']):
-                                 is_contextual = True
+            # Exclude model selections from contextual acceptance
+            is_image_model_selection = re.match(r'^\s*(?:gpt|nano[-\s]?banana|freepik)\s*[.,!?]*$', content, re.IGNORECASE)
+            if not is_image_model_selection:
+                if i + 1 < len(recent_reversed):
+                    prev_msg = recent_reversed[i+1]
+                    if prev_msg.get('role') == 'assistant':
+                        prev_text = prev_msg.get('content', '').lower()
+                        # Did assistant propose something? (covers both English and Spanish)
+                        proposal_phrases = [
+                            'refined prompt', 'prompt refinado', 'improved prompt',
+                            'approve', 'te parece', 'do you like', 'how about',
+                            'te gusta', 'prefieres', 'refinar', 'mejorar',
+                            'podríamos', 'algo como', 'something like',
+                            'sugiero', 'suggest', 'te gustaría', 'would you like',
+                            'aquí tienes', 'here is a', 'quieres que',
+                            'usar el tuyo', 'use your', 'tu original'
+                        ]
+                        if any(x in prev_text for x in proposal_phrases):
+                             # Only SHORT messages (<=5 words) qualify as contextual acceptance
+                             # Longer messages are likely descriptive prompts, not acceptance
+                             if len(content.split()) <= 5:
+                                 # Check for negative words or change requests
+                                 if not any(neg in content.lower() for neg in ['no', 'bad', 'wrong', 'mal', 'incorrect', 'change', 'cambia', 'don\'t', 'not']):
+                                     is_contextual = True
 
             if is_explicit or is_contextual:
                 # Search previous ASSISTANT messages for the refined prompt
@@ -551,17 +561,23 @@ class GeminiChatbot:
         Before responding, ALWAYS analyze if the user wants to execute an MCP tool action.
         Look for these patterns:
         
-        1. VIDEO GENERATION INTENT:
+        1. VIDEO GENERATION/EDITING INTENT:
            - "Anima/Animate" + reference to image/video = VIDEO workflow
            - "Crea/Create video" = VIDEO workflow
+           - "Edita/Edit video" + reference video = VIDEO-TO-VIDEO workflow
            - Mentions video models: Sora 2, Sora 2 Pro, Veo 3.1, Runway Aleph, Runway 4.5, etc.
            - IMPORTANT: Start the VIDEO WORKFLOW, do NOT call the tool directly.
+           - For video EDITING (video-to-video), the user MUST provide a reference video.
+             Supported models for video editing: Runway Aleph, Kling V3 Omni Std, Kling V3 Omni Pro.
         
-        2. IMAGE GENERATION INTENT:
+        2. IMAGE GENERATION/EDITING INTENT:
            - "Genera/Generate imagen/image" = IMAGE workflow
            - "Crea/Create una imagen" = IMAGE workflow
+           - "Edita/Edit imagen/image" + reference image = IMAGE-TO-IMAGE workflow
            - Mentions image models: GPT, Nano Banana, Freepik
            - IMPORTANT: Start the IMAGE WORKFLOW, do NOT call the tool directly.
+           - For image EDITING (image-to-image), the user MUST provide a reference image.
+             The tool uses type 2 (single ref) or type 3 (multiple refs).
         
         3. SPEECH/AUDIO INTENT:
            - "Di/Say", "Voz/Voice", "Audio", "Narración/Narration" = generate_speech tool
@@ -648,10 +664,13 @@ class GeminiChatbot:
            - 🚨 REFINED PROMPT RULE: If you refined the prompt in Step 2 and user accepted, use THE REFINED TEXT as the prompt.
            - NEVER use "ok", "si", "dale", "gpt", "confirmo" as the prompt parameter.
         2. FORBIDDEN to modify the user's agreed-upon prompt without their consent.
-        3. If there are attached images, always pass them in 'reference_images'.
-        4. Available models are: 'Nano Banana', 'GPT', and 'Freepik' (all cost 10 tokens per image).
-        5. NEVER mention URLs in your responses - images are sent automatically to the user.
-        6. IF THERE'S AN ERROR: Inform the user. If user says "try again"/"retry"/"reintentar", execute the tool again without hesitation.
+        3. IMAGE-TO-IMAGE EDITING: If user wants to EDIT an image, they MUST attach the reference image.
+           → The prompt should describe the EDITING instructions (e.g., "change background to sunset", "make it look like a painting").
+           → Pass reference images in 'reference_images' and set image_type to 2 (single ref) or 3 (multiple refs).
+        4. If there are attached images, always pass them in 'reference_images'.
+        5. Available models are: 'Nano Banana', 'GPT', and 'Freepik' (all cost 10 tokens per image).
+        6. NEVER mention URLs in your responses - images are sent automatically to the user.
+        7. IF THERE'S AN ERROR: Inform the user. If user says "try again"/"retry"/"reintentar", execute the tool again without hesitation.
         
         ═══════════════════════════════════════════════════
         CRITICAL RULES FOR 'generate_video' TOOL - MANDATORY WORKFLOW
@@ -724,8 +743,11 @@ class GeminiChatbot:
            - 'veo-3.1', 'veo-3.1-flash', 'veo-3.1-ultra'
            - 'runway-aleph', 'runway-4.5', 'sora-2', 'sora-2-pro'
            - 'kling-v3-omni-pro', 'kling-v3-omni-std'
-        4. If there are attached images, use them as reference automatically.
-        5. For Runway Aleph OR Kling V3 Omni Std, if there's an attached VIDEO, use it (video-to-video).
+        4. If there are attached images, use them as reference automatically (image-to-video).
+        5. VIDEO-TO-VIDEO EDITING: If user wants to EDIT a video, they MUST attach the reference video.
+           → Supported models: Runway Aleph, Kling V3 Omni Std, Kling V3 Omni Pro.
+           → The prompt should describe the EDITING instructions (e.g., "change style to anime", "add rain effect").
+           → Pass the reference video URL in the reference_video parameter.
         6. NEVER mention video URLs - they are sent automatically.
         7. IF THERE'S AN ERROR: Inform user. If they say "try again"/"retry"/"reintentar", execute again without hesitation.
         8. Reference images are NOT lost after errors - they persist in the session.

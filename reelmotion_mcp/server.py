@@ -192,16 +192,23 @@ def generate_image(
     reference_images: Optional[list[str]] = None
 ) -> str:
     """
-    Generate an image based on a text prompt using the ReelMotion backend.
+    Generate or edit an image using the ReelMotion backend.
+    This tool supports both text-to-image generation AND image-to-image editing/transformation.
     COST: 10 tokens per image generated.
     
+    Use cases:
+    - Text-to-image: Generate a new image from a text description (type 1).
+    - Image-to-image (editing): Transform or edit an existing image using a text prompt + reference image (type 2).
+      Examples: change style, add elements, modify colors, remove objects, apply effects.
+    - Multi-image reference: Generate using multiple reference images (type 3).
+    
     Args:
-        prompt: The description of the image to generate.
+        prompt: The description of the image to generate, or editing instructions for image-to-image.
         model: The model to use. MUST be one of: 'Nano Banana', 'GPT', 'Freepik'. Defaults to 'GPT'.
-        image_type: 1 (text only), 2 (text + image), 3 (text + multiple images). Defaults to 1.
+        image_type: 1 (text only), 2 (text + reference image for editing), 3 (text + multiple reference images). Defaults to 1.
         quantity: Number of images to generate. Defaults to 1.
-        reference_image: URL or base64 of reference image (for type 2).
-        reference_images: List of URLs or base64 of reference images (for type 3).
+        reference_image: URL of reference image (for type 2 - image editing/transformation).
+        reference_images: List of URLs of reference images (for type 3 - multi-image reference).
     """
     return generate_image_impl(prompt, model, image_type, quantity, reference_image, reference_images)
 
@@ -215,8 +222,16 @@ def generate_video(
     reference_video: Optional[str] = None
 ) -> str:
     """
-    Generate a video using AI based on a text prompt.
+    Generate or edit a video using AI based on a text prompt.
+    This tool supports text-to-video, image-to-video, AND video-to-video editing.
     IMPORTANT: User must confirm model, duration, and token cost before calling this tool.
+    
+    Use cases:
+    - Text-to-video: Generate a new video from a text description.
+    - Image-to-video: Animate a reference image into a video.
+    - Video-to-video (editing): Transform or edit an existing video using a text prompt + reference video.
+      Examples: change style, add effects, modify movement, re-edit scenes.
+      Supported models for video-to-video: runway-aleph, kling-v3-omni-std, kling-v3-omni-pro.
     
     Token costs per second and valid durations:
     - runway-aleph: 19 tokens/sec (5-10s) - video-to-video editing
@@ -227,15 +242,15 @@ def generate_video(
     - sora-2: 15 tokens/sec (4, 8, or 12s only)
     - sora-2-pro: 30 tokens/sec (4, 8, or 12s only)
     - kling-v3-omni-pro: 8 tokens/sec (3-15s) - text/image-to-video
-    - kling-v3-omni-std: 6 tokens/sec (3-15s) - video-to-video
+    - kling-v3-omni-std: 6 tokens/sec (3-15s) - video-to-video editing
     
     Args:
-        prompt: Description of the video to generate (exact user text, NO modifications)
+        prompt: Description of the video to generate or editing instructions (exact user text, NO modifications)
         model: AI model to use. See token costs above.
         duration: Video duration in seconds. Valid durations depend on model (see above)
         aspect_ratio: '16:9', '9:16', or '1:1'. Defaults to '16:9'
-        reference_image: URL of reference image (for image-to-video models)
-        reference_video: URL of reference video (only for runway-aleph)
+        reference_image: URL of reference image (for image-to-video generation)
+        reference_video: URL of reference video (for video-to-video editing with runway-aleph, kling-v3)
     """
     return generate_video_impl(prompt, model, duration, aspect_ratio, reference_image, reference_video)
 
