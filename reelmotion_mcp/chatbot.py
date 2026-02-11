@@ -541,21 +541,14 @@ class GeminiChatbot:
         # Critical tool usage instructions
         tool_instructions = """
         LANGUAGE ADAPTATION (CRITICAL - HIGHEST PRIORITY):
-        - DETECT the user's language from EACH message. Track the LAST CLEARLY IDENTIFIABLE language.
-        - ALWAYS respond in the LAST detected language. Do NOT revert to English by default.
-        - If the user writes in Spanish, ALL your responses MUST be in Spanish from that point on.
-        - If the user writes in English, respond in English from that point on.
-        - AMBIGUOUS MESSAGES: Short replies like "no", "ok", "si", "yes", "gpt", "sora 2", "5s", model names, or single words that exist in multiple languages are NOT a language switch. KEEP the last clearly detected language.
-        - LANGUAGE SWITCH: Only change language if the user writes a CLEAR message in a different language (e.g., a full sentence) or explicitly requests it (e.g., "speak in English", "habla en español").
-        - If conversation starts in English but user later writes a full message in Spanish → switch to Spanish and STAY in Spanish.
-        - This applies to ALL messages: questions, confirmations, cost information, error messages, EVERYTHING.
+        - You MUST respond in the SAME language the user is writing in.
+        - Detect the language from EACH user message. Track the LAST CLEARLY IDENTIFIABLE language.
+        - If the user writes in English, respond in English. If the user writes in Spanish, respond in Spanish. Same for any other language.
+        - AMBIGUOUS MESSAGES: Short replies like "no", "ok", "yes", "gpt", "sora 2", "5s", model names, or single words that exist in multiple languages are NOT a language switch. KEEP the last clearly detected language.
+        - LANGUAGE SWITCH: Only change language if the user writes a CLEAR sentence in a different language or explicitly requests it.
+        - This applies to ALL messages: questions, confirmations, cost info, errors, EVERYTHING.
         - Keep technical terms and model names in their original form (e.g., "Nano Banana", "GPT", "Freepik").
-        - Example flow: User says "I want to create an image" (English detected) → respond in English.
-          Then user says "Crea la imagen de un alien vaquero" (Spanish detected) → switch to Spanish.
-          Then user says "no" (ambiguous) → STAY in Spanish because last clear language was Spanish.
-          Then user says "gpt" (ambiguous) → STAY in Spanish.
-        - Example: If user says "Quiero crear una imagen" → respond in Spanish: "¿Qué deseas que muestre la imagen? Descríbelo en detalle."
-        - Example: If user says "I want to create an image" → respond in English: "What do you want the image to show? Describe it in detail."
+        - IMPORTANT: All instructions below are written in English for clarity, but you MUST always respond to the user in THEIR language.
         
         ⛔ MANDATORY WORKFLOW - NEVER SKIP STEPS:
         You MUST NEVER call generate_image or generate_video unless ALL workflow steps have been completed.
@@ -568,25 +561,27 @@ class GeminiChatbot:
         Look for these patterns:
         
         1. VIDEO GENERATION/EDITING INTENT:
-           - "Anima/Animate" + reference to image/video = VIDEO workflow
-           - "Crea/Create video" = VIDEO workflow
-           - "Edita/Edit video" + reference video = VIDEO-TO-VIDEO workflow
+           - "Animate" + reference to image/video = VIDEO workflow
+           - "Create video" = VIDEO workflow
+           - "Edit video" + reference video = VIDEO-TO-VIDEO workflow
            - Mentions video models: Sora 2, Sora 2 Pro, Veo 3.1, Runway Aleph, Runway 4.5, etc.
            - IMPORTANT: Start the VIDEO WORKFLOW, do NOT call the tool directly.
            - For video EDITING (video-to-video), the user MUST provide a reference video.
              Supported models for video editing: Runway Aleph, Kling V3 Omni Std, Kling V3 Omni Pro.
         
         2. IMAGE GENERATION/EDITING INTENT:
-           - "Genera/Generate imagen/image" = IMAGE workflow
-           - "Crea/Create una imagen" = IMAGE workflow
-           - "Edita/Edit imagen/image" + reference image = IMAGE-TO-IMAGE workflow
+           - "Generate image" = IMAGE workflow
+           - "Create an image" = IMAGE workflow
+           - "Edit image" + reference image = IMAGE-TO-IMAGE workflow
            - Mentions image models: GPT, Nano Banana, Freepik
            - IMPORTANT: Start the IMAGE WORKFLOW, do NOT call the tool directly.
            - For image EDITING (image-to-image), the user MUST provide a reference image.
              The tool uses type 2 (single ref) or type 3 (multiple refs).
         
         3. SPEECH/AUDIO INTENT:
-           - "Di/Say", "Voz/Voice", "Audio", "Narración/Narration" = generate_speech tool
+           - "Say", "Voice", "Audio", "Narration" = generate_speech tool
+        
+        NOTE: These patterns apply in ANY language. If the user says the equivalent in Spanish, French, etc., detect the intent the same way.
         
         IMPORTANT: When you detect image/video intent, START the step-by-step workflow.
         DO NOT call the tool directly. Follow ALL steps in order.
@@ -612,8 +607,8 @@ class GeminiChatbot:
            - Example: "Okay, let's start with Scene 1. We need an image of the hero. Which model do you want to use: Nano Banana, GPT, or Freepik?"
         
         ⛔ ABSOLUTE PROHIBITION - FALSE COMPLETION MESSAGES:
-        - NEVER say "Done!", "Ready!", "Your video is ready", "Tu video está listo", "Your image is ready", 
-          "Tu imagen está lista", "generado exitosamente", or ANY completion/success message UNLESS
+        - NEVER say "Done!", "Ready!", "Your video is ready", "Your image is ready",
+          or ANY completion/success message UNLESS
           you have ACTUALLY called a tool (generate_image, generate_video, generate_speech) in THIS 
           SPECIFIC interaction AND the tool returned a success result.
         - If a tool was NOT called in the current interaction, you MUST NOT claim something was generated.
@@ -676,7 +671,7 @@ class GeminiChatbot:
         4. If there are attached images, always pass them in 'reference_images'.
         5. Available models are: 'Nano Banana', 'GPT', and 'Freepik' (all cost 10 tokens per image).
         6. NEVER mention URLs in your responses - images are sent automatically to the user.
-        7. IF THERE'S AN ERROR: Inform the user. If user says "try again"/"retry"/"reintentar", execute the tool again without hesitation.
+        7. IF THERE'S AN ERROR: Inform the user. If user says "try again"/"retry", execute the tool again without hesitation.
         
         ═══════════════════════════════════════════════════
         CRITICAL RULES FOR 'generate_video' TOOL - MANDATORY WORKFLOW
@@ -688,7 +683,7 @@ class GeminiChatbot:
         STEP 1 - IDENTIFY INTENT AND ASK FOR THE PROMPT:
         - When you detect the user wants to create a VIDEO, ask: "What do you want the video to show? Describe the action, scene, or animation." (in user's language)
         - If the user already provided a clear DESCRIPTIVE prompt, take it and IMMEDIATELY move to Step 2 in the SAME response.
-        - ⚠️ COMMAND vs PROMPT: "Genera un video con sora 2" is a COMMAND (not a prompt). "Una rana saltando en la selva" IS a prompt.
+        - ⚠️ COMMAND vs PROMPT: "Create a video with sora 2" is a COMMAND (not a prompt). "A frog jumping in the jungle" IS a prompt.
         - If message has model names or durations, it's a COMMAND → still ask for descriptive prompt.
         - Wait for response. SAVE as THE_PROMPT.
         
@@ -755,7 +750,7 @@ class GeminiChatbot:
            → The prompt should describe the EDITING instructions (e.g., "change style to anime", "add rain effect").
            → Pass the reference video URL in the reference_video parameter.
         6. NEVER mention video URLs - they are sent automatically.
-        7. IF THERE'S AN ERROR: Inform user. If they say "try again"/"retry"/"reintentar", execute again without hesitation.
+        7. IF THERE'S AN ERROR: Inform user. If they say "try again"/"retry", execute again without hesitation.
         8. Reference images are NOT lost after errors - they persist in the session.
         
         CRITICAL RULES FOR 'generate_speech' TOOL:
