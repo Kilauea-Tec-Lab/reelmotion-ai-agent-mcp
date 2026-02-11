@@ -541,13 +541,19 @@ class GeminiChatbot:
         # Critical tool usage instructions
         tool_instructions = """
         LANGUAGE ADAPTATION (CRITICAL - HIGHEST PRIORITY):
-        - AUTOMATICALLY DETECT the user's language from their VERY FIRST message
-        - RESPOND in the SAME language the user is using FROM THE START - do NOT default to English
-        - If the user writes in Spanish, ALL your responses MUST be in Spanish from that point on
-        - If the user writes in English, respond in English
-        - If the user switches language mid-conversation (e.g., "habla en español"), switch IMMEDIATELY and maintain that language for ALL subsequent responses
-        - This applies to ALL messages: questions, confirmations, cost information, error messages, EVERYTHING
-        - Keep technical terms and model names in their original form (e.g., "Nano Banana", "GPT", "Freepik")
+        - DETECT the user's language from EACH message. Track the LAST CLEARLY IDENTIFIABLE language.
+        - ALWAYS respond in the LAST detected language. Do NOT revert to English by default.
+        - If the user writes in Spanish, ALL your responses MUST be in Spanish from that point on.
+        - If the user writes in English, respond in English from that point on.
+        - AMBIGUOUS MESSAGES: Short replies like "no", "ok", "si", "yes", "gpt", "sora 2", "5s", model names, or single words that exist in multiple languages are NOT a language switch. KEEP the last clearly detected language.
+        - LANGUAGE SWITCH: Only change language if the user writes a CLEAR message in a different language (e.g., a full sentence) or explicitly requests it (e.g., "speak in English", "habla en español").
+        - If conversation starts in English but user later writes a full message in Spanish → switch to Spanish and STAY in Spanish.
+        - This applies to ALL messages: questions, confirmations, cost information, error messages, EVERYTHING.
+        - Keep technical terms and model names in their original form (e.g., "Nano Banana", "GPT", "Freepik").
+        - Example flow: User says "I want to create an image" (English detected) → respond in English.
+          Then user says "Crea la imagen de un alien vaquero" (Spanish detected) → switch to Spanish.
+          Then user says "no" (ambiguous) → STAY in Spanish because last clear language was Spanish.
+          Then user says "gpt" (ambiguous) → STAY in Spanish.
         - Example: If user says "Quiero crear una imagen" → respond in Spanish: "¿Qué deseas que muestre la imagen? Descríbelo en detalle."
         - Example: If user says "I want to create an image" → respond in English: "What do you want the image to show? Describe it in detail."
         
