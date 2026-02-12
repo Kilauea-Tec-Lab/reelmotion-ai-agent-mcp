@@ -43,6 +43,10 @@ class SessionManager:
         """Genera key para acción pendiente de confirmación."""
         return f"pending_action:{conversation_uuid}"
     
+    def _get_just_generated_key(self, conversation_uuid: str) -> str:
+        """Genera key para flag de generación reciente."""
+        return f"just_generated:{conversation_uuid}"
+    
     async def create_session(self, conversation_uuid: str) -> Dict:
         """Crea una nueva sesión."""
         session_key = self._get_session_key(conversation_uuid)
@@ -187,6 +191,22 @@ class SessionManager:
         key = self._get_pending_action_key(conversation_uuid)
         self.redis_client.delete(key)
         print(f"DEBUG [session_manager]: Cleared pending action for UUID='{conversation_uuid}'")
+    
+    async def set_just_generated(self, conversation_uuid: str):
+        """Marca que se acaba de generar contenido. Expira en 60s."""
+        key = self._get_just_generated_key(conversation_uuid)
+        self.redis_client.setex(key, 60, "1")
+        print(f"DEBUG [session_manager]: Set just_generated flag for UUID='{conversation_uuid}'")
+    
+    async def get_just_generated(self, conversation_uuid: str) -> bool:
+        """Verifica si se acaba de generar contenido."""
+        key = self._get_just_generated_key(conversation_uuid)
+        return self.redis_client.exists(key) > 0
+    
+    async def clear_just_generated(self, conversation_uuid: str):
+        """Limpia el flag de generación reciente."""
+        key = self._get_just_generated_key(conversation_uuid)
+        self.redis_client.delete(key)
     
     # Mantener compatibilidad con métodos antiguos
     async def save_reference_images(self, conversation_uuid: str, images_b64: List[str]):

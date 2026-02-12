@@ -28,12 +28,14 @@ CONFIRMATION_PATTERNS = re.compile(
     r'está genial|esta genial|así está bien|así mero|eso mero|'
     # Single/short word confirmations
     r'ok|okey|okay|yes|sure|yep|yeah|go|agreed|confirm|accept|done|ready|'
-    r'proceed|approve|approved|nice|cool|awesome|amazing|'
+    r'proceed|approve|approved|'
     r'si|sí|dale|confirmo|confirmar|procede|hazlo|adelante|claro|afirmativo|'
     r'correcto|eso|exacto|perfecto|listo|va|venga|vamos|bueno|bien|hecho|'
     r'acepto|apruebo|aprobado|ya|anda|órale|sale|'
     # Acceptance/approval phrases (critical for refined prompt acceptance)
     r'me gusta|me encanta|genial|excelente|fantástico|así|le doy|'
+    # NOTE: Reaction words (nice, cool, awesome, amazing, etc.) are NOT confirmations.
+    # They are reactions to results and should NOT trigger tool re-execution.
     r'y|s|1|👍|✅'
     r')[\s.,!?]*$',
     re.IGNORECASE
@@ -128,6 +130,28 @@ def needs_clarification(message: str, has_ref_files: bool) -> tuple[bool, str]:
     
     return False, ""
 
+def _is_model_listing_message(content: str) -> bool:
+    """Check if an assistant message is a model listing (shows available models).
+    Handles multiple markdown formats: '- Model', '* Model', '**Model**', '* **Model**', etc.
+    """
+    content_lower = content.lower()
+    model_keywords = ['runway', 'veo', 'sora', 'kling']
+    # Count how many distinct model names appear in the message
+    model_count = sum(1 for kw in model_keywords if kw in content_lower)
+    # If 3+ model names appear, it's very likely a listing (not a single model mention)
+    if model_count >= 3:
+        return True
+    # Also detect by bullet-point patterns with model names
+    bullet_patterns = [
+        r'[\*\-]\s+\*{0,2}(?:Runway|Veo|Sora|Kling)',  # * Model, - Model, * **Model**, - **Model**
+        r'[\*\-]\s+\*{0,2}(?:GPT|Nano Banana|Freepik)',  # Image model listings
+    ]
+    bullet_matches = sum(1 for p in bullet_patterns if re.search(p, content))
+    if bullet_matches >= 1 and model_count >= 2:
+        return True
+    return False
+
+
 def detect_video_params_from_history(history: list) -> dict:
     """
     Try to extract video generation parameters from conversation history.
@@ -147,7 +171,7 @@ def detect_video_params_from_history(history: list) -> dict:
             content_lower = content.lower()
             # Only check messages that look like cost confirmations (not model listings)
             is_cost_confirm = any(word in content_lower for word in ['cost', 'costará', '×', 'tokens/se'])
-            has_model_listing = any(listing in content for listing in ['- Runway', '- Veo', '- Sora', '- Kling'])
+            has_model_listing = _is_model_listing_message(content)
             if is_cost_confirm and not has_model_listing:
                 for model_name, pattern in VIDEO_MODEL_PATTERNS.items():
                     if pattern.search(content):
@@ -214,9 +238,32 @@ def detect_video_params_from_history(history: list) -> dict:
                         params['duration'] = int(duration_match.group(1))
                         break
     
-    # Get the prompt (most recent user message that's not a confirmation or model/duration selection)
+    # === PRIORITY 0 for prompt: Extract from cost confirmation message (most reliable) ===
+    # The cost confirmation message has format: "Prompt: [actual prompt]\nModel: ...\nDuration: ..."
     recent_reversed = list(reversed(recent))
-    for i, msg in enumerate(recent_reversed):
+    for msg in recent_reversed:
+        if msg.get('role') == 'assistant':
+            content = msg.get('content', '')
+            content_lower = content.lower()
+            # Check if this is a cost confirmation message (has cost/tokens AND confirm)
+            is_cost_msg = bool(re.search(r'(?:cost|costo|costará|tokens?).*(?:confirm|¿confirma)', content_lower, re.DOTALL))
+            if not is_cost_msg:
+                is_cost_msg = bool(re.search(r'(?:confirm|¿confirma).*(?:cost|costo|costará|tokens?)', content_lower, re.DOTALL))
+            if is_cost_msg:
+                # Extract prompt from "Prompt: ..." line
+                prompt_match = re.search(r'(?:prompt|descripción)\s*:\s*(.+?)(?=\n(?:model|modelo|duration|duración|cost|costo)|$)', content, re.IGNORECASE | re.DOTALL)
+                if prompt_match:
+                    extracted = prompt_match.group(1).strip()
+                    # Remove surrounding quotes if present
+                    extracted = re.sub(r'^["\u201c]|["\u201d]$', '', extracted).strip()
+                    if len(extracted) > 10:
+                        params['prompt'] = extracted
+                        print(f"DEBUG [detect_video_params]: Extracted prompt from cost confirmation: {extracted[:80]}...")
+                break  # Only check the most recent assistant message
+    
+    # Get the prompt (most recent user message that's not a confirmation or model/duration selection)
+    if 'prompt' not in params:
+      for i, msg in enumerate(recent_reversed):
         if msg.get('role') == 'user':
             content = msg.get('content', '')
             
@@ -230,30 +277,36 @@ def detect_video_params_from_history(history: list) -> dict:
             # 2. Is contextual acceptance? (Assistant asked to approve/refine + User says something short/positive)
             is_contextual = False
             # Exclude model selections and duration-only messages from contextual acceptance
-            is_video_model_selection = re.match(r'^\s*(?:sora[-\s]?2[-\s]?(?:pro)?|veo[-\s]?3\.?1[-\s]?(?:flash|ultra)?|kling[-\s]?(?:v?3[-\s]?omni[-\s]?(?:pro|std))?|runway[-\s]?(?:aleph|4\.?5)?)\s*[.,!?]*$', content, re.IGNORECASE)
+            # Match both standalone model names AND with preamble: "lets do Sora 2", "use runway aleph", "go with veo 3.1"
+            has_video_model_ref = any(p.search(content) for p in VIDEO_MODEL_PATTERNS.values())
+            is_video_model_selection = bool(re.match(r'^\s*(?:(?:lets?\s+(?:do|go\s+with|use)|(?:go|use|i\'?ll?\s+(?:go|do|use))\s+(?:with\s+)?|i\s+want\s+|quiero\s+|usa\s+|vamos\s+(?:con\s+)?)\s*)?(?:sora[-\s]?2[-\s]?(?:pro)?|veo[-\s]?3\.?1[-\s]?(?:flash|ultra)?|kling[-\s]?(?:v?3[-\s]?omni[-\s]?(?:pro|std))?|runway[-\s]?(?:aleph|4\.?5)?)\s*[.,!?]*$', content, re.IGNORECASE))
             is_duration_selection = re.match(r'^\s*\d+\s*(?:segundos?|seconds?|seg|sec|s)?\s*[.,!?]*$', content, re.IGNORECASE)
-            if not is_video_model_selection and not is_duration_selection:
+            # If message contains a video model name, it's a model selection, NOT prompt acceptance
+            if not is_video_model_selection and not is_duration_selection and not has_video_model_ref:
                 if i + 1 < len(recent_reversed):
                     prev_msg = recent_reversed[i+1]
                     if prev_msg.get('role') == 'assistant':
                         prev_text = prev_msg.get('content', '').lower()
                         # Did assistant propose something? (covers both English and Spanish)
-                        proposal_phrases = [
-                            'refined prompt', 'prompt refinado', 'improved prompt',
-                            'approve', 'te parece', 'do you like', 'how about',
-                            'te gusta', 'prefieres', 'refinar', 'mejorar',
-                            'podríamos', 'algo como', 'something like',
-                            'sugiero', 'suggest', 'te gustaría', 'would you like',
-                            'aquí tienes', 'here is a', 'quieres que',
-                            'usar el tuyo', 'use your', 'tu original'
-                        ]
-                        if any(x in prev_text for x in proposal_phrases):
-                             # Only SHORT messages (<=5 words) qualify as contextual acceptance
-                             # Longer messages are likely descriptive prompts, not acceptance
-                             if len(content.split()) <= 5:
-                                 # Check for negative words or change requests
-                                 if not any(neg in content.lower() for neg in ['no', 'bad', 'wrong', 'mal', 'incorrect', 'change', 'cambia', 'don\'t', 'not']):
-                                     is_contextual = True
+                        # BUT NOT model listings (which also contain "suggest")
+                        is_prev_model_listing = _is_model_listing_message(prev_msg.get('content', ''))
+                        if not is_prev_model_listing:
+                            proposal_phrases = [
+                                'refined prompt', 'prompt refinado', 'improved prompt',
+                                'approve', 'te parece', 'do you like', 'how about',
+                                'te gusta', 'prefieres', 'refinar', 'mejorar',
+                                'podríamos', 'algo como', 'something like',
+                                'sugiero', 'suggest', 'te gustaría', 'would you like',
+                                'aquí tienes', 'here is a', 'quieres que',
+                                'usar el tuyo', 'use your', 'tu original'
+                            ]
+                            if any(x in prev_text for x in proposal_phrases):
+                                 # Only SHORT messages (<=5 words) qualify as contextual acceptance
+                                 # Longer messages are likely descriptive prompts, not acceptance
+                                 if len(content.split()) <= 5:
+                                     # Check for negative words or change requests
+                                     if not any(neg in content.lower() for neg in ['no', 'bad', 'wrong', 'mal', 'incorrect', 'change', 'cambia', 'don\'t', 'not']):
+                                         is_contextual = True
 
             if is_explicit or is_contextual:
                 # Search previous ASSISTANT messages for the refined prompt
@@ -264,7 +317,7 @@ def detect_video_params_from_history(history: list) -> dict:
                          # Skip cost confirmations and model listings - keep searching deeper
                          if COST_CONFIRMATION_PATTERN.search(cand) and len(cand) < 80:
                              continue
-                         if any(listing in cand for listing in ['- Runway', '- Veo', '- Sora', '- Kling']):
+                         if _is_model_listing_message(cand):
                              continue
                          # Priority 1: Text between quotes (refined prompts are usually quoted)
                          quote_match = re.search(r'["\u201c]([^"\u201d]{15,})["\u201d]', cand)
@@ -291,7 +344,7 @@ def detect_video_params_from_history(history: list) -> dict:
                         # Skip cost confirmations and model listings - search deeper
                         if COST_CONFIRMATION_PATTERN.search(cand) and len(cand) < 80:
                             continue
-                        if any(listing in cand for listing in ['- Runway', '- Veo', '- Sora', '- Kling']):
+                        if _is_model_listing_message(cand):
                             continue
                         # Try to extract quoted prompt
                         quote_match = re.search(r'["\u201c]([^"\u201d]{15,})["\u201d]', cand)
@@ -301,8 +354,8 @@ def detect_video_params_from_history(history: list) -> dict:
                 if 'prompt' in params:
                     break
                 continue
-            # Skip STANDALONE model selection (just "sora 2" alone, "kling v3 omni pro", etc.)
-            if re.match(r'^\s*(sora[-\s]?2[-\s]?(?:pro)?|veo[-\s]?3\.?1[-\s]?(?:flash|ultra)?|kling[-\s]?(?:v?3[-\s]?omni[-\s]?(?:pro|std))?|runway[-\s]?(?:aleph|4\.?5)?|haiper|minimax)\s*[.,!?]*$', content, re.IGNORECASE):
+            # Skip STANDALONE model selection (just "sora 2" alone, "kling v3 omni pro", "lets do sora 2", etc.)
+            if re.match(r'^\s*(?:(?:lets?\s+(?:do|go\s+with|use)|(?:go|use|i\'?ll?\s+(?:go|do|use))\s+(?:with\s+)?|i\s+want\s+|quiero\s+|usa\s+|vamos\s+(?:con\s+)?)\s*)?(?:sora[-\s]?2[-\s]?(?:pro)?|veo[-\s]?3\.?1[-\s]?(?:flash|ultra)?|kling[-\s]?(?:v?3[-\s]?omni[-\s]?(?:pro|std))?|runway[-\s]?(?:aleph|4\.?5)?|haiper|minimax)\s*[.,!?]*$', content, re.IGNORECASE):
                 continue
             # Skip duration-only messages like "5 seconds", "5s", or just "4"
             if re.match(r'^\s*\d+\s*(?:segundos?|seconds?|seg|sec|s)?\s*[\.!?]*$', content, re.IGNORECASE):
@@ -337,14 +390,14 @@ def detect_video_params_from_history(history: list) -> dict:
             params['prompt'] = content
             break
     
-    # Fallback: If no prompt found from user messages, look in assistant messages for quoted text
-    # (refined prompts are usually shown between quotes in assistant responses)
-    if 'prompt' not in params:
+      # Fallback: If no prompt found from user messages, look in assistant messages for quoted text
+      # (refined prompts are usually shown between quotes in assistant responses)
+      if 'prompt' not in params:
         for msg in reversed(recent):
             if msg.get('role') == 'assistant':
                 content = msg.get('content', '')
                 # Don't extract from model listing messages
-                if any(listing in content for listing in ['- Runway', '- Veo', '- Sora', '- Kling']):
+                if _is_model_listing_message(content):
                     continue
                 quote_match = re.search(r'["\u201c]([^"\u201d]{15,})["\u201d]', content)
                 if quote_match:
@@ -352,6 +405,108 @@ def detect_video_params_from_history(history: list) -> dict:
                     break
     
     return params
+
+# Voice name to voice_id mapping for speech detection
+VOICE_NAME_TO_ID = {
+    'adam': 'pNInz6obpgDQGcFmaJgB',
+    'alice': 'Xb7hH8MSUJpSbSDYk0k2',
+    'antoni': 'ErXwobaYiN019PkySvjV',
+    'bill': 'pqHfZKP75CvOlQylNhV4',
+    'brian': 'nPczCjzI2devNBz1zQrb',
+    'callum': 'N2lVS1w4EtoT3dr4eOWO',
+    'charlie': 'IKne3meq5aSn9XLyUdCD',
+    'chris': 'iP95p4xoKVk53GoZ742B',
+    'daniel': 'onwK4e9ZLuTAKqWW03F9',
+    'domi': 'AZnzlk1XvdvUeBnXmlld',
+    'elli': 'MF3mGyEYCl7XYWbV9V6O',
+    'eric': 'cjVigY5qzO86Huf0OWal',
+    'george': 'JBFqnCBsd6RMkjVDRZzb',
+    'harry': 'SOYHLrjzK2X1ezoPC6cr',
+    'jessica': 'cgSgspJ2msm6clMCkdW9',
+    'josh': 'TxGEqnHWrfWFTfGW9XjX',
+    'laura': 'FGY2WhTYpPnrIDTdsKH5',
+    'liam': 'TX3LPaxmHKxFdv7VOQHJ',
+    'lily': 'pFZP5JQG7iQjIQuC4Bku',
+    'matilda': 'XrExE9yKIg1WjnnlVkGX',
+    'rachel': '21m00Tcm4TlvDq8ikWAM',
+    'river': 'SAz9YHcvj6GT2YYXdXww',
+    'roger': 'CwhRBWXzGAHq8TQ4Fs17',
+    'sarah': 'EXAVITQu4vr4xnSDxMaL',
+    'will': 'bIHbv24MWmeRgasZH58o',
+}
+
+def detect_speech_params_from_history(history: list) -> dict:
+    """
+    Try to extract speech generation parameters from conversation history.
+    Returns dict with 'text', 'voice_id' if found.
+    """
+    params = {}
+    
+    recent = history[-14:] if len(history) > 14 else history
+    recent_reversed = list(reversed(recent))
+    
+    # Detect voice from user messages (e.g., "lets go with Rachel", "Rachel", "Adam")
+    for msg in recent_reversed:
+        if msg.get('role') == 'user':
+            content = msg.get('content', '').strip().lower()
+            # Skip confirmations and very short messages
+            if is_confirmation(content) and len(content) < 10:
+                continue
+            for voice_name, voice_id in VOICE_NAME_TO_ID.items():
+                if voice_name in content:
+                    params['voice_id'] = voice_id
+                    break
+            if 'voice_id' in params:
+                break
+    
+    # If no voice found in user messages, check assistant confirmation messages
+    if 'voice_id' not in params:
+        for msg in recent_reversed:
+            if msg.get('role') == 'assistant':
+                content = msg.get('content', '')
+                content_lower = content.lower()
+                # Only check confirmation-style messages (Voice: Rachel)
+                voice_match = re.search(r'(?:voice|voz)\s*:\s*(\w+)', content, re.IGNORECASE)
+                if voice_match:
+                    voice_name = voice_match.group(1).strip().lower()
+                    if voice_name in VOICE_NAME_TO_ID:
+                        params['voice_id'] = VOICE_NAME_TO_ID[voice_name]
+                        break
+    
+    # Default to Rachel if no voice detected
+    if 'voice_id' not in params:
+        params['voice_id'] = '21m00Tcm4TlvDq8ikWAM'
+    
+    # Detect speech text - look for quoted text in assistant messages (the confirmed text)
+    for msg in recent_reversed:
+        if msg.get('role') == 'assistant':
+            content = msg.get('content', '')
+            # Look for the confirmed text pattern: Text: "..."
+            text_match = re.search(r'(?:text|texto)\s*:\s*["\u201c]([^"\u201d]{5,})["\u201d]', content, re.IGNORECASE)
+            if text_match:
+                params['text'] = text_match.group(1)
+                break
+            # Fallback: look for quoted text that looks like user's speech text
+            quote_match = re.search(r'["\u201c]([^"\u201d]{15,})["\u201d]', content)
+            if quote_match:
+                params['text'] = quote_match.group(1)
+                break
+    
+    # If no text from assistant, get from user messages (the original speech text)
+    if 'text' not in params:
+        for msg in recent_reversed:
+            if msg.get('role') == 'user':
+                content = msg.get('content', '').strip()
+                # Skip short messages (confirmations, voice selections)
+                if len(content) > 20 and not is_confirmation(content):
+                    # Skip messages that are just voice names
+                    content_lower = content.lower()
+                    if not any(content_lower.strip().startswith(v) for v in VOICE_NAME_TO_ID.keys()):
+                        params['text'] = content
+                        break
+    
+    return params
+
 
 def detect_image_params_from_history(history: list) -> dict:
     """
@@ -390,9 +545,28 @@ def detect_image_params_from_history(history: list) -> dict:
                     if 'model' in params:
                         break
     
-    # Get the prompt (most recent user message that's not a confirmation or model selection)
+    # === PRIORITY 0 for prompt: Extract from cost confirmation message (most reliable) ===
     recent_reversed = list(reversed(recent))
-    for i, msg in enumerate(recent_reversed):
+    for msg in recent_reversed:
+        if msg.get('role') == 'assistant':
+            content = msg.get('content', '')
+            content_lower = content.lower()
+            is_cost_msg = bool(re.search(r'(?:cost|costo|costar\u00e1|tokens?).*(?:confirm|\u00bfconfirma)', content_lower, re.DOTALL))
+            if not is_cost_msg:
+                is_cost_msg = bool(re.search(r'(?:confirm|\u00bfconfirma).*(?:cost|costo|costar\u00e1|tokens?)', content_lower, re.DOTALL))
+            if is_cost_msg:
+                prompt_match = re.search(r'(?:prompt|descripción)\s*:\s*(.+?)(?=\n(?:model|modelo|cost|costo)|$)', content, re.IGNORECASE | re.DOTALL)
+                if prompt_match:
+                    extracted = prompt_match.group(1).strip()
+                    extracted = re.sub(r'^["\u201c]|["\u201d]$', '', extracted).strip()
+                    if len(extracted) > 10:
+                        params['prompt'] = extracted
+                        print(f"DEBUG [detect_image_params]: Extracted prompt from cost confirmation: {extracted[:80]}...")
+                break
+    
+    # Get the prompt (most recent user message that's not a confirmation or model selection)
+    if 'prompt' not in params:
+      for i, msg in enumerate(recent_reversed):
         if msg.get('role') == 'user':
             content = msg.get('content', '')
             
@@ -406,23 +580,28 @@ def detect_image_params_from_history(history: list) -> dict:
             # 2. Is contextual acceptance? (Assistant asked to approve/refine + User says something short/positive)
             is_contextual = False
             # Exclude model selections from contextual acceptance
-            is_image_model_selection = re.match(r'^\s*(?:gpt|nano[-\s]?banana|freepik)\s*[.,!?]*$', content, re.IGNORECASE)
-            if not is_image_model_selection:
+            # Match both standalone and with preamble: "lets do gpt", "use freepik", "go with nano banana"
+            has_image_model_ref = any(p.search(content) for p in IMAGE_MODEL_PATTERNS.values())
+            is_image_model_selection = bool(re.match(r'^\s*(?:(?:lets?\s+(?:do|go\s+with|use)|(?:go|use|i\'?ll?\s+(?:go|do|use))\s+(?:with\s+)?|i\s+want\s+|quiero\s+|usa\s+|vamos\s+(?:con\s+)?)\s*)?(?:gpt|nano[-\s]?banana|freepik)\s*[.,!?]*$', content, re.IGNORECASE))
+            if not is_image_model_selection and not has_image_model_ref:
                 if i + 1 < len(recent_reversed):
                     prev_msg = recent_reversed[i+1]
                     if prev_msg.get('role') == 'assistant':
                         prev_text = prev_msg.get('content', '').lower()
                         # Did assistant propose something? (covers both English and Spanish)
-                        proposal_phrases = [
-                            'refined prompt', 'prompt refinado', 'improved prompt',
-                            'approve', 'te parece', 'do you like', 'how about',
-                            'te gusta', 'prefieres', 'refinar', 'mejorar',
-                            'podríamos', 'algo como', 'something like',
-                            'sugiero', 'suggest', 'te gustaría', 'would you like',
-                            'aquí tienes', 'here is a', 'quieres que',
-                            'usar el tuyo', 'use your', 'tu original'
-                        ]
-                        if any(x in prev_text for x in proposal_phrases):
+                        # BUT NOT model listings (which also contain "suggest")
+                        is_prev_model_listing = _is_model_listing_message(prev_msg.get('content', ''))
+                        if not is_prev_model_listing:
+                            proposal_phrases = [
+                                'refined prompt', 'prompt refinado', 'improved prompt',
+                                'approve', 'te parece', 'do you like', 'how about',
+                                'te gusta', 'prefieres', 'refinar', 'mejorar',
+                                'podríamos', 'algo como', 'something like',
+                                'sugiero', 'suggest', 'te gustaría', 'would you like',
+                                'aquí tienes', 'here is a', 'quieres que',
+                                'usar el tuyo', 'use your', 'tu original'
+                            ]
+                            if any(x in prev_text for x in proposal_phrases):
                              # Only SHORT messages (<=5 words) qualify as contextual acceptance
                              # Longer messages are likely descriptive prompts, not acceptance
                              if len(content.split()) <= 5:
@@ -439,7 +618,7 @@ def detect_image_params_from_history(history: list) -> dict:
                          # Skip cost confirmations and model listings - keep searching deeper
                          if COST_CONFIRMATION_PATTERN.search(cand) and len(cand) < 80:
                              continue
-                         if any(listing in cand for listing in ['Nano Banana', 'GPT', 'Freepik']):
+                         if _is_model_listing_message(cand):
                              continue
                          # Priority 1: Text between quotes (refined prompts are usually quoted)
                          quote_match = re.search(r'["\u201c]([^"\u201d]{15,})["\u201d]', cand)
@@ -466,7 +645,7 @@ def detect_image_params_from_history(history: list) -> dict:
                         # Skip cost confirmations and model listings - search deeper
                         if COST_CONFIRMATION_PATTERN.search(cand) and len(cand) < 80:
                             continue
-                        if any(listing in cand for listing in ['Nano Banana', 'GPT', 'Freepik']):
+                        if _is_model_listing_message(cand):
                             continue
                         # Try to extract quoted prompt
                         quote_match = re.search(r'["\u201c]([^"\u201d]{15,})["\u201d]', cand)
@@ -513,7 +692,7 @@ def detect_image_params_from_history(history: list) -> dict:
             if msg.get('role') == 'assistant':
                 content = msg.get('content', '')
                 # Don't extract from model listing messages
-                if 'Nano Banana' in content and 'GPT' in content and 'Freepik' in content:
+                if _is_model_listing_message(content):
                     continue
                 quote_match = re.search(r'["\u201c]([^"\u201d]{15,})["\u201d]', content)
                 if quote_match:
@@ -903,6 +1082,22 @@ class GeminiChatbot:
         3. IF THERE'S AN ERROR: Inform user. If they say "try again"/"retry", execute again without hesitation.
         
         ═══════════════════════════════════════════════════
+        POST-GENERATION RESET (CRITICAL - MANDATORY)
+        ═══════════════════════════════════════════════════
+        After ANY successful generation (image, video, or speech):
+        1. The workflow is COMPLETE and FULLY RESET.
+        2. The NEXT message from the user is a NEW conversation turn.
+        3. Do NOT re-execute any tool based on the previous workflow's parameters.
+        4. Reactions like "amazing", "awesome", "cool", "nice", "great", "love it",
+           "increíble", "genial", "wow", "beautiful", "hermoso" are COMPLIMENTS,
+           NOT requests for a new generation. Respond with a friendly acknowledgment
+           (e.g., "Glad you liked it! Let me know if you need anything else.") and WAIT.
+        5. To start a NEW generation, the user must express a NEW intent explicitly
+           (e.g., "create another image", "now make a video", "edit this image").
+        6. NEVER call generate_image, generate_video, or generate_speech again
+           using the same prompt/parameters from a just-completed workflow.
+        
+        ═══════════════════════════════════════════════════
         FINAL REMINDER (READ THIS LAST - HIGHEST PRIORITY)
         ═══════════════════════════════════════════════════
         LANGUAGE: Your response MUST be in the SAME language as the user's message. DEFAULT is English. If the user writes in English, respond ONLY in English. If in Spanish, respond ONLY in Spanish. When in doubt, use ENGLISH. NO EXCEPTIONS.
@@ -1098,6 +1293,15 @@ class GeminiChatbot:
             if not self.chat_session:
                 await self.start_chat()
             
+            # === CHECK: Was something just generated? Reset workflow on reactions ===
+            just_generated = await self.session_manager.get_just_generated(self.conversation_uuid)
+            if just_generated:
+                # Clear the flag regardless of what the user says
+                await self.session_manager.clear_just_generated(self.conversation_uuid)
+                print(f"DEBUG [chatbot]: Post-generation state detected. Clearing workflow state.")
+                # Also clear any stale pending action that might have been re-created
+                await self.clear_pending_action()
+            
             # === FAST PATH: Check for confirmation with pending action ===
             if is_confirmation(message):
                 pending_action = await self.get_pending_action()
@@ -1114,6 +1318,8 @@ class GeminiChatbot:
                     tool_result, response_text = await self.execute_pending_action()
                     
                     if response_text:
+                        # Mark that a generation just happened
+                        await self.session_manager.set_just_generated(self.conversation_uuid)
                         # Save response
                         await self.session_manager.add_message(
                             self.conversation_uuid,
@@ -1358,6 +1564,9 @@ If unsure, ask for clarification. Respond in the user's language (default: Engli
                     last_tool_result = tool_result
                     tool_was_actually_called = True
                     
+                    # Mark that a generation just happened (for post-generation reset)
+                    await self.session_manager.set_just_generated(self.conversation_uuid)
+                    
                     # Send result back with timeout
                     try:
                         response = await asyncio.wait_for(
@@ -1574,15 +1783,18 @@ Keep it brief and helpful."""
                 
                 is_video_context = any(word in response_lower for word in ['video', 'vídeo', 'animar', 'animate', 'sora', 'veo', 'runway', 'kling'])
                 is_image_context = any(word in response_lower for word in ['imagen', 'image', 'foto', 'picture'])
+                is_speech_context = any(word in response_lower for word in ['speech', 'voice', 'voz', 'audio', 'narración', 'narration', 'habla'])
                 
                 # If response doesn't have clear keywords, check conversation history
-                if not is_video_context and not is_image_context:
+                if not is_video_context and not is_image_context and not is_speech_context:
                     # Check if tokens/sec pattern exists (video-specific)
                     if re.search(r'tokens?/se[cg]', response_lower) or re.search(r'tokens?/se[cg]', history_text):
                         is_video_context = True
                     # Check conversation history for video model mentions
                     elif any(word in history_text for word in ['video', 'vídeo', 'sora', 'veo', 'runway', 'kling']):
                         is_video_context = True
+                    elif any(word in history_text for word in ['speech', 'voice', 'voz', 'audio', 'narración', 'narration']):
+                        is_speech_context = True
                     elif any(word in history_text for word in ['imagen', 'image', 'gpt', 'nano banana', 'freepik']):
                         is_image_context = True
                 
@@ -1599,6 +1811,20 @@ Keep it brief and helpful."""
                         print(f"DEBUG: Saving pending VIDEO action: {action_args}")
                         await self.save_pending_action(
                             "generate_video",
+                            action_args,
+                            response_text
+                        )
+                elif is_speech_context:
+                    # Detect speech generation
+                    params = detect_speech_params_from_history(history_with_current)
+                    if params.get('text'):
+                        action_args = {
+                            "text": params['text'],
+                            "voice_id": params.get('voice_id', '21m00Tcm4TlvDq8ikWAM'),
+                        }
+                        print(f"DEBUG: Saving pending SPEECH action: {action_args}")
+                        await self.save_pending_action(
+                            "generate_speech",
                             action_args,
                             response_text
                         )
