@@ -541,14 +541,15 @@ class GeminiChatbot:
         # Critical tool usage instructions
         tool_instructions = """
         LANGUAGE ADAPTATION (CRITICAL - HIGHEST PRIORITY):
+        - DEFAULT LANGUAGE: English. If you have NO prior conversation history or cannot determine the user's language, ALWAYS use English.
         - You MUST respond in the SAME language the user is writing in.
         - Detect the language from EACH user message. Track the LAST CLEARLY IDENTIFIABLE language.
         - If the user writes in English, respond in English. If the user writes in Spanish, respond in Spanish. Same for any other language.
-        - AMBIGUOUS MESSAGES: Short replies like "no", "ok", "yes", "gpt", "sora 2", "5s", model names, or single words that exist in multiple languages are NOT a language switch. KEEP the last clearly detected language.
+        - AMBIGUOUS MESSAGES: Short replies like "no", "ok", "yes", "gpt", "sora 2", "5s", model names, or single words that exist in multiple languages are NOT a language switch. KEEP the last clearly detected language (default: English).
         - LANGUAGE SWITCH: Only change language if the user writes a CLEAR sentence in a different language or explicitly requests it.
         - This applies to ALL messages: questions, confirmations, cost info, errors, EVERYTHING.
         - Keep technical terms and model names in their original form (e.g., "Nano Banana", "GPT", "Freepik").
-        - IMPORTANT: All instructions below are written in English for clarity, but you MUST always respond to the user in THEIR language.
+        - IMPORTANT: All instructions below are written in English for clarity, but you MUST always respond to the user in THEIR language (default: English).
         
         ⛔ MANDATORY WORKFLOW - NEVER SKIP STEPS:
         You MUST NEVER call generate_image or generate_video unless ALL workflow steps have been completed.
@@ -834,7 +835,7 @@ class GeminiChatbot:
         ═══════════════════════════════════════════════════
         FINAL REMINDER (READ THIS LAST - HIGHEST PRIORITY)
         ═══════════════════════════════════════════════════
-        LANGUAGE: Your response MUST be in the SAME language as the user's message. If the user writes in English, respond ONLY in English. If in Spanish, respond ONLY in Spanish. NO EXCEPTIONS.
+        LANGUAGE: Your response MUST be in the SAME language as the user's message. DEFAULT is English. If the user writes in English, respond ONLY in English. If in Spanish, respond ONLY in Spanish. When in doubt, use ENGLISH. NO EXCEPTIONS.
         """
         
         full_system_prompt = f"{REELMOTION_SYSTEM_PROMPT}\n\n{tool_instructions}"
