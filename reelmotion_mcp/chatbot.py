@@ -15,28 +15,57 @@ from request_context import set_conversation_uuid
 # Load environment variables
 load_dotenv()
 
-# Pattern matching for confirmations
+# Pattern matching for confirmations - ONLY words that mean "yes, proceed/execute"
 CONFIRMATION_PATTERNS = re.compile(
     r'^(?:'
     # Multi-word patterns (more specific, checked first)
     r'ok dale|si dale|yes\s+please|si\s+por\s+favor|sí\s+por\s+favor|'
     r'go ahead|lets go|let\'s go|do it|'
-    r'me gusta\s+(?:ese|esa|eso|este|esta)|me encanta\s+(?:ese|esa|eso|este|esta)|'
-    r'me parece bien|suena bien|sounds good|looks good|that works|love it|like it|'
-    r'that\'s good|that\'s great|that\'s fine|'
-    r'está bien|esta bien|se ve bien|de acuerdo|'
-    r'está genial|esta genial|así está bien|así mero|eso mero|'
-    # Single/short word confirmations
-    r'ok|okey|okay|yes|sure|yep|yeah|go|agreed|confirm|accept|done|ready|'
+    r'me parece bien|suena bien|sounds good|that works|'
+    r'that\'s good|that\'s fine|'
+    r'está bien|esta bien|de acuerdo|'
+    r'así está bien|'
+    # Single/short word confirmations - ONLY execution confirmations
+    r'ok|okey|okay|yes|sure|yep|yeah|go|agreed|confirm|accept|'
     r'proceed|approve|approved|'
     r'si|sí|dale|confirmo|confirmar|procede|hazlo|adelante|claro|afirmativo|'
-    r'correcto|eso|exacto|perfecto|listo|va|venga|vamos|bueno|bien|hecho|'
-    r'acepto|apruebo|aprobado|ya|anda|órale|sale|'
-    # Acceptance/approval phrases (critical for refined prompt acceptance)
-    r'me gusta|me encanta|genial|excelente|fantástico|así|le doy|'
-    # NOTE: Reaction words (nice, cool, awesome, amazing, etc.) are NOT confirmations.
-    # They are reactions to results and should NOT trigger tool re-execution.
+    r'correcto|exacto|va|venga|vamos|hecho|'
+    r'acepto|apruebo|aprobado|anda|órale|sale|'
     r'y|s|1|👍|✅'
+    r')[\s.,!?]*$',
+    re.IGNORECASE
+)
+
+# Pattern matching for REACTIONS to results - these are NOT confirmations
+# These should NEVER trigger tool re-execution
+REACTION_PATTERNS = re.compile(
+    r'^(?:'
+    # English reactions
+    r'perfect|amazing|awesome|cool|nice|great|love it|like it|looks? great|'
+    r'looks? good|looks? amazing|looks? awesome|looks? perfect|'
+    r'beautiful|wonderful|excellent|fantastic|incredible|brilliant|'
+    r'stunning|gorgeous|impressive|magnificent|superb|lovely|'
+    r'wow|omg|oh my god|so good|so cool|so nice|too good|'
+    r'thats? perfect|thats? great|thats? amazing|thats? awesome|'
+    r'thats? beautiful|thats? wonderful|thats? incredible|'
+    r'i love it|i like it|love this|like this|'
+    r'well done|good job|great job|nice work|'
+    r'thank you|thanks|thx|ty|thank u|'
+    # Spanish reactions
+    r'perfecto|perfecta|genial|excelente|fantástico|fantástica|'
+    r'increíble|increible|hermoso|hermosa|precioso|preciosa|'
+    r'espectacular|maravilloso|maravillosa|impresionante|'
+    r'bellísimo|bellísima|bellisimo|bellisima|'
+    r'qué lindo|que lindo|qué bonito|que bonito|qué bello|que bello|'
+    r'qué bien|que bien|qué chido|que chido|qué chévere|que chevere|'
+    r'me gusta|me encanta|me fascina|me parece genial|'
+    r'está genial|esta genial|está increíble|esta increible|'
+    r'quedó genial|quedo genial|quedó increíble|quedo increible|'
+    r'quedó perfecto|quedo perfecto|quedó bien|quedo bien|'
+    r'listo|bueno|bien|done|ready|'
+    r'gracias|muchas gracias|'
+    # Reactions with punctuation emphasis
+    r'wow+|woo+|yay|siii+|sí+'
     r')[\s.,!?]*$',
     re.IGNORECASE
 )
@@ -77,9 +106,14 @@ REFINED_PROMPT_ACCEPTANCE_PATTERN = re.compile(
 )
 
 def is_confirmation(message: str) -> bool:
-    """Check if the message is a simple confirmation."""
+    """Check if the message is a simple confirmation (intent to execute/proceed)."""
     cleaned = message.strip().lower()
     return bool(CONFIRMATION_PATTERNS.match(cleaned))
+
+def is_reaction(message: str) -> bool:
+    """Check if the message is a reaction/compliment to a result (NOT a confirmation to execute)."""
+    cleaned = message.strip().lower()
+    return bool(REACTION_PATTERNS.match(cleaned))
 
 def needs_clarification(message: str, has_ref_files: bool) -> tuple[bool, str]:
     """
@@ -1301,6 +1335,50 @@ class GeminiChatbot:
                 print(f"DEBUG [chatbot]: Post-generation state detected. Clearing workflow state.")
                 # Also clear any stale pending action that might have been re-created
                 await self.clear_pending_action()
+                
+                # If the message is a reaction (perfect, amazing, genial, etc.),
+                # respond directly WITHOUT sending to Gemini to prevent re-execution
+                if is_reaction(message) or is_confirmation(message):
+                    print(f"DEBUG [chatbot]: Post-generation reaction detected: '{message}'. Responding directly.")
+                    # Save user message
+                    await self.session_manager.add_message(
+                        self.conversation_uuid,
+                        "user",
+                        message
+                    )
+                    # Send to Gemini WITHOUT tools - just for a friendly response
+                    try:
+                        if not self.chat_session:
+                            await self.start_chat()
+                        no_tool_prompt = f"""The user just reacted to a successfully generated result with: \"{message}\"
+
+IMPORTANT: A tool was JUST executed successfully. The workflow is COMPLETE.
+- Do NOT call any tools (generate_image, generate_video, generate_speech).
+- Respond with a SHORT, friendly acknowledgment (1-2 sentences max).
+- Ask if they need anything else.
+- Respond in the user's language (default: English)."""
+                        response = await asyncio.wait_for(
+                            self.chat_session.send_message_async(no_tool_prompt),
+                            timeout=15
+                        )
+                        # Check if Gemini tried to call a tool anyway - ignore it
+                        response_text = None
+                        if response.candidates and len(response.candidates) > 0:
+                            for part in response.candidates[0].content.parts:
+                                if hasattr(part, 'text') and part.text:
+                                    response_text = part.text
+                                    break
+                        if not response_text:
+                            response_text = "Glad you liked it! Let me know if you need anything else. 😊"
+                    except Exception:
+                        response_text = "Glad you liked it! Let me know if you need anything else. 😊"
+                    
+                    await self.session_manager.add_message(
+                        self.conversation_uuid,
+                        "assistant",
+                        response_text
+                    )
+                    return response_text
             
             # === FAST PATH: Check for confirmation with pending action ===
             if is_confirmation(message):
