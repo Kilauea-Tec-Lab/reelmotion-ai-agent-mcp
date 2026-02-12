@@ -1127,8 +1127,8 @@ class GeminiChatbot:
             # Add the user's message
             parts.append(message)
             
-            # Send to Gemini with timeout (45 seconds max for initial response)
-            GEMINI_TIMEOUT = 45  # seconds - first messages with large system prompt can take longer
+            # Send to Gemini with timeout
+            GEMINI_TIMEOUT = 180  # seconds - increased for large system prompt + slow first responses
             try:
                 print(f"DEBUG [chatbot]: Sending message to Gemini (timeout={GEMINI_TIMEOUT}s)...")
                 import time
@@ -1253,7 +1253,7 @@ class GeminiChatbot:
                                     )
                                 )
                             ),
-                            timeout=30  # 30s for function result response
+                            timeout=900  # 15min - video generation (Kling) can take 10+ minutes
                         )
                     except asyncio.TimeoutError:
                         print(f"WARNING: Gemini timed out processing function result")
