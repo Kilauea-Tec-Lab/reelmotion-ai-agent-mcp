@@ -290,7 +290,13 @@ def detect_video_params_from_history(history: list) -> dict:
                     extracted = prompt_match.group(1).strip()
                     # Remove surrounding quotes if present
                     extracted = re.sub(r'^["\u201c]|["\u201d]$', '', extracted).strip()
-                    if len(extracted) > 10:
+                    
+                    # Detect truncation (prevents using "..." summaries as actual prompts)
+                    if extracted.endswith('...') or extracted.endswith('…'):
+                        print(f"DEBUG [detect_video_params]: Prompt in cost confirmation is truncated: {extracted[:80]}... SKIPPING to avoid cut-off prompt.")
+                        extracted = None
+                    
+                    if extracted and len(extracted) > 10:
                         params['prompt'] = extracted
                         print(f"DEBUG [detect_video_params]: Extracted prompt from cost confirmation: {extracted[:80]}...")
                 break  # Only check the most recent assistant message
@@ -593,7 +599,13 @@ def detect_image_params_from_history(history: list) -> dict:
                 if prompt_match:
                     extracted = prompt_match.group(1).strip()
                     extracted = re.sub(r'^["\u201c]|["\u201d]$', '', extracted).strip()
-                    if len(extracted) > 10:
+                    
+                    # Detect truncation (prevents using "..." summaries as actual prompts)
+                    if extracted.endswith('...') or extracted.endswith('…'):
+                        print(f"DEBUG [detect_image_params]: Prompt in cost confirmation is truncated: {extracted[:80]}... SKIPPING to avoid cut-off prompt.")
+                        extracted = None
+                    
+                    if extracted and len(extracted) > 10:
                         params['prompt'] = extracted
                         print(f"DEBUG [detect_image_params]: Extracted prompt from cost confirmation: {extracted[:80]}...")
                 break
