@@ -250,12 +250,18 @@ def detect_video_params_from_history(history: list) -> dict:
         if msg.get('role') == 'assistant':
             content = msg.get('content', '')
             # Priority 1: Look for cost calculation pattern like "X tokens/seg × Y segundos" or "X tokens/second * Y seconds"
-            cost_match = re.search(r'[×x\*]\s*(\d+)\s*(?:segundos?|seconds?)', content, re.IGNORECASE)
+            # Also matches abbreviated forms: sec, seg, secs, segs, s
+            cost_match = re.search(r'[×x\*]\s*(\d+)\s*(?:segundos?|seconds?|secs?|segs?|s\b)', content, re.IGNORECASE)
             if cost_match:
                 params['duration'] = int(cost_match.group(1))
                 break
+            # Priority 1.5: Direct "Duration: X seconds" or "Duración: X segundos" from cost confirmation
+            duration_label_match = re.search(r'(?:duration|duración)\s*:\s*(\d+)\s*(?:segundos?|seconds?|secs?|segs?|s\b)', content, re.IGNORECASE)
+            if duration_label_match:
+                params['duration'] = int(duration_label_match.group(1))
+                break
             # Priority 2: Look for "video de X segundos" pattern
-            video_dur_match = re.search(r'(?:video\s+de|duración\s+de?)\s*(\d+)\s*(?:segundos?|seconds?)', content, re.IGNORECASE)
+            video_dur_match = re.search(r'(?:video\s+de|duración\s+de?)\s*(\d+)\s*(?:segundos?|seconds?|secs?|segs?|s\b)', content, re.IGNORECASE)
             if video_dur_match:
                 params['duration'] = int(video_dur_match.group(1))
                 break
@@ -1418,6 +1424,72 @@ IMPORTANT: A tool was JUST executed successfully. The workflow is COMPLETE.
                         )
                         return response_text
                     # If execution failed, fall through to normal Gemini flow
+                else:
+                    # === FALLBACK: No pending action saved, but user confirmed something ===
+                    # Try to reconstruct pending action from conversation history
+                    print(f"DEBUG [chatbot]: User confirmed but NO pending action found. Trying to reconstruct from history...")
+                    session = await self.session_manager.get_session(self.conversation_uuid)
+                    history = session.get("messages", []) if session else []
+                    
+                    if history:
+                        # Check last assistant message for cost confirmation pattern
+                        last_assistant = None
+                        for msg in reversed(history):
+                            if msg.get('role') == 'assistant':
+                                last_assistant = msg.get('content', '')
+                                break
+                        
+                        if last_assistant and COST_CONFIRMATION_PATTERN.search(last_assistant):
+                            print(f"DEBUG [chatbot]: Found cost confirmation in last assistant message. Reconstructing action...")
+                            history_with_current = history + [{'role': 'assistant', 'content': last_assistant}]
+                            response_lower = last_assistant.lower()
+                            
+                            ref_files = await self.get_reference_files()
+                            ref_urls = [f["url"] for f in ref_files if f.get("type") == "image"] if ref_files else []
+                            
+                            is_video = any(w in response_lower for w in ['video', 'vídeo', 'animar', 'animate', 'sora', 'veo', 'runway', 'kling', 'tokens/se'])
+                            is_speech = any(w in response_lower for w in ['speech', 'voice', 'voz', 'audio', 'narración'])
+                            is_image = any(w in response_lower for w in ['imagen', 'image', 'foto', 'picture', 'gpt', 'nano banana', 'freepik'])
+                            
+                            reconstructed = False
+                            if is_video:
+                                params = detect_video_params_from_history(history_with_current)
+                                if params.get('model') and params.get('prompt'):
+                                    action_args = {
+                                        "prompt": params['prompt'],
+                                        "model": params['model'],
+                                        "duration": params.get('duration', 8)
+                                    }
+                                    if ref_urls:
+                                        action_args["reference_image"] = ref_urls[0]
+                                    print(f"DEBUG [chatbot]: Reconstructed VIDEO action: model={params['model']}, duration={action_args['duration']}")
+                                    await self.save_pending_action("generate_video", action_args, last_assistant)
+                                    reconstructed = True
+                            elif is_speech:
+                                params = detect_speech_params_from_history(history_with_current)
+                                if params.get('text'):
+                                    action_args = {"text": params['text'], "voice_id": params.get('voice_id', '21m00Tcm4TlvDq8ikWAM')}
+                                    print(f"DEBUG [chatbot]: Reconstructed SPEECH action")
+                                    await self.save_pending_action("generate_speech", action_args, last_assistant)
+                                    reconstructed = True
+                            elif is_image:
+                                params = detect_image_params_from_history(history_with_current)
+                                if params.get('model'):
+                                    action_args = {"prompt": params.get('prompt', 'generate image'), "model": params['model']}
+                                    if ref_urls:
+                                        action_args["reference_images"] = ref_urls
+                                    print(f"DEBUG [chatbot]: Reconstructed IMAGE action: model={params['model']}")
+                                    await self.save_pending_action("generate_image", action_args, last_assistant)
+                                    reconstructed = True
+                            
+                            if reconstructed:
+                                # Save user message and execute
+                                await self.session_manager.add_message(self.conversation_uuid, "user", message)
+                                tool_result, response_text = await self.execute_pending_action()
+                                if response_text:
+                                    await self.session_manager.set_just_generated(self.conversation_uuid)
+                                    await self.session_manager.add_message(self.conversation_uuid, "assistant", response_text)
+                                    return response_text
             
             # Guardar mensaje del usuario en Redis
             await self.session_manager.add_message(
