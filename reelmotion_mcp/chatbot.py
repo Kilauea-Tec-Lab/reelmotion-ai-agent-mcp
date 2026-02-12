@@ -1128,37 +1128,82 @@ class GeminiChatbot:
             # Add the user's message
             parts.append(message)
             
-            # Send to Gemini with timeout
+            # Send to Gemini with timeout and retry logic
             GEMINI_TIMEOUT = 180  # seconds - increased for large system prompt + slow first responses
-            try:
-                print(f"DEBUG [chatbot]: Sending message to Gemini (timeout={GEMINI_TIMEOUT}s)...")
-                import time
-                start_time = time.time()
-                response = await asyncio.wait_for(
-                    self.chat_session.send_message_async(parts),
-                    timeout=GEMINI_TIMEOUT
-                )
-                elapsed = time.time() - start_time
-                print(f"DEBUG [chatbot]: Gemini responded in {elapsed:.1f}s")
-            except asyncio.TimeoutError:
-                elapsed = time.time() - start_time
-                print(f"WARNING: Gemini timed out after {elapsed:.1f}s without calling any tools")
-                # Check if we have a pending action to execute directly
-                pending_action = await self.get_pending_action()
-                if pending_action:
-                    print(f"DEBUG: Timeout recovery - executing pending action: {pending_action.get('function')}")
-                    tool_result, response_text = await self.execute_pending_action()
-                    if response_text:
-                        await self.session_manager.add_message(
-                            self.conversation_uuid,
-                            "assistant",
-                            response_text
+            MAX_RETRIES = 2  # Retry once on timeout before giving up
+            response = None
+            
+            for attempt in range(MAX_RETRIES):
+                try:
+                    print(f"DEBUG [chatbot]: Sending message to Gemini (timeout={GEMINI_TIMEOUT}s, attempt={attempt+1}/{MAX_RETRIES})...")
+                    import time
+                    start_time = time.time()
+                    response = await asyncio.wait_for(
+                        self.chat_session.send_message_async(parts) if attempt == 0 else self.chat_session.send_message_async(message),
+                        timeout=GEMINI_TIMEOUT
+                    )
+                    elapsed = time.time() - start_time
+                    print(f"DEBUG [chatbot]: Gemini responded in {elapsed:.1f}s (attempt {attempt+1})")
+                    break  # Success - exit retry loop
+                except asyncio.TimeoutError:
+                    elapsed = time.time() - start_time
+                    print(f"WARNING: Gemini timed out after {elapsed:.1f}s (attempt {attempt+1}/{MAX_RETRIES})")
+                    
+                    if attempt < MAX_RETRIES - 1:
+                        # Retry - reinitialize chat to clear any stuck state
+                        print("DEBUG: Retrying after timeout...")
+                        await self.start_chat()
+                        continue
+                    
+                    # Final attempt failed - try recovery
+                    # Check if we have a pending action to execute directly
+                    pending_action = await self.get_pending_action()
+                    if pending_action:
+                        print(f"DEBUG: Timeout recovery - executing pending action: {pending_action.get('function')}")
+                        tool_result, response_text = await self.execute_pending_action()
+                        if response_text:
+                            await self.session_manager.add_message(
+                                self.conversation_uuid,
+                                "assistant",
+                                response_text
+                            )
+                            return response_text
+                    
+                    # No pending action - try sending a lightweight context-aware recovery prompt
+                    try:
+                        print("DEBUG: Timeout - sending lightweight recovery prompt to Gemini...")
+                        recovery_msg = f"""The user just said: "{message}"
+                        
+Based on the conversation history, continue the workflow naturally. 
+If the user confirmed something (yes/ok/confirm/dale/si), proceed to the NEXT step of the workflow.
+If unsure, ask for clarification. Respond in the user's language (default: English). Do NOT call any tools."""
+                        
+                        recovery_response = await asyncio.wait_for(
+                            self.chat_session.send_message_async(recovery_msg),
+                            timeout=30
                         )
-                        return response_text
-                # No pending action - ask user to clarify
-                clarification = "Sorry, I didn't quite understand what you want to do. Could you be more specific? For example:\n" \
-                               "- Do you want to create a **video** or an **image**?\n" \
-                               "- If you have a reference image: Do you want to **animate it** or **generate a similar image**?"
+                        if recovery_response.text:
+                            response_text = recovery_response.text
+                            await self.session_manager.add_message(
+                                self.conversation_uuid,
+                                "assistant",
+                                response_text
+                            )
+                            return response_text
+                    except Exception as recovery_error:
+                        print(f"DEBUG: Recovery prompt also failed: {recovery_error}")
+                    
+                    # Last resort fallback
+                    clarification = "I'm sorry, there was a temporary issue processing your request. Could you please repeat your last message?"
+                    await self.session_manager.add_message(
+                        self.conversation_uuid,
+                        "assistant",
+                        clarification
+                    )
+                    return clarification
+            
+            if response is None:
+                clarification = "I'm sorry, there was a temporary issue processing your request. Could you please repeat your last message?"
                 await self.session_manager.add_message(
                     self.conversation_uuid,
                     "assistant",
