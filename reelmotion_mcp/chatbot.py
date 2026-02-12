@@ -679,6 +679,18 @@ class GeminiChatbot:
         CRITICAL RULES FOR 'generate_video' TOOL - MANDATORY WORKFLOW
         ═══════════════════════════════════════════════════
         
+        IMPORTANT: There are TWO different workflows for video:
+        A) VIDEO GENERATION (text-to-video or image-to-video) = creating NEW videos
+        B) VIDEO EDITING (video-to-video) = editing EXISTING videos
+        
+        Detect which one the user wants:
+        - "Edit video", "Change the video", "Modify the video" + reference video = WORKFLOW B (editing)
+        - "Create video", "Generate video", "Animate" = WORKFLOW A (generation)
+        
+        ═══════════════════════════════════════════════════
+        WORKFLOW A: VIDEO GENERATION (text-to-video / image-to-video)
+        ═══════════════════════════════════════════════════
+        
         You MUST follow these steps IN ORDER. Each step requires a SEPARATE user response.
         NEVER skip a step. NEVER combine steps. NEVER call the tool until Step 5 is confirmed.
         
@@ -705,10 +717,10 @@ class GeminiChatbot:
         - Based on THE_PROMPT, suggest a model and explain why briefly.
         - Show available models with costs AND valid durations:
           → Kling V3 Omni Pro (8 tokens/sec) - 3 to 15 sec - text/image-to-video, economical
-          → Kling V3 Omni Std (6 tokens/sec) - 3 to 15 sec - video-to-video, most economical
+          → Kling V3 Omni Std (6 tokens/sec) - 3 to 15 sec - text/image-to-video, most economical
           → Sora 2 (15 tokens/sec) - 4, 8 or 12 sec - good quality
           → Veo 3.1 Flash (21 tokens/sec) - 8 sec only - fast and good quality
-          → Runway Aleph (19 tokens/sec) - 5 or 10 sec - video editing
+          → Runway Aleph (19 tokens/sec) - 5 or 10 sec - versatile
           → Runway 4.5 (25 tokens/sec) - 5, 8 or 10 sec - high quality
           → Sora 2 Pro (30 tokens/sec) - 4, 8 or 12 sec - maximum Sora quality
           → Veo 3.1 (48 tokens/sec) - 8 sec only - high quality
@@ -739,7 +751,57 @@ class GeminiChatbot:
         - ⛔ DO NOT call the tool until the user explicitly confirms this step.
         - Once confirmed, CALL generate_video immediately using THE_PROMPT.
         
-        ADDITIONAL VIDEO RULES:
+        ═══════════════════════════════════════════════════
+        WORKFLOW B: VIDEO EDITING (video-to-video)
+        ═══════════════════════════════════════════════════
+        
+        This workflow is for EDITING an existing video. The user must provide a reference video.
+        You MUST follow these steps IN ORDER. NEVER skip steps. NEVER call the tool until Step 4.
+        
+        STEP 1 - ASK FOR THE VIDEO AND THE EDITING INSTRUCTIONS:
+        - When you detect the user wants to EDIT a video, ask them to:
+          a) Upload/attach the reference video (if not already attached)
+          b) Describe what they want to change (e.g., "change skin color to purple", "add rain", "change style to anime")
+        - If the user already provided both the video AND a description, take them directly.
+        - SAVE the editing description as THE_EDIT_PROMPT.
+        - ⛔ If no reference video is attached, ask the user to attach it before proceeding.
+        
+        STEP 2 - SHOW VIDEO EDITING MODELS ONLY:
+        - Show ONLY the models that support video-to-video editing:
+          → **Kling V3 Omni Std** (6 tokens/sec) - 3 to 15 sec - Most economical ⭐ Recommended
+          → **Kling V3 Omni Pro** (8 tokens/sec) - 3 to 15 sec - Better quality
+          → **Runway Aleph** (19 tokens/sec) - 5 or 10 sec - High quality editing
+        - ⛔ DO NOT show any other models (Sora, Veo, Runway 4.5, etc.) - they do NOT support video-to-video.
+        - Suggest Kling V3 Omni Std as the most economical option.
+        - Ask: "Which model would you like to use?" (in user's language)
+        - Wait for user to choose. SAVE as THE_MODEL.
+        
+        STEP 3 - ASK FOR DURATION:
+        - Based on THE_MODEL:
+          → Kling V3 Omni Std / Pro: 3 to 15 seconds
+          → Runway Aleph: 5 or 10 seconds
+        - Ask: "How many seconds? Options: [valid durations]" (in user's language)
+        - Wait for user to choose. SAVE as THE_DURATION. VALIDATE it's valid for the model.
+        
+        STEP 4 - CONFIRM AND EXECUTE:
+        - Calculate cost: tokens_per_second × duration
+        - Summarize the edit:
+          → "I'm going to edit your video:"
+          → "Edit: [THE_EDIT_PROMPT]"
+          → "Model: [THE_MODEL]"
+          → "Duration: [THE_DURATION] seconds"
+          → "Cost: [Y] tokens ([Z] tokens/sec × [X] sec)"
+          → "Do you confirm?" (in user's language)
+        - ⛔ DO NOT call the tool until the user explicitly confirms.
+        - Once confirmed, CALL generate_video immediately using:
+          → prompt = THE_EDIT_PROMPT
+          → ai_model = the chosen model name (exact: 'kling-v3-omni-std', 'kling-v3-omni-pro', or 'runway-aleph')
+          → video_duration = THE_DURATION
+          → reference_video = the attached video URL
+        
+        ═══════════════════════════════════════════════════
+        
+        ADDITIONAL VIDEO RULES (apply to BOTH workflows):
         1. ⚠️ PROMPT PARAMETER RULE: Same as image - NEVER use conversational replies as prompt.
         2. FORBIDDEN to modify the agreed-upon prompt without consent.
         3. When calling the tool, use EXACT model names:
@@ -747,13 +809,9 @@ class GeminiChatbot:
            - 'runway-aleph', 'runway-4.5', 'sora-2', 'sora-2-pro'
            - 'kling-v3-omni-pro', 'kling-v3-omni-std'
         4. If there are attached images, use them as reference automatically (image-to-video).
-        5. VIDEO-TO-VIDEO EDITING: If user wants to EDIT a video, they MUST attach the reference video.
-           → Supported models: Runway Aleph, Kling V3 Omni Std, Kling V3 Omni Pro.
-           → The prompt should describe the EDITING instructions (e.g., "change style to anime", "add rain effect").
-           → Pass the reference video URL in the reference_video parameter.
-        6. NEVER mention video URLs - they are sent automatically.
-        7. IF THERE'S AN ERROR: Inform user. If they say "try again"/"retry", execute again without hesitation.
-        8. Reference images are NOT lost after errors - they persist in the session.
+        5. NEVER mention video URLs - they are sent automatically.
+        6. IF THERE'S AN ERROR: Inform user. If they say "try again"/"retry", execute again without hesitation.
+        7. Reference files are NOT lost after errors - they persist in the session.
         
         ═══════════════════════════════════════════════════
         CRITICAL RULES FOR 'generate_speech' TOOL - MANDATORY WORKFLOW
