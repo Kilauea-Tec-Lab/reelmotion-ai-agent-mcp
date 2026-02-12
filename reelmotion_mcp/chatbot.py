@@ -644,11 +644,13 @@ class GeminiChatbot:
           You MUST write the refined prompt. Do NOT interpret this as final confirmation to generate.
         
         STEP 3 - ASK FOR THE MODEL (WITH SUGGESTION):
-        - Based on THE_PROMPT, suggest a model and explain why:
+        - Based on THE_PROMPT, suggest a model and explain why.
+        - ⚠️ ALWAYS present the models as a FORMATTED LIST (one model per line), never as inline text.
+        - Available models:
           → GPT: Best for detailed, realistic, complex images. Recommended for most cases.
           → Nano Banana: Great for artistic, stylized, creative images.
           → Freepik: Good for clean, commercial-style images.
-        - Ask: "I suggest using [model] because [reason]. Which model do you want to use: Nano Banana, GPT, or Freepik?" (in user's language)
+        - Ask: "I suggest using [model] because [reason]. Which model would you like to use?" (in user's language)
         - Wait for the user to choose.
         - All models cost 10 tokens per image.
         
@@ -715,6 +717,7 @@ class GeminiChatbot:
         
         STEP 3 - ASK FOR THE MODEL (WITH SUGGESTION):
         - Based on THE_PROMPT, suggest a model and explain why briefly.
+        - ⚠️ ALWAYS present the models as a FORMATTED LIST (one model per line with its cost and durations), never as inline text.
         - Show available models with costs AND valid durations:
           → Kling V3 Omni Pro (8 tokens/sec) - 3 to 15 sec - text/image-to-video, economical
           → Kling V3 Omni Std (6 tokens/sec) - 3 to 15 sec - text/image-to-video, most economical
@@ -758,15 +761,24 @@ class GeminiChatbot:
         This workflow is for EDITING an existing video. The user must provide a reference video.
         You MUST follow these steps IN ORDER. NEVER skip steps. NEVER call the tool until Step 4.
         
-        STEP 1 - ASK FOR THE VIDEO AND THE EDITING INSTRUCTIONS:
+        STEP 1 - ASK FOR THE VIDEO, EDITING INSTRUCTIONS, AND OFFER PROMPT HELP:
         - When you detect the user wants to EDIT a video, ask them to:
           a) Upload/attach the reference video (if not already attached)
           b) Describe what they want to change (e.g., "change skin color to purple", "add rain", "change style to anime")
         - If the user already provided both the video AND a description, take them directly.
         - SAVE the editing description as THE_EDIT_PROMPT.
         - ⛔ If no reference video is attached, ask the user to attach it before proceeding.
+        - Once you have THE_EDIT_PROMPT, ask: "Would you like me to help you refine or improve your prompt for better results?" (in user's language)
+        - If user says YES/OK/SI/DALE:
+          → Write an improved, more detailed version of the editing prompt.
+          → Show it between quotes.
+          → Ask: "Do you like this version?" (in user's language)
+          → If approved: UPDATE THE_EDIT_PROMPT. Move to Step 2.
+          → If wants changes: iterate until satisfied, then move to Step 2.
+        - If user says NO or skips: Keep THE_EDIT_PROMPT as-is, move to Step 2.
         
         STEP 2 - SHOW VIDEO EDITING MODELS ONLY:
+        - ⚠️ ALWAYS present the models as a FORMATTED LIST (one model per line with its cost and durations), never as inline text.
         - Show ONLY the models that support video-to-video editing:
           → **Kling V3 Omni Std** (6 tokens/sec) - 3 to 15 sec - Most economical ⭐ Recommended
           → **Kling V3 Omni Pro** (8 tokens/sec) - 3 to 15 sec - Better quality
