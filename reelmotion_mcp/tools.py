@@ -7,6 +7,11 @@ from typing import Optional
 from request_context import get_api_token, get_conversation_uuid
 
 
+def is_blob_url(url: str) -> bool:
+    """Check if a URL is a browser-only blob: URL that cannot be fetched server-side."""
+    return isinstance(url, str) and url.startswith('blob:')
+
+
 def clean_prompt_from_model_mentions(prompt: str) -> str:
     """
     Remove model name mentions from the prompt before sending to backend.
@@ -122,7 +127,25 @@ async def generate_image(
     if context_files:
         # Filtrar solo imágenes
         image_files = [f for f in context_files if f.get("type") == "image"]
-        print(f"DEBUG: Sending request with {len(image_files)} image URLs")
+        
+        # Filter out blob: URLs (browser-only, cannot be fetched server-side)
+        valid_image_files = [f for f in image_files if not is_blob_url(f.get("url", ""))]
+        blob_image_files = [f for f in image_files if is_blob_url(f.get("url", ""))]
+        
+        if blob_image_files:
+            print(f"WARNING: Filtered out {len(blob_image_files)} blob: URLs that cannot be processed server-side")
+            for bf in blob_image_files:
+                print(f"  - Filtered blob URL: {bf.get('url', '')[:80]}...")
+        
+        if not valid_image_files and blob_image_files:
+            # ALL reference images were blob URLs - cannot proceed with image editing
+            print(f"ERROR: All {len(blob_image_files)} reference images are blob: URLs. Cannot process.")
+            return ("Error: The reference image could not be processed because it uses a temporary browser URL (blob:). "
+                    "Please try uploading the image again or use a direct image URL. "
+                    "This happens when the image was not properly uploaded to the server.")
+        
+        image_files = valid_image_files
+        print(f"DEBUG: Sending request with {len(image_files)} valid image URLs")
         headers["Content-Type"] = "application/json"
         
         payload = {
@@ -346,9 +369,20 @@ async def generate_video(
     
     # Add reference media from context (URLs directly)
     if context_files and len(context_files) > 0:
-        # Buscar imagen o video en los archivos de referencia
-        image_file = next((f for f in context_files if f.get("type") == "image"), None)
-        video_file = next((f for f in context_files if f.get("type") == "video"), None)
+        # Filter out blob: URLs (browser-only, cannot be fetched server-side)
+        valid_context_files = [f for f in context_files if not is_blob_url(f.get("url", ""))]
+        blob_files = [f for f in context_files if is_blob_url(f.get("url", ""))]
+        if blob_files:
+            print(f"WARNING [generate_video]: Filtered out {len(blob_files)} blob: URLs")
+        
+        if not valid_context_files and blob_files:
+            print(f"ERROR [generate_video]: All reference files are blob: URLs. Cannot process.")
+            return ("Error: The reference file could not be processed because it uses a temporary browser URL (blob:). "
+                    "Please try uploading the file again or use a direct URL.")
+        
+        # Buscar imagen o video en los archivos de referencia válidos
+        image_file = next((f for f in valid_context_files if f.get("type") == "image"), None)
+        video_file = next((f for f in valid_context_files if f.get("type") == "video"), None)
         
         processed_video = False
         if video_file:

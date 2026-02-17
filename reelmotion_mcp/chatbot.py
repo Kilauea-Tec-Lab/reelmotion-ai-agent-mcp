@@ -554,6 +554,59 @@ def detect_speech_params_from_history(history: list) -> dict:
     return params
 
 
+def _extract_prompt_from_confirmation(confirmation_text: str) -> str:
+    """
+    Extract the exact prompt from a cost confirmation message.
+    This ensures the prompt shown to the user is exactly what gets executed.
+    
+    Matches patterns like:
+    - "I'm going to generate: [PROMPT]"
+    - "Voy a generar: [PROMPT]"
+    - "Prompt: [PROMPT]"
+    - "Prompt: \"[PROMPT]\""
+    - "Descripción: [PROMPT]"
+    """
+    if not confirmation_text:
+        return None
+    
+    # Pattern 1: "Prompt:" or "Descripción:" followed by the text (possibly quoted)
+    prompt_match = re.search(
+        r'(?:prompt|descripci[oó]n)\s*:\s*(?:["\u201c])?(.+?)(?:["\u201d])?\s*(?=\n(?:model|modelo|cost|costo|precio)|$)',
+        confirmation_text, re.IGNORECASE | re.DOTALL
+    )
+    if prompt_match:
+        extracted = prompt_match.group(1).strip()
+        # Remove surrounding quotes if present
+        extracted = re.sub(r'^["\u201c]|["\u201d]$', '', extracted).strip()
+        # Remove leading ** from markdown bold
+        extracted = re.sub(r'^\*{1,2}\s*', '', extracted).strip()
+        extracted = re.sub(r'\s*\*{1,2}$', '', extracted).strip()
+        if extracted and len(extracted) > 10 and not extracted.endswith('...') and not extracted.endswith('…'):
+            return extracted
+    
+    # Pattern 2: "I'm going to generate:" / "Voy a generar:" followed by the prompt
+    gen_match = re.search(
+        r'(?:I\'m going to generate|voy a generar|generaré)\s*:?\s*(?:["\u201c])?(.+?)(?:["\u201d])?\s*(?=\n(?:model|modelo|cost|costo|precio)|$)',
+        confirmation_text, re.IGNORECASE | re.DOTALL
+    )
+    if gen_match:
+        extracted = gen_match.group(1).strip()
+        extracted = re.sub(r'^["\u201c]|["\u201d]$', '', extracted).strip()
+        extracted = re.sub(r'^\*{1,2}\s*', '', extracted).strip()
+        extracted = re.sub(r'\s*\*{1,2}$', '', extracted).strip()
+        if extracted and len(extracted) > 10 and not extracted.endswith('...') and not extracted.endswith('…'):
+            return extracted
+    
+    # Pattern 3: Look for text between quotes (most common for refined prompts)
+    quote_match = re.search(r'["\u201c]([^"\u201d]{15,})["\u201d]', confirmation_text)
+    if quote_match:
+        extracted = quote_match.group(1).strip()
+        if not extracted.endswith('...') and not extracted.endswith('…'):
+            return extracted
+    
+    return None
+
+
 def detect_image_params_from_history(history: list) -> dict:
     """
     Try to extract image generation parameters from conversation history.
@@ -1277,11 +1330,18 @@ class GeminiChatbot:
         # Get reference images if needed and not already in args
         ref_files = await self.get_reference_files()
         if ref_files and function_name in ["generate_image", "generate_video"]:
-            ref_urls = [f["url"] for f in ref_files if f.get("type") == "image"]
+            # Filter out blob: URLs (browser-only, cannot be fetched server-side)
+            ref_urls = [f["url"] for f in ref_files if f.get("type") == "image" and not f.get("url", "").startswith("blob:")]
+            blob_urls = [f["url"] for f in ref_files if f.get("type") == "image" and f.get("url", "").startswith("blob:")]
+            if blob_urls:
+                print(f"WARNING [chatbot]: Filtered out {len(blob_urls)} blob: URLs from reference files in execute_pending_action")
             if ref_urls:
                 if function_name == "generate_image" and "reference_images" not in args:
                     args["reference_images"] = ref_urls
-                    print(f"DEBUG [chatbot]: Added {len(ref_urls)} reference images to pending action")
+                    # Ensure image_type is set correctly for editing
+                    if "image_type" not in args:
+                        args["image_type"] = 2 if len(ref_urls) == 1 else 3
+                    print(f"DEBUG [chatbot]: Added {len(ref_urls)} reference images to pending action (image_type={args.get('image_type')})")
                 elif function_name == "generate_video" and "reference_image" not in args:
                     args["reference_image"] = ref_urls[0]
                     print(f"DEBUG [chatbot]: Added reference image to pending video action")
@@ -1445,7 +1505,11 @@ IMPORTANT: A tool was JUST executed successfully. The workflow is COMPLETE.
                             response_lower = last_assistant.lower()
                             
                             ref_files = await self.get_reference_files()
-                            ref_urls = [f["url"] for f in ref_files if f.get("type") == "image"] if ref_files else []
+                            # Filter out blob: URLs
+                            ref_urls = [f["url"] for f in ref_files if f.get("type") == "image" and not f.get("url", "").startswith("blob:")] if ref_files else []
+                            blob_ref_urls = [f["url"] for f in ref_files if f.get("type") == "image" and f.get("url", "").startswith("blob:")] if ref_files else []
+                            if blob_ref_urls:
+                                print(f"WARNING [chatbot]: Filtered out {len(blob_ref_urls)} blob: URLs during reconstruction")
                             
                             is_video = any(w in response_lower for w in ['video', 'vídeo', 'animar', 'animate', 'sora', 'veo', 'runway', 'kling', 'tokens/se'])
                             is_speech = any(w in response_lower for w in ['speech', 'voice', 'voz', 'audio', 'narración'])
@@ -1474,10 +1538,16 @@ IMPORTANT: A tool was JUST executed successfully. The workflow is COMPLETE.
                                     reconstructed = True
                             elif is_image:
                                 params = detect_image_params_from_history(history_with_current)
+                                # PRIORITY: Extract prompt directly from confirmation message
+                                confirmed_prompt = _extract_prompt_from_confirmation(last_assistant)
+                                if confirmed_prompt:
+                                    params['prompt'] = confirmed_prompt
+                                    print(f"DEBUG [chatbot]: Extracted prompt from confirmation for reconstruction: {confirmed_prompt[:80]}...")
                                 if params.get('model'):
                                     action_args = {"prompt": params.get('prompt', 'generate image'), "model": params['model']}
                                     if ref_urls:
                                         action_args["reference_images"] = ref_urls
+                                        action_args["image_type"] = 2 if len(ref_urls) == 1 else 3
                                     print(f"DEBUG [chatbot]: Reconstructed IMAGE action: model={params['model']}")
                                     await self.save_pending_action("generate_image", action_args, last_assistant)
                                     reconstructed = True
@@ -1524,6 +1594,12 @@ IMPORTANT: A tool was JUST executed successfully. The workflow is COMPLETE.
                 for file_data in ref_files:
                     file_url = file_data['url']
                     file_type = file_data.get('type', 'image')
+                    
+                    # Skip blob: URLs (browser-only, cannot be fetched from server)
+                    if file_url.startswith('blob:'):
+                        print(f"WARNING: Skipping blob: URL for Gemini analysis (cannot download server-side): {file_url[:80]}")
+                        parts.append(f"Note: The user attached a {file_type} but it uses a temporary browser URL (blob:) that cannot be accessed from the server. The {file_type} reference IS stored for generation - the backend will handle it if possible. Proceed with the workflow normally, acknowledging the user has attached a {file_type}.\n\n")
+                        continue
                     
                     try:
                         print(f"DEBUG: Downloading {file_type} from {file_url} for Gemini analysis")
@@ -1932,9 +2008,12 @@ Keep it brief and helpful."""
                 session = await self.session_manager.get_session(self.conversation_uuid)
                 history = session.get("messages", []) if session else []
                 
-                # Get reference images for the action
+                # Get reference images for the action (filter out blob: URLs)
                 ref_files = await self.get_reference_files()
-                ref_urls = [f["url"] for f in ref_files if f.get("type") == "image"] if ref_files else []
+                ref_urls = [f["url"] for f in ref_files if f.get("type") == "image" and not f.get("url", "").startswith("blob:")] if ref_files else []
+                blob_ref_urls = [f["url"] for f in ref_files if f.get("type") == "image" and f.get("url", "").startswith("blob:")] if ref_files else []
+                if blob_ref_urls:
+                    print(f"WARNING [chatbot]: Filtered out {len(blob_ref_urls)} blob: URLs when saving pending action")
                 
                 # Include the current response_text in history for better param detection
                 history_with_current = history + [{'role': 'assistant', 'content': response_text}]
@@ -1993,13 +2072,24 @@ Keep it brief and helpful."""
                 elif is_image_context:
                     # Detect image generation
                     params = detect_image_params_from_history(history_with_current)
+                    
+                    # PRIORITY: Extract prompt DIRECTLY from the confirmation message (response_text)
+                    # This ensures the exact prompt shown to the user is what gets executed
+                    confirmed_prompt = _extract_prompt_from_confirmation(response_text)
+                    if confirmed_prompt:
+                        params['prompt'] = confirmed_prompt
+                        print(f"DEBUG: Extracted prompt DIRECTLY from confirmation message: {confirmed_prompt[:80]}...")
+                    
                     if params.get('model'):
                         action_args = {
                             "prompt": params.get('prompt', 'generate image'),
                             "model": params['model']
                         }
+                        # Set correct image_type based on whether reference images exist
                         if ref_urls:
                             action_args["reference_images"] = ref_urls
+                            action_args["image_type"] = 2 if len(ref_urls) == 1 else 3
+                            print(f"DEBUG: Set image_type={action_args['image_type']} (has {len(ref_urls)} reference images)")
                         print(f"DEBUG: Saving pending IMAGE action: {action_args}")
                         await self.save_pending_action(
                             "generate_image",
