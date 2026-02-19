@@ -56,7 +56,7 @@ async def generate_image(
     """
     Generate or edit an image using the ReelMotion backend.
     This tool supports text-to-image generation AND image-to-image editing/transformation.
-    COST: 10 tokens per image generated.
+    COST: Nano Banana = 7 tokens, GPT = 6 tokens, Freepik = 1 token per image.
     
     Use cases:
     - Text-to-image: Generate a new image from a text description (type 1).
@@ -256,18 +256,18 @@ async def generate_video(
     
     Token costs per second:
     - Runway: 8 tokens/sec (5-10s) - image-to-video
-    - Runway Aleph: 19 tokens/sec (5-10s) - video-to-video editing
-    - Veo 3.1: 48 tokens/sec (8s only)
-    - Veo 3.1 Flash: 21 tokens/sec (8s only)
-    - Veo 3.1 Ultra: 60 tokens/sec (8s only) - maximum quality
+    - Runway Aleph: 17 tokens/sec (5-10s) - video-to-video editing
+    - Veo 3.1: 44 tokens/sec (8s only)
+    - Veo 3.1 Flash: 17 tokens/sec (8s only)
+    - Veo 3.1 Ultra: 65 tokens/sec (8s only) - maximum quality
     - Luma Labs: 13 tokens/sec (5s only)
     - Seedance Pro: 15 tokens/sec (5s only)
     - Kling V1: 35 tokens/sec (5-10s)
-    - Kling V3 Omni Pro: 8 tokens/sec (3-15s) - text/image-to-video
-    - Kling V3 Omni Std: 6 tokens/sec (3-15s) - video-to-video editing
-    - Sora 2: 15 tokens/sec (4, 8, or 12s only)
-    - Sora 2 Pro: 30 tokens/sec (4, 8, or 12s only)
-    - Runway 4.5: 25 tokens/sec (5, 8, or 10s only)
+    - Kling V3 Omni Pro: 26 tokens/sec (3-15s) - text/image-to-video
+    - Kling V3 Omni Std: 19 tokens/sec (3-15s) - video-to-video editing
+    - Sora 2: 11 tokens/sec (4, 8, or 12s only)
+    - Sora 2 Pro: 33 tokens/sec (4, 8, or 12s only)
+    - Runway 4.5: 14 tokens/sec (5, 8, or 10s only)
     
     Args:
         prompt: Description of the video to generate or editing instructions (exact user text, NO modifications)
@@ -455,6 +455,8 @@ async def generate_speech(
 ) -> str:
     """
     Generate speech from text using ElevenLabs API.
+    
+    COST: 1-500 characters = 1 token, 500-999 characters = 8 tokens, 1000+ characters = 13 tokens per 1000 chars.
     
     Args:
         text: The text to convert to speech.

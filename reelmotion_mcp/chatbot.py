@@ -931,18 +931,18 @@ class GeminiChatbot:
         - Based on THE_PROMPT, suggest a model and explain why.
         - ⚠️ ALWAYS present the models as a FORMATTED LIST (one model per line), never as inline text.
         - Available models:
-          → GPT: Best for detailed, realistic, complex images. Recommended for most cases.
-          → Nano Banana: Great for artistic, stylized, creative images.
-          → Freepik: Good for clean, commercial-style images.
+          → GPT (6 tokens): Best for detailed, realistic, complex images. Recommended for most cases.
+          → Nano Banana (7 tokens): Great for artistic, stylized, creative images.
+          → Freepik (1 token): Good for clean, commercial-style images.
         - Ask: "I suggest using [model] because [reason]. Which model would you like to use?" (in user's language)
         - Wait for the user to choose.
-        - All models cost 10 tokens per image.
+        - Token costs per image: Nano Banana = 7 tokens, GPT = 6 tokens, Freepik = 1 token.
         
         STEP 4 - CONFIRM COST AND EXECUTE:
         - Summarize what will be generated:
           → "I'm going to generate: [brief description of THE_PROMPT]"
           → "Model: [chosen model]"
-          → "Cost: 10 tokens"
+          → "Cost: [X] tokens" (Nano Banana=7, GPT=6, Freepik=1)
           → "Do you confirm?" (in user's language)
         - ⛔ DO NOT call the tool until the user explicitly confirms in this step.
         - Once confirmed, CALL generate_image immediately using THE_PROMPT (the descriptive text, NOT the confirmation message).
@@ -957,7 +957,7 @@ class GeminiChatbot:
            → The prompt should describe the EDITING instructions (e.g., "change background to sunset", "make it look like a painting").
            → Pass reference images in 'reference_images' and set image_type to 2 (single ref) or 3 (multiple refs).
         4. If there are attached images, always pass them in 'reference_images'.
-        5. Available models are: 'Nano Banana', 'GPT', and 'Freepik' (all cost 10 tokens per image).
+        5. Available models are: 'Nano Banana' (7 tokens), 'GPT' (6 tokens), and 'Freepik' (1 token).
         6. NEVER mention URLs in your responses - images are sent automatically to the user.
         7. IF THERE'S AN ERROR: Inform the user. If user says "try again"/"retry", execute the tool again without hesitation.
         
@@ -1003,15 +1003,15 @@ class GeminiChatbot:
         - Based on THE_PROMPT, suggest a model and explain why briefly.
         - ⚠️ ALWAYS present the models as a FORMATTED LIST (one model per line with its cost and durations), never as inline text.
         - Show available models with costs AND valid durations:
-          → Kling V3 Omni Pro (8 tokens/sec) - 3 to 15 sec - text/image-to-video, economical
-          → Kling V3 Omni Std (6 tokens/sec) - 3 to 15 sec - text/image-to-video, most economical
-          → Sora 2 (15 tokens/sec) - 4, 8 or 12 sec - good quality
-          → Veo 3.1 Flash (21 tokens/sec) - 8 sec only - fast and good quality
-          → Runway Aleph (19 tokens/sec) - 5 or 10 sec - versatile
-          → Runway 4.5 (25 tokens/sec) - 5, 8 or 10 sec - high quality
-          → Sora 2 Pro (30 tokens/sec) - 4, 8 or 12 sec - maximum Sora quality
-          → Veo 3.1 (48 tokens/sec) - 8 sec only - high quality
-          → Veo 3.1 Ultra (60 tokens/sec) - 8 sec only - maximum Veo quality
+          → Sora 2 (11 tokens/sec) - 4, 8 or 12 sec - good quality
+          → Runway 4.5 (14 tokens/sec) - 5, 8 or 10 sec - high quality
+          → Runway Aleph (17 tokens/sec) - 5 or 10 sec - versatile
+          → Veo 3.1 Flash (17 tokens/sec) - 8 sec only - fast and good quality
+          → Kling V3 Omni Std (19 tokens/sec) - 3 to 15 sec - text/image-to-video
+          → Kling V3 Omni Pro (26 tokens/sec) - 3 to 15 sec - text/image-to-video, better quality
+          → Sora 2 Pro (33 tokens/sec) - 4, 8 or 12 sec - maximum Sora quality
+          → Veo 3.1 (44 tokens/sec) - 8 sec only - high quality
+          → Veo 3.1 Ultra (65 tokens/sec) - 8 sec only - maximum Veo quality
         - Say: "I suggest [model] because [reason]. Which model would you like to use?" (in user's language)
         - Wait for user to choose model.
         
@@ -1064,9 +1064,9 @@ class GeminiChatbot:
         STEP 2 - SHOW VIDEO EDITING MODELS ONLY:
         - ⚠️ ALWAYS present the models as a FORMATTED LIST (one model per line with its cost and durations), never as inline text.
         - Show ONLY the models that support video-to-video editing:
-          → **Kling V3 Omni Std** (6 tokens/sec) - 3 to 15 sec - Most economical ⭐ Recommended
-          → **Kling V3 Omni Pro** (8 tokens/sec) - 3 to 15 sec - Better quality
-          → **Runway Aleph** (19 tokens/sec) - 5 or 10 sec - High quality editing
+          → **Runway Aleph** (17 tokens/sec) - 5 or 10 sec - High quality editing
+          → **Kling V3 Omni Std** (19 tokens/sec) - 3 to 15 sec - Flexible duration ⭐ Recommended
+          → **Kling V3 Omni Pro** (26 tokens/sec) - 3 to 15 sec - Better quality
         - ⛔ DO NOT show any other models (Sora, Veo, Runway 4.5, etc.) - they do NOT support video-to-video.
         - Suggest Kling V3 Omni Std as the most economical option.
         - Ask: "Which model would you like to use?" (in user's language)
@@ -1165,7 +1165,7 @@ class GeminiChatbot:
           → "I'm going to generate the following speech:" (in user's language)
           → "Text: [THE_SPEECH_TEXT]"
           → "Voice: [THE_VOICE name]"
-          → "Cost: 5 tokens"
+          → "Cost: [X] tokens" (1-500 chars = 1 token, 500-999 chars = 8 tokens, 1000+ chars = 13 tokens per 1000 chars)
           → "Do you confirm?" (in user's language)
         - ⛔ DO NOT call the tool until the user explicitly confirms.
         - Once confirmed, CALL generate_speech immediately using:
