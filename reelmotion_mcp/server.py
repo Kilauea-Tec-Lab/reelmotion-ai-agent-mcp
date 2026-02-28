@@ -194,7 +194,7 @@ def generate_image(
     """
     Generate or edit an image using the ReelMotion backend.
     This tool supports both text-to-image generation AND image-to-image editing/transformation.
-    COST: Nano Banana = 7 tokens, GPT = 6 tokens, Freepik = 1 token per image.
+    COST: Nano Banana 2 = 7 tokens, GPT = 6 tokens, Freepik = 1 token per image.
     
     Use cases:
     - Text-to-image: Generate a new image from a text description (type 1).
@@ -204,7 +204,7 @@ def generate_image(
     
     Args:
         prompt: The description of the image to generate, or editing instructions for image-to-image.
-        model: The model to use. MUST be one of: 'Nano Banana', 'GPT', 'Freepik'. Defaults to 'GPT'.
+        model: The model to use. MUST be one of: 'Nano Banana 2', 'GPT', 'Freepik'. Defaults to 'GPT'.
         image_type: 1 (text only), 2 (text + reference image for editing), 3 (text + multiple reference images). Defaults to 1.
         quantity: Number of images to generate. Defaults to 1.
         reference_image: URL of reference image (for type 2 - image editing/transformation).

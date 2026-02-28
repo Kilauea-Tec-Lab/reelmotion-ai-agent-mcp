@@ -21,7 +21,7 @@ You MUST guide the user through the complete workflow step by step before execut
 • Video Keyframe Generation (Composition, camera angle)
 • Image Generation: Text-to-image (new images from descriptions)
 • Image Editing: Image-to-image (edit/transform existing images with a prompt + reference)
-• Image Models: Nano Banana (7 tokens), GPT (6 tokens), Freepik (1 token)
+• Image Models: Nano Banana 2 (7 tokens), GPT (6 tokens), Freepik (1 token)
 • Video Generation: Text-to-video (new videos from descriptions)
 • Video Generation: Image-to-video (animate a reference image)
 • Video Editing: Video-to-video (edit/transform existing videos with a prompt + reference)

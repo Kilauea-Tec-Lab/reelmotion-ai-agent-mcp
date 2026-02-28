@@ -94,7 +94,7 @@ DURATION_PATTERN = re.compile(r'(\d+)\s*(?:segundos?|seconds?|sec|s\b)', re.IGNO
 
 # Patterns to detect image model in conversation
 IMAGE_MODEL_PATTERNS = {
-    'Nano Banana': re.compile(r'\bnano[-\s]?banana\b', re.IGNORECASE),
+    'Nano Banana 2': re.compile(r'\bnano[-\s]?banana(?:\s*2)?\b', re.IGNORECASE),
     'Freepik': re.compile(r'\bfreepik\b', re.IGNORECASE),
     'GPT': re.compile(r'\bgpt\b', re.IGNORECASE),
 }
@@ -178,7 +178,7 @@ def _is_model_listing_message(content: str) -> bool:
     # Also detect by bullet-point patterns with model names
     bullet_patterns = [
         r'[\*\-]\s+\*{0,2}(?:Runway|Veo|Sora|Kling)',  # * Model, - Model, * **Model**, - **Model**
-        r'[\*\-]\s+\*{0,2}(?:GPT|Nano Banana|Freepik)',  # Image model listings
+        r'[\*\-]\s+\*{0,2}(?:GPT|Nano Banana 2|Freepik)',  # Image model listings
     ]
     bullet_matches = sum(1 for p in bullet_patterns if re.search(p, content))
     if bullet_matches >= 1 and model_count >= 2:
@@ -685,9 +685,9 @@ def detect_image_params_from_history(history: list) -> dict:
             # 2. Is contextual acceptance? (Assistant asked to approve/refine + User says something short/positive)
             is_contextual = False
             # Exclude model selections from contextual acceptance
-            # Match both standalone and with preamble: "lets do gpt", "use freepik", "go with nano banana"
+            # Match both standalone and with preamble: "lets do gpt", "use freepik", "go with nano banana 2"
             has_image_model_ref = any(p.search(content) for p in IMAGE_MODEL_PATTERNS.values())
-            is_image_model_selection = bool(re.match(r'^\s*(?:(?:lets?\s+(?:do|go\s+with|use)|(?:go|use|i\'?ll?\s+(?:go|do|use))\s+(?:with\s+)?|i\s+want\s+|quiero\s+|usa\s+|vamos\s+(?:con\s+)?)\s*)?(?:gpt|nano[-\s]?banana|freepik)\s*[.,!?]*$', content, re.IGNORECASE))
+            is_image_model_selection = bool(re.match(r'^\s*(?:(?:lets?\s+(?:do|go\s+with|use)|(?:go|use|i\'?ll?\s+(?:go|do|use))\s+(?:with\s+)?|i\s+want\s+|quiero\s+|usa\s+|vamos\s+(?:con\s+)?)\s*)?(?:gpt|nano[-\s]?banana(?:\s*2)?|freepik)\s*[.,!?]*$', content, re.IGNORECASE))
             if not is_image_model_selection and not has_image_model_ref:
                 if i + 1 < len(recent_reversed):
                     prev_msg = recent_reversed[i+1]
@@ -832,7 +832,7 @@ class GeminiChatbot:
         - AMBIGUOUS MESSAGES: Short replies like "no", "ok", "yes", "gpt", "sora 2", "5s", model names, or single words that exist in multiple languages are NOT a language switch. KEEP the last clearly detected language (default: English).
         - LANGUAGE SWITCH: Only change language if the user writes a CLEAR sentence in a different language or explicitly requests it.
         - This applies to ALL messages: questions, confirmations, cost info, errors, EVERYTHING.
-        - Keep technical terms and model names in their original form (e.g., "Nano Banana", "GPT", "Freepik").
+        - Keep technical terms and model names in their original form (e.g., "Nano Banana 2", "GPT", "Freepik").
         - IMPORTANT: All instructions below are written in English for clarity, but you MUST always respond to the user in THEIR language (default: English).
         
         ⛔ MANDATORY WORKFLOW - NEVER SKIP STEPS:
@@ -858,7 +858,7 @@ class GeminiChatbot:
            - "Generate image" = IMAGE workflow
            - "Create an image" = IMAGE workflow
            - "Edit image" + reference image = IMAGE-TO-IMAGE workflow
-           - Mentions image models: GPT, Nano Banana, Freepik
+           - Mentions image models: GPT, Nano Banana 2, Freepik
            - IMPORTANT: Start the IMAGE WORKFLOW, do NOT call the tool directly.
            - For image EDITING (image-to-image), the user MUST provide a reference image.
              The tool uses type 2 (single ref) or type 3 (multiple refs).
@@ -890,7 +890,7 @@ class GeminiChatbot:
            - DO NOT try to generate everything at once.
            - For each asset in the plan, YOU MUST USE THE EXISTING TOOLS ('generate_image', 'generate_video') EXACTLY AS DEFINED BELOW.
            - You must still complete ALL workflow steps for EACH individual asset.
-           - Example: "Okay, let's start with Scene 1. We need an image of the hero. Which model do you want to use: Nano Banana, GPT, or Freepik?"
+           - Example: "Okay, let's start with Scene 1. We need an image of the hero. Which model do you want to use: Nano Banana 2, GPT, or Freepik?"
         
         ⛔ ABSOLUTE PROHIBITION - FALSE COMPLETION MESSAGES:
         - NEVER say "Done!", "Ready!", "Your video is ready", "Your image is ready",
@@ -932,17 +932,17 @@ class GeminiChatbot:
         - ⚠️ ALWAYS present the models as a FORMATTED LIST (one model per line), never as inline text.
         - Available models:
           → GPT (6 tokens): Best for detailed, realistic, complex images. Recommended for most cases.
-          → Nano Banana (7 tokens): Great for artistic, stylized, creative images.
+          → Nano Banana 2 (7 tokens): Great for artistic, stylized, creative images.
           → Freepik (1 token): Good for clean, commercial-style images.
         - Ask: "I suggest using [model] because [reason]. Which model would you like to use?" (in user's language)
         - Wait for the user to choose.
-        - Token costs per image: Nano Banana = 7 tokens, GPT = 6 tokens, Freepik = 1 token.
+        - Token costs per image: Nano Banana 2 = 7 tokens, GPT = 6 tokens, Freepik = 1 token.
         
         STEP 4 - CONFIRM COST AND EXECUTE:
         - Summarize what will be generated:
           → "I'm going to generate: [brief description of THE_PROMPT]"
           → "Model: [chosen model]"
-          → "Cost: [X] tokens" (Nano Banana=7, GPT=6, Freepik=1)
+          → "Cost: [X] tokens" (Nano Banana 2=7, GPT=6, Freepik=1)
           → "Do you confirm?" (in user's language)
         - ⛔ DO NOT call the tool until the user explicitly confirms in this step.
         - Once confirmed, CALL generate_image immediately using THE_PROMPT (the descriptive text, NOT the confirmation message).
@@ -957,7 +957,7 @@ class GeminiChatbot:
            → The prompt should describe the EDITING instructions (e.g., "change background to sunset", "make it look like a painting").
            → Pass reference images in 'reference_images' and set image_type to 2 (single ref) or 3 (multiple refs).
         4. If there are attached images, always pass them in 'reference_images'.
-        5. Available models are: 'Nano Banana' (7 tokens), 'GPT' (6 tokens), and 'Freepik' (1 token).
+        5. Available models are: 'Nano Banana 2' (7 tokens), 'GPT' (6 tokens), and 'Freepik' (1 token).
         6. NEVER mention URLs in your responses - images are sent automatically to the user.
         7. IF THERE'S AN ERROR: Inform the user. If user says "try again"/"retry", execute the tool again without hesitation.
         
@@ -1513,7 +1513,7 @@ IMPORTANT: A tool was JUST executed successfully. The workflow is COMPLETE.
                             
                             is_video = any(w in response_lower for w in ['video', 'vídeo', 'animar', 'animate', 'sora', 'veo', 'runway', 'kling', 'tokens/se'])
                             is_speech = any(w in response_lower for w in ['speech', 'voice', 'voz', 'audio', 'narración'])
-                            is_image = any(w in response_lower for w in ['imagen', 'image', 'foto', 'picture', 'gpt', 'nano banana', 'freepik'])
+                            is_image = any(w in response_lower for w in ['imagen', 'image', 'foto', 'picture', 'gpt', 'nano banana 2', 'nano banana', 'freepik'])
                             
                             reconstructed = False
                             if is_video:
