@@ -3,17 +3,23 @@ import base64
 import time
 import re
 import asyncio
+import logging
 from typing import Optional
 import google.generativeai as genai
 from dotenv import load_dotenv
+from cachetools import TTLCache
 
 from prompts import REELMOTION_SYSTEM_PROMPT
 from tools import generate_image, generate_video, generate_speech
 from session_manager import get_session_manager
 from request_context import set_conversation_uuid
+from logging_config import setup_logging
 
 # Load environment variables
 load_dotenv()
+
+setup_logging()
+logger = logging.getLogger(__name__)
 
 # Pattern matching for confirmations - ONLY words that mean "yes, proceed/execute"
 CONFIRMATION_PATTERNS = re.compile(
@@ -299,12 +305,12 @@ def detect_video_params_from_history(history: list) -> dict:
                     
                     # Detect truncation (prevents using "..." summaries as actual prompts)
                     if extracted.endswith('...') or extracted.endswith('…'):
-                        print(f"DEBUG [detect_video_params]: Prompt in cost confirmation is truncated: {extracted[:80]}... SKIPPING to avoid cut-off prompt.")
+                        logger.debug(f"Prompt in cost confirmation is truncated: {extracted[:80]}... SKIPPING to avoid cut-off prompt.")
                         extracted = None
                     
                     if extracted and len(extracted) > 10:
                         params['prompt'] = extracted
-                        print(f"DEBUG [detect_video_params]: Extracted prompt from cost confirmation: {extracted[:80]}...")
+                        logger.debug(f"Extracted prompt from cost confirmation: {extracted[:80]}...")
                 break  # Only check the most recent assistant message
     
     # Get the prompt (most recent user message that's not a confirmation or model/duration selection)
@@ -607,6 +613,100 @@ def _extract_prompt_from_confirmation(confirmation_text: str) -> str:
     return None
 
 
+def _extract_all_params_from_confirmation(text: str) -> dict:
+    """
+    Extract the action type AND all parameters from a structured cost confirmation message.
+
+    The confirmation always has a known format:
+        Prompt: [...]
+        Model: [...]
+        Duration: [X] seconds   (video only)
+        Cost: [Y] tokens
+        Do you confirm?
+
+    This avoids scanning 14 messages of history with fragile regex.
+    Returns dict with keys: 'type', 'prompt', 'model', 'duration' (as available).
+    """
+    params = {}
+    if not text:
+        return params
+
+    text_lower = text.lower()
+
+    # Detect action type from keyword presence
+    if any(w in text_lower for w in ["video", "vídeo", "sora", "veo", "runway", "kling", "tokens/se"]):
+        params["type"] = "video"
+    elif any(w in text_lower for w in ["speech", "voice", "voz", "audio", "narración", "narration"]):
+        params["type"] = "speech"
+    elif any(w in text_lower for w in ["imagen", "image", "foto", "picture", "gpt", "nano banana", "freepik"]):
+        params["type"] = "image"
+
+    # Extract prompt/text from structured label line
+    for label in ["prompt", "descripción", "descripcion", "edit", "texto", "text"]:
+        match = re.search(
+            rf"(?:{label})\s*:\s*[\"\\u201c]?\*{{0,2}}(.+?)\*{{0,2}}[\"\\u201d]?\s*(?=\n|$)",
+            text,
+            re.IGNORECASE | re.MULTILINE,
+        )
+        if match:
+            extracted = match.group(1).strip()
+            extracted = re.sub(r'^["\u201c]|["\u201d]$', "", extracted).strip()
+            extracted = re.sub(r"^\*{1,2}\s*|\s*\*{1,2}$", "", extracted).strip()
+            if extracted and len(extracted) > 5 and not extracted.endswith("...") and not extracted.endswith("\u2026"):
+                params["prompt"] = extracted
+                break
+
+    # Extract model from "Model: ..." line (sort longest keys first to prevent partial matches)
+    model_match = re.search(r"(?:model|modelo)\s*:\s*\*{0,2}(.+?)\*{0,2}\s*(?:\n|$)", text, re.IGNORECASE)
+    if model_match:
+        raw_model = model_match.group(1).strip().lower()
+        model_map = {
+            "sora 2 pro": "sora-2-pro",
+            "sora2 pro": "sora-2-pro",
+            "sora-2-pro": "sora-2-pro",
+            "sora 2": "sora-2",
+            "sora2": "sora-2",
+            "sora-2": "sora-2",
+            "veo 3.1 ultra": "veo-3.1-ultra",
+            "veo-3.1-ultra": "veo-3.1-ultra",
+            "veo 3.1 flash": "veo-3.1-flash",
+            "veo-3.1-flash": "veo-3.1-flash",
+            "veo 3.1": "veo-3.1",
+            "veo-3.1": "veo-3.1",
+            "runway aleph": "runway-aleph",
+            "runway-aleph": "runway-aleph",
+            "runway 4.5": "runway-4.5",
+            "runway-4.5": "runway-4.5",
+            "kling v3 omni pro": "kling-v3-omni-pro",
+            "kling-v3-omni-pro": "kling-v3-omni-pro",
+            "kling v3 omni std": "kling-v3-omni-std",
+            "kling-v3-omni-std": "kling-v3-omni-std",
+            "nano banana 2": "Nano Banana 2",
+            "nano banana": "Nano Banana 2",
+            "gpt": "GPT",
+            "freepik": "Freepik",
+        }
+        for k in sorted(model_map.keys(), key=len, reverse=True):
+            if k in raw_model:
+                params["model"] = model_map[k]
+                break
+
+    # Extract duration: "Duration: X seconds" or from cost "Y tokens/sec × X sec"
+    dur_label = re.search(
+        r"(?:duration|duración)\s*:\s*(\d+)\s*(?:segundos?|seconds?|sec|s)?",
+        text,
+        re.IGNORECASE,
+    )
+    if dur_label:
+        params["duration"] = int(dur_label.group(1))
+    else:
+        cost_match = re.search(r"[×x\*]\s*(\d+)\s*(?:segundos?|seconds?|sec|s)\b", text, re.IGNORECASE)
+        if cost_match:
+            params["duration"] = int(cost_match.group(1))
+
+    return params
+
+
 def detect_image_params_from_history(history: list) -> dict:
     """
     Try to extract image generation parameters from conversation history.
@@ -661,12 +761,12 @@ def detect_image_params_from_history(history: list) -> dict:
                     
                     # Detect truncation (prevents using "..." summaries as actual prompts)
                     if extracted.endswith('...') or extracted.endswith('…'):
-                        print(f"DEBUG [detect_image_params]: Prompt in cost confirmation is truncated: {extracted[:80]}... SKIPPING to avoid cut-off prompt.")
+                        logger.debug(f"Prompt in cost confirmation is truncated: {extracted[:80]}... SKIPPING to avoid cut-off prompt.")
                         extracted = None
                     
                     if extracted and len(extracted) > 10:
                         params['prompt'] = extracted
-                        print(f"DEBUG [detect_image_params]: Extracted prompt from cost confirmation: {extracted[:80]}...")
+                        logger.debug(f"Extracted prompt from cost confirmation: {extracted[:80]}...")
                 break
     
     # Get the prompt (most recent user message that's not a confirmation or model selection)
@@ -1256,8 +1356,7 @@ class GeminiChatbot:
     
     async def clear_reference_files(self):
         """Clear stored reference files."""
-        refs_key = self.session_manager._get_refs_key(self.conversation_uuid)
-        self.session_manager.redis_client.delete(refs_key)
+        await self.session_manager.clear_reference_files(self.conversation_uuid)
     
     # Mantener compatibilidad con métodos antiguos
     async def set_reference_images(self, images: list):
@@ -1280,7 +1379,7 @@ class GeminiChatbot:
     
     async def add_generated_file(self, url: str, file_type: str = "image", metadata: dict = None):
         """Add a generated file URL to pending files in Redis."""
-        print(f"DEBUG [chatbot]: add_generated_file called for UUID='{self.conversation_uuid}', url='{url}', type='{file_type}'")
+        logger.debug(f"add_generated_file called for UUID='{self.conversation_uuid}', url='{url}', type='{file_type}'")
         if url:
             await self.session_manager.save_generated_file(
                 self.conversation_uuid,
@@ -1291,9 +1390,9 @@ class GeminiChatbot:
     
     async def get_generated_files(self) -> list:
         """Get pending generated files (URLs) from Redis."""
-        print(f"DEBUG [chatbot]: get_generated_files called for UUID='{self.conversation_uuid}'")
+        logger.debug(f"get_generated_files called for UUID='{self.conversation_uuid}'")
         files = await self.session_manager.get_pending_files(self.conversation_uuid)
-        print(f"DEBUG [chatbot]: Got {len(files)} files from session_manager")
+        logger.debug(f"Got {len(files)} files from session_manager")
         return [{"url": f["url"], "type": f["type"]} for f in files]
     
     async def save_pending_action(self, function_name: str, args: dict, cost_message: str = ""):
@@ -1325,7 +1424,7 @@ class GeminiChatbot:
         function_name = action.get("function")
         args = action.get("args", {}).copy()  # Copy to avoid modifying original
         
-        print(f"DEBUG [chatbot]: Executing pending action '{function_name}' directly with args: {args}")
+        logger.debug(f"Executing pending action '{function_name}' directly with args: {args}")
         
         # Get reference images if needed and not already in args
         ref_files = await self.get_reference_files()
@@ -1334,17 +1433,17 @@ class GeminiChatbot:
             ref_urls = [f["url"] for f in ref_files if f.get("type") == "image" and not f.get("url", "").startswith("blob:")]
             blob_urls = [f["url"] for f in ref_files if f.get("type") == "image" and f.get("url", "").startswith("blob:")]
             if blob_urls:
-                print(f"WARNING [chatbot]: Filtered out {len(blob_urls)} blob: URLs from reference files in execute_pending_action")
+                logger.warning(f"Filtered out {len(blob_urls)} blob: URLs from reference files in execute_pending_action")
             if ref_urls:
                 if function_name == "generate_image" and "reference_images" not in args:
                     args["reference_images"] = ref_urls
                     # Ensure image_type is set correctly for editing
                     if "image_type" not in args:
                         args["image_type"] = 2 if len(ref_urls) == 1 else 3
-                    print(f"DEBUG [chatbot]: Added {len(ref_urls)} reference images to pending action (image_type={args.get('image_type')})")
+                    logger.debug(f"Added {len(ref_urls)} reference images to pending action (image_type={args.get('image_type')})")
                 elif function_name == "generate_video" and "reference_image" not in args:
                     args["reference_image"] = ref_urls[0]
-                    print(f"DEBUG [chatbot]: Added reference image to pending video action")
+                    logger.debug(f"Added reference image to pending video action")
         
         tool_result = None
         try:
@@ -1368,9 +1467,8 @@ class GeminiChatbot:
             return tool_result, response_text
             
         except Exception as e:
-            print(f"ERROR [chatbot]: Failed to execute pending action: {e}")
             import traceback
-            print(f"Traceback: {traceback.format_exc()}")
+            logger.error("Failed to execute pending action: %s\n%s", e, traceback.format_exc())
             await self.clear_pending_action()
             return None, f"Error executing {function_name}: {str(e)}"
     
@@ -1410,14 +1508,14 @@ class GeminiChatbot:
             if just_generated:
                 # Clear the flag regardless of what the user says
                 await self.session_manager.clear_just_generated(self.conversation_uuid)
-                print(f"DEBUG [chatbot]: Post-generation state detected. Clearing workflow state.")
+                logger.debug(f"Post-generation state detected. Clearing workflow state.")
                 # Also clear any stale pending action that might have been re-created
                 await self.clear_pending_action()
                 
                 # If the message is a reaction (perfect, amazing, genial, etc.),
                 # respond directly WITHOUT sending to Gemini to prevent re-execution
                 if is_reaction(message) or is_confirmation(message):
-                    print(f"DEBUG [chatbot]: Post-generation reaction detected: '{message}'. Responding directly.")
+                    logger.debug(f"Post-generation reaction detected: '{message}'. Responding directly.")
                     # Save user message
                     await self.session_manager.add_message(
                         self.conversation_uuid,
@@ -1462,7 +1560,7 @@ IMPORTANT: A tool was JUST executed successfully. The workflow is COMPLETE.
             if is_confirmation(message):
                 pending_action = await self.get_pending_action()
                 if pending_action:
-                    print(f"DEBUG [chatbot]: User confirmed! Executing pending action directly.")
+                    logger.debug(f"User confirmed! Executing pending action directly.")
                     # Save user message
                     await self.session_manager.add_message(
                         self.conversation_uuid,
@@ -1487,7 +1585,7 @@ IMPORTANT: A tool was JUST executed successfully. The workflow is COMPLETE.
                 else:
                     # === FALLBACK: No pending action saved, but user confirmed something ===
                     # Try to reconstruct pending action from conversation history
-                    print(f"DEBUG [chatbot]: User confirmed but NO pending action found. Trying to reconstruct from history...")
+                    logger.debug(f"User confirmed but NO pending action found. Trying to reconstruct from history...")
                     session = await self.session_manager.get_session(self.conversation_uuid)
                     history = session.get("messages", []) if session else []
                     
@@ -1500,7 +1598,7 @@ IMPORTANT: A tool was JUST executed successfully. The workflow is COMPLETE.
                                 break
                         
                         if last_assistant and COST_CONFIRMATION_PATTERN.search(last_assistant):
-                            print(f"DEBUG [chatbot]: Found cost confirmation in last assistant message. Reconstructing action...")
+                            logger.debug(f"Found cost confirmation in last assistant message. Reconstructing action...")
                             history_with_current = history + [{'role': 'assistant', 'content': last_assistant}]
                             response_lower = last_assistant.lower()
                             
@@ -1509,7 +1607,7 @@ IMPORTANT: A tool was JUST executed successfully. The workflow is COMPLETE.
                             ref_urls = [f["url"] for f in ref_files if f.get("type") == "image" and not f.get("url", "").startswith("blob:")] if ref_files else []
                             blob_ref_urls = [f["url"] for f in ref_files if f.get("type") == "image" and f.get("url", "").startswith("blob:")] if ref_files else []
                             if blob_ref_urls:
-                                print(f"WARNING [chatbot]: Filtered out {len(blob_ref_urls)} blob: URLs during reconstruction")
+                                logger.warning(f"Filtered out {len(blob_ref_urls)} blob: URLs during reconstruction")
                             
                             is_video = any(w in response_lower for w in ['video', 'vídeo', 'animar', 'animate', 'sora', 'veo', 'runway', 'kling', 'tokens/se'])
                             is_speech = any(w in response_lower for w in ['speech', 'voice', 'voz', 'audio', 'narración'])
@@ -1526,14 +1624,14 @@ IMPORTANT: A tool was JUST executed successfully. The workflow is COMPLETE.
                                     }
                                     if ref_urls:
                                         action_args["reference_image"] = ref_urls[0]
-                                    print(f"DEBUG [chatbot]: Reconstructed VIDEO action: model={params['model']}, duration={action_args['duration']}")
+                                    logger.debug(f"Reconstructed VIDEO action: model={params['model']}, duration={action_args['duration']}")
                                     await self.save_pending_action("generate_video", action_args, last_assistant)
                                     reconstructed = True
                             elif is_speech:
                                 params = detect_speech_params_from_history(history_with_current)
                                 if params.get('text'):
                                     action_args = {"text": params['text'], "voice_id": params.get('voice_id', '21m00Tcm4TlvDq8ikWAM')}
-                                    print(f"DEBUG [chatbot]: Reconstructed SPEECH action")
+                                    logger.debug(f"Reconstructed SPEECH action")
                                     await self.save_pending_action("generate_speech", action_args, last_assistant)
                                     reconstructed = True
                             elif is_image:
@@ -1542,13 +1640,13 @@ IMPORTANT: A tool was JUST executed successfully. The workflow is COMPLETE.
                                 confirmed_prompt = _extract_prompt_from_confirmation(last_assistant)
                                 if confirmed_prompt:
                                     params['prompt'] = confirmed_prompt
-                                    print(f"DEBUG [chatbot]: Extracted prompt from confirmation for reconstruction: {confirmed_prompt[:80]}...")
+                                    logger.debug(f"Extracted prompt from confirmation for reconstruction: {confirmed_prompt[:80]}...")
                                 if params.get('model'):
                                     action_args = {"prompt": params.get('prompt', 'generate image'), "model": params['model']}
                                     if ref_urls:
                                         action_args["reference_images"] = ref_urls
                                         action_args["image_type"] = 2 if len(ref_urls) == 1 else 3
-                                    print(f"DEBUG [chatbot]: Reconstructed IMAGE action: model={params['model']}")
+                                    logger.debug(f"Reconstructed IMAGE action: model={params['model']}")
                                     await self.save_pending_action("generate_image", action_args, last_assistant)
                                     reconstructed = True
                             
@@ -1572,7 +1670,7 @@ IMPORTANT: A tool was JUST executed successfully. The workflow is COMPLETE.
             ref_files = await self.get_reference_files()
             needs_clarif, question = needs_clarification(message, bool(ref_files))
             if needs_clarif:
-                print(f"DEBUG [chatbot]: Ambiguous request detected, asking for clarification")
+                logger.debug(f"Ambiguous request detected, asking for clarification")
                 await self.session_manager.add_message(
                     self.conversation_uuid,
                     "assistant",
@@ -1597,12 +1695,12 @@ IMPORTANT: A tool was JUST executed successfully. The workflow is COMPLETE.
                     
                     # Skip blob: URLs (browser-only, cannot be fetched from server)
                     if file_url.startswith('blob:'):
-                        print(f"WARNING: Skipping blob: URL for Gemini analysis (cannot download server-side): {file_url[:80]}")
+                        logger.warning(f"Skipping blob: URL for Gemini analysis (cannot download server-side): {file_url[:80]}")
                         parts.append(f"Note: The user attached a {file_type} but it uses a temporary browser URL (blob:) that cannot be accessed from the server. The {file_type} reference IS stored for generation - the backend will handle it if possible. Proceed with the workflow normally, acknowledging the user has attached a {file_type}.\n\n")
                         continue
                     
                     try:
-                        print(f"DEBUG: Downloading {file_type} from {file_url} for Gemini analysis")
+                        logger.debug(f"Downloading {file_type} from {file_url} for Gemini analysis")
                         import httpx
                         async with httpx.AsyncClient(timeout=30.0) as client:
                             response = await client.get(file_url)
@@ -1634,9 +1732,9 @@ IMPORTANT: A tool was JUST executed successfully. The workflow is COMPLETE.
                                 'mime_type': mime_type,
                                 'data': file_bytes
                             })
-                            print(f"DEBUG: Added {file_type} ({mime_type}) to Gemini message for analysis")
+                            logger.debug(f"Added {file_type} ({mime_type}) to Gemini message for analysis")
                     except Exception as e:
-                        print(f"ERROR: Failed to download {file_type} for analysis: {e}")
+                        logger.error(f"Failed to download {file_type} for analysis: {e}")
                         parts.append(f"Note: Unable to load {file_type} from URL. Error: {str(e)}\n\n")
             
             # Add the user's message
@@ -1649,7 +1747,7 @@ IMPORTANT: A tool was JUST executed successfully. The workflow is COMPLETE.
             
             for attempt in range(MAX_RETRIES):
                 try:
-                    print(f"DEBUG [chatbot]: Sending message to Gemini (timeout={GEMINI_TIMEOUT}s, attempt={attempt+1}/{MAX_RETRIES})...")
+                    logger.debug(f"Sending message to Gemini (timeout={GEMINI_TIMEOUT}s, attempt={attempt+1}/{MAX_RETRIES})...")
                     import time
                     start_time = time.time()
                     response = await asyncio.wait_for(
@@ -1657,15 +1755,15 @@ IMPORTANT: A tool was JUST executed successfully. The workflow is COMPLETE.
                         timeout=GEMINI_TIMEOUT
                     )
                     elapsed = time.time() - start_time
-                    print(f"DEBUG [chatbot]: Gemini responded in {elapsed:.1f}s (attempt {attempt+1})")
+                    logger.debug(f"Gemini responded in {elapsed:.1f}s (attempt {attempt+1})")
                     break  # Success - exit retry loop
                 except asyncio.TimeoutError:
                     elapsed = time.time() - start_time
-                    print(f"WARNING: Gemini timed out after {elapsed:.1f}s (attempt {attempt+1}/{MAX_RETRIES})")
+                    logger.warning(f"Gemini timed out after {elapsed:.1f}s (attempt {attempt+1}/{MAX_RETRIES})")
                     
                     if attempt < MAX_RETRIES - 1:
                         # Retry - reinitialize chat to clear any stuck state
-                        print("DEBUG: Retrying after timeout...")
+                        logger.debug("Retrying after timeout...")
                         await self.start_chat()
                         continue
                     
@@ -1673,7 +1771,7 @@ IMPORTANT: A tool was JUST executed successfully. The workflow is COMPLETE.
                     # Check if we have a pending action to execute directly
                     pending_action = await self.get_pending_action()
                     if pending_action:
-                        print(f"DEBUG: Timeout recovery - executing pending action: {pending_action.get('function')}")
+                        logger.debug(f"Timeout recovery - executing pending action: {pending_action.get('function')}")
                         tool_result, response_text = await self.execute_pending_action()
                         if response_text:
                             await self.session_manager.add_message(
@@ -1685,7 +1783,7 @@ IMPORTANT: A tool was JUST executed successfully. The workflow is COMPLETE.
                     
                     # No pending action - try sending a lightweight context-aware recovery prompt
                     try:
-                        print("DEBUG: Timeout - sending lightweight recovery prompt to Gemini...")
+                        logger.debug("Timeout - sending lightweight recovery prompt to Gemini...")
                         recovery_msg = f"""The user just said: "{message}"
                         
 Based on the conversation history, continue the workflow naturally. 
@@ -1705,7 +1803,7 @@ If unsure, ask for clarification. Respond in the user's language (default: Engli
                             )
                             return response_text
                     except Exception as recovery_error:
-                        print(f"DEBUG: Recovery prompt also failed: {recovery_error}")
+                        logger.debug(f"Recovery prompt also failed: {recovery_error}")
                     
                     # Last resort fallback
                     clarification = "I'm sorry, there was a temporary issue processing your request. Could you please repeat your last message?"
@@ -1749,7 +1847,7 @@ If unsure, ask for clarification. Respond in the user's language (default: Engli
                                     fc_name = part.function_call.name if part.function_call else None
                                 except Exception:
                                     pass
-                            print(f"DEBUG [parts]: Part {idx}: has_fc={has_fc}, fc_name={fc_name}, has_text={has_text}")
+                            logger.debug(f"Part {idx}: has_fc={has_fc}, fc_name={fc_name}, has_text={has_text}")
                     
                     if parts_to_check:
                         for part in parts_to_check:
@@ -1760,7 +1858,7 @@ If unsure, ask for clarification. Respond in the user's language (default: Engli
                                         fc = fc_candidate
                                         break
                                 except Exception as e:
-                                    print(f"DEBUG [parts]: Error accessing function_call: {e}")
+                                    logger.debug(f"Error accessing function_call: {e}")
 
                     if not fc:
                         break
@@ -1768,35 +1866,34 @@ If unsure, ask for clarification. Respond in the user's language (default: Engli
                     func_name = fc.name
                     func_args = dict(fc.args)
                     
-                    print(f"DEBUG: Handling function call: {func_name}")
+                    logger.debug(f"Handling function call: {func_name}")
                     
                     tool_result = "Error: Unknown function"
                     try:
                         if func_name == "generate_image":
-                            print(f"DEBUG [chatbot]: Calling generate_image...")
+                            logger.debug(f"Calling generate_image...")
                             tool_result = await generate_image(**func_args)
-                            print(f"DEBUG [chatbot]: generate_image returned: {tool_result[:200] if tool_result else 'None'}...")
+                            logger.debug(f"generate_image returned: {tool_result[:200] if tool_result else 'None'}...")
                             # Files are saved inside generate_image tool - no need to extract URLs here
                                     
                         elif func_name == "generate_video":
-                            print(f"DEBUG [chatbot]: Calling generate_video...")
+                            logger.debug(f"Calling generate_video...")
                             tool_result = await generate_video(**func_args)
-                            print(f"DEBUG [chatbot]: generate_video returned: {tool_result[:200] if tool_result else 'None'}...")
+                            logger.debug(f"generate_video returned: {tool_result[:200] if tool_result else 'None'}...")
                             # Files are saved inside generate_video tool - no need to extract URLs here
                         
                         elif func_name == "generate_speech":
-                            print(f"DEBUG [chatbot]: Calling generate_speech...")
+                            logger.debug(f"Calling generate_speech...")
                             tool_result = await generate_speech(**func_args)
-                            print(f"DEBUG [chatbot]: generate_speech returned: {tool_result[:200] if tool_result else 'None'}...")
+                            logger.debug(f"generate_speech returned: {tool_result[:200] if tool_result else 'None'}...")
                             # Files are saved inside generate_speech tool - no need to extract URLs here
                                     
                         else:
-                            print(f"ERROR [chatbot]: Unknown function: {func_name}")
+                            logger.error(f"Unknown function: {func_name}")
                             tool_result = f"Error: Unknown function '{func_name}'"
                     except Exception as e:
-                        print(f"ERROR [chatbot]: Exception executing {func_name}: {e}")
                         import traceback
-                        print(f"Traceback: {traceback.format_exc()}")
+                        logger.error("Exception executing %s: %s\n%s", func_name, e, traceback.format_exc())
                         tool_result = f"Error executing {func_name}: {str(e)}"
                     
                     last_tool_result = tool_result
@@ -1819,7 +1916,7 @@ If unsure, ask for clarification. Respond in the user's language (default: Engli
                             timeout=900  # 15min - video generation (Kling) can take 10+ minutes
                         )
                     except asyncio.TimeoutError:
-                        print(f"WARNING: Gemini timed out processing function result")
+                        logger.warning(f"Gemini timed out processing function result")
                         # If we have a tool result AND tool was actually called, return success
                         if tool_was_actually_called and tool_result:
                             response_text = self._generate_contextual_success_message(tool_result, tool_was_called=True)
@@ -1863,7 +1960,7 @@ If unsure, ask for clarification. Respond in the user's language (default: Engli
                 
                 # If still no response, handle based on whether a tool was ACTUALLY called
                 if not response_text:
-                    print(f"DEBUG: No text in Gemini response. tool_was_actually_called={tool_was_actually_called}")
+                    logger.debug(f"No text in Gemini response. tool_was_actually_called={tool_was_actually_called}")
                     
                     if tool_was_actually_called and last_tool_result:
                         # Tool WAS called - check if it succeeded or failed
@@ -1893,12 +1990,12 @@ Please generate a SHORT, friendly response to the user confirming the operation 
                                 else:
                                     response_text = self._generate_contextual_success_message(last_tool_result, tool_was_called=True)
                             except Exception as e:
-                                print(f"DEBUG: Failed to get followup response: {e}")
+                                logger.debug(f"Failed to get followup response: {e}")
                                 response_text = self._generate_contextual_success_message(last_tool_result, tool_was_called=True)
                     else:
                         # NO tool was called - NEVER say "Done" or "Your video is ready"
                         # Ask Gemini to produce a real response
-                        print("DEBUG: No tool was called and no text response - recovering")
+                        logger.debug("No tool was called and no text response - recovering")
                         try:
                             recovery_prompt = f"""IMPORTANT: No tool was executed. The previous response had no text.
 User message: {message}
@@ -1929,7 +2026,7 @@ Keep it brief and helpful."""
                                 # Recovery also wants to call a tool - execute it
                                 rfunc_name = recovery_fc.name
                                 rfunc_args = dict(recovery_fc.args)
-                                print(f"DEBUG: Recovery found function_call: {rfunc_name}({rfunc_args})")
+                                logger.debug(f"Recovery found function_call: {rfunc_name}({rfunc_args})")
                                 try:
                                     if rfunc_name == "generate_image":
                                         tool_result = await generate_image(**rfunc_args)
@@ -1943,28 +2040,28 @@ Keep it brief and helpful."""
                                     tool_was_actually_called = True
                                     last_tool_result = tool_result
                                     response_text = self._generate_contextual_success_message(tool_result, tool_was_called=True)
-                                    print(f"DEBUG: Recovery tool execution success: {rfunc_name}")
+                                    logger.debug(f"Recovery tool execution success: {rfunc_name}")
                                 except Exception as te:
-                                    print(f"ERROR: Recovery tool execution failed: {te}")
+                                    logger.error(f"Recovery tool execution failed: {te}")
                                     response_text = f"⚠️ There was a problem: {str(te)}"
                             elif recovery_response.text:
                                 response_text = recovery_response.text
                             else:
                                 response_text = "⚠️ I couldn't process your request. Could you try again with more details?"
                         except Exception as e:
-                            print(f"DEBUG: Failed to get recovery response: {e}")
+                            logger.debug(f"Failed to get recovery response: {e}")
                             response_text = "⚠️ I couldn't process your request. Could you try again with more details?"
 
             except ValueError as e:
                 # Handle Gemini safety or malformed content errors
                 error_str = str(e)
                 if "MALFORMED_FUNCTION_CALL" in error_str:
-                    print(f"WARNING: Gemini MALFORMED_FUNCTION_CALL: {error_str}")
+                    logger.warning(f"Gemini MALFORMED_FUNCTION_CALL: {error_str}")
                     
                     # Try to execute pending action if we have one (user already confirmed)
                     pending_action = await self.get_pending_action()
                     if pending_action:
-                        print(f"DEBUG: MALFORMED recovery - executing pending action: {pending_action.get('function')}")
+                        logger.debug(f"MALFORMED recovery - executing pending action: {pending_action.get('function')}")
                         tool_result, response_text = await self.execute_pending_action()
                         if response_text:
                             await self.session_manager.add_message(
@@ -1988,10 +2085,10 @@ Keep it brief and helpful."""
                         else:
                             response_text = "⚠️ I couldn't process your request. Could you try again with more details?"
                     except Exception as e:
-                        print(f"DEBUG: Failed to get recovery response after MALFORMED_FUNCTION_CALL: {e}")
+                        logger.debug(f"Failed to get recovery response after MALFORMED_FUNCTION_CALL: {e}")
                         response_text = "⚠️ I couldn't process your request. Could you try again with more details?"
                 elif "finish_reason" in error_str or "response.text" in error_str:
-                    print(f"WARNING: Gemini response error: {error_str}")
+                    logger.warning(f"Gemini response error: {error_str}")
                     if tool_was_actually_called and last_tool_result:
                         # Tool was called - show its result
                         result_msg = self._generate_contextual_success_message(last_tool_result, tool_was_called=True)
@@ -2004,98 +2101,94 @@ Keep it brief and helpful."""
             
             # === Detect cost confirmation and save pending action ===
             if response_text and COST_CONFIRMATION_PATTERN.search(response_text):
-                # Gemini is asking for confirmation - extract params and save pending action
-                session = await self.session_manager.get_session(self.conversation_uuid)
-                history = session.get("messages", []) if session else []
-                
-                # Get reference images for the action (filter out blob: URLs)
+                # Extract ALL params directly from the structured confirmation message.
+                # This is far more reliable than scanning history with regex.
+                conf_params = _extract_all_params_from_confirmation(response_text)
+                action_type = conf_params.get("type")
+
+                # Get reference images (filter out browser-only blob: URLs)
                 ref_files = await self.get_reference_files()
-                ref_urls = [f["url"] for f in ref_files if f.get("type") == "image" and not f.get("url", "").startswith("blob:")] if ref_files else []
-                blob_ref_urls = [f["url"] for f in ref_files if f.get("type") == "image" and f.get("url", "").startswith("blob:")] if ref_files else []
+                ref_urls = [
+                    f["url"] for f in ref_files
+                    if f.get("type") == "image" and not f.get("url", "").startswith("blob:")
+                ] if ref_files else []
+                blob_ref_urls = [
+                    f["url"] for f in ref_files
+                    if f.get("type") == "image" and f.get("url", "").startswith("blob:")
+                ] if ref_files else []
                 if blob_ref_urls:
-                    print(f"WARNING [chatbot]: Filtered out {len(blob_ref_urls)} blob: URLs when saving pending action")
-                
-                # Include the current response_text in history for better param detection
-                history_with_current = history + [{'role': 'assistant', 'content': response_text}]
-                
-                # Detect if this is video or image by checking BOTH response AND conversation history
-                response_lower = response_text.lower()
-                history_text = ' '.join([m.get('content', '') for m in history[-10:]]).lower()
-                
-                is_video_context = any(word in response_lower for word in ['video', 'vídeo', 'animar', 'animate', 'sora', 'veo', 'runway', 'kling'])
-                is_image_context = any(word in response_lower for word in ['imagen', 'image', 'foto', 'picture'])
-                is_speech_context = any(word in response_lower for word in ['speech', 'voice', 'voz', 'audio', 'narración', 'narration', 'habla'])
-                
-                # If response doesn't have clear keywords, check conversation history
-                if not is_video_context and not is_image_context and not is_speech_context:
-                    # Check if tokens/sec pattern exists (video-specific)
-                    if re.search(r'tokens?/se[cg]', response_lower) or re.search(r'tokens?/se[cg]', history_text):
-                        is_video_context = True
-                    # Check conversation history for video model mentions
-                    elif any(word in history_text for word in ['video', 'vídeo', 'sora', 'veo', 'runway', 'kling']):
-                        is_video_context = True
-                    elif any(word in history_text for word in ['speech', 'voice', 'voz', 'audio', 'narración', 'narration']):
-                        is_speech_context = True
-                    elif any(word in history_text for word in ['imagen', 'image', 'gpt', 'nano banana', 'freepik']):
-                        is_image_context = True
-                
-                if is_video_context:
-                    params = detect_video_params_from_history(history_with_current)
-                    if params.get('model') and params.get('duration'):
+                    logger.warning(
+                        "Filtered out %d blob: URLs when saving pending action", len(blob_ref_urls)
+                    )
+
+                # Fall back to history scanning only when extraction from the confirmation
+                # message itself was incomplete (e.g., model or prompt missing).
+                if action_type == "video":
+                    model = conf_params.get("model")
+                    duration = conf_params.get("duration")
+                    prompt = conf_params.get("prompt")
+
+                    if not model or not duration:
+                        session = await self.session_manager.get_session(self.conversation_uuid)
+                        history = session.get("messages", []) if session else []
+                        history_with_current = history + [{"role": "assistant", "content": response_text}]
+                        fallback = detect_video_params_from_history(history_with_current)
+                        model = model or fallback.get("model")
+                        duration = duration or fallback.get("duration")
+                        prompt = prompt or fallback.get("prompt")
+
+                    if model and duration:
                         action_args = {
-                            "prompt": params.get('prompt', 'animate the image'),
-                            "model": params['model'],
-                            "duration": params['duration']
+                            "prompt": prompt or "animate the image",
+                            "model": model,
+                            "duration": duration,
                         }
                         if ref_urls:
                             action_args["reference_image"] = ref_urls[0]
-                        print(f"DEBUG: Saving pending VIDEO action: {action_args}")
-                        await self.save_pending_action(
-                            "generate_video",
-                            action_args,
-                            response_text
-                        )
-                elif is_speech_context:
-                    # Detect speech generation
-                    params = detect_speech_params_from_history(history_with_current)
-                    if params.get('text'):
-                        action_args = {
-                            "text": params['text'],
-                            "voice_id": params.get('voice_id', '21m00Tcm4TlvDq8ikWAM'),
-                        }
-                        print(f"DEBUG: Saving pending SPEECH action: {action_args}")
-                        await self.save_pending_action(
-                            "generate_speech",
-                            action_args,
-                            response_text
-                        )
-                elif is_image_context:
-                    # Detect image generation
-                    params = detect_image_params_from_history(history_with_current)
-                    
-                    # PRIORITY: Extract prompt DIRECTLY from the confirmation message (response_text)
-                    # This ensures the exact prompt shown to the user is what gets executed
-                    confirmed_prompt = _extract_prompt_from_confirmation(response_text)
-                    if confirmed_prompt:
-                        params['prompt'] = confirmed_prompt
-                        print(f"DEBUG: Extracted prompt DIRECTLY from confirmation message: {confirmed_prompt[:80]}...")
-                    
-                    if params.get('model'):
-                        action_args = {
-                            "prompt": params.get('prompt', 'generate image'),
-                            "model": params['model']
-                        }
-                        # Set correct image_type based on whether reference images exist
+                        logger.debug("Saving pending VIDEO action: %s", action_args)
+                        await self.save_pending_action("generate_video", action_args, response_text)
+
+                elif action_type == "speech":
+                    text_val = conf_params.get("prompt")  # "prompt" key holds speech text too
+                    voice_id = "21m00Tcm4TlvDq8ikWAM"  # default Rachel
+
+                    if not text_val:
+                        session = await self.session_manager.get_session(self.conversation_uuid)
+                        history = session.get("messages", []) if session else []
+                        history_with_current = history + [{"role": "assistant", "content": response_text}]
+                        fallback = detect_speech_params_from_history(history_with_current)
+                        text_val = fallback.get("text")
+                        voice_id = fallback.get("voice_id", voice_id)
+
+                    if text_val:
+                        action_args = {"text": text_val, "voice_id": voice_id}
+                        logger.debug("Saving pending SPEECH action")
+                        await self.save_pending_action("generate_speech", action_args, response_text)
+
+                elif action_type == "image":
+                    model = conf_params.get("model")
+                    prompt = conf_params.get("prompt")
+
+                    if not model or not prompt:
+                        session = await self.session_manager.get_session(self.conversation_uuid)
+                        history = session.get("messages", []) if session else []
+                        history_with_current = history + [{"role": "assistant", "content": response_text}]
+                        fallback = detect_image_params_from_history(history_with_current)
+                        model = model or fallback.get("model")
+                        prompt = prompt or fallback.get("prompt")
+
+                    if model:
+                        action_args = {"prompt": prompt or "generate image", "model": model}
                         if ref_urls:
                             action_args["reference_images"] = ref_urls
                             action_args["image_type"] = 2 if len(ref_urls) == 1 else 3
-                            print(f"DEBUG: Set image_type={action_args['image_type']} (has {len(ref_urls)} reference images)")
-                        print(f"DEBUG: Saving pending IMAGE action: {action_args}")
-                        await self.save_pending_action(
-                            "generate_image",
-                            action_args,
-                            response_text
-                        )
+                            logger.debug(
+                                "Set image_type=%d (%d reference images)",
+                                action_args["image_type"],
+                                len(ref_urls),
+                            )
+                        logger.debug("Saving pending IMAGE action: %s", action_args)
+                        await self.save_pending_action("generate_image", action_args, response_text)
             
             # Guardar respuesta del asistente en Redis
             await self.session_manager.add_message(
@@ -2152,28 +2245,14 @@ Keep it brief and helpful."""
         return tool_result
 
 
-# Cache de chatbots por UUID con timestamp de último acceso
-_chatbot_instances: dict[str, GeminiChatbot] = {}
-_last_access: dict[str, float] = {}
+# TTL-based LRU cache: max 200 concurrent sessions, evict after 30 minutes of inactivity.
+# Accessing a key resets the TTL, so active sessions are never evicted mid-conversation.
+_chatbot_cache: TTLCache = TTLCache(maxsize=200, ttl=1800)
+
 
 def get_chatbot(conversation_uuid: str = "default") -> GeminiChatbot:
     """Get or create a chatbot instance for a specific conversation."""
-    
-    # Limpieza simple: si hay más de 1000 instancias en memoria, borrar las viejas
-    if len(_chatbot_instances) > 1000:
-        current_time = time.time()
-        # Borrar instancias que no se usan hace más de 1 hora (3600 segundos)
-        keys_to_delete = [k for k, t in _last_access.items() if current_time - t > 3600]
-        for k in keys_to_delete:
-            if k in _chatbot_instances:
-                del _chatbot_instances[k]
-            if k in _last_access:
-                del _last_access[k]
-    
-    if conversation_uuid not in _chatbot_instances:
-        _chatbot_instances[conversation_uuid] = GeminiChatbot(conversation_uuid=conversation_uuid)
-    
-    # Actualizar tiempo de último acceso
-    _last_access[conversation_uuid] = time.time()
-    
-    return _chatbot_instances[conversation_uuid]
+    if conversation_uuid not in _chatbot_cache:
+        _chatbot_cache[conversation_uuid] = GeminiChatbot(conversation_uuid=conversation_uuid)
+        logger.debug("Created new GeminiChatbot for uuid='%s'", conversation_uuid)
+    return _chatbot_cache[conversation_uuid]

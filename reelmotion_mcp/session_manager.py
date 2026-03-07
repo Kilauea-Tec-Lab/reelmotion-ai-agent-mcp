@@ -1,236 +1,242 @@
-import redis
+import redis.asyncio as aioredis
 import json
 import os
 import uuid
+import logging
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict
-from pathlib import Path
+
+from logging_config import setup_logging
+
+setup_logging()
+logger = logging.getLogger(__name__)
+
+# Maximum messages kept per session to prevent unbounded growth
+MAX_HISTORY_MESSAGES = 50
+
 
 class SessionManager:
     def __init__(self, redis_url: str = "redis://localhost:6379"):
         """
-        Maneja sesiones de conversación con Redis + filesystem.
-        
-        Redis almacena:
-        - Historial de mensajes
-        - Metadata de archivos generados
-        - Imágenes de referencia (base64)
-        
-        Filesystem almacena:
-        - Videos/imágenes generados temporalmente
+        Manages conversation sessions with Redis.
+
+        Redis stores:
+        - Message history (capped at MAX_HISTORY_MESSAGES)
+        - Generated file metadata
+        - Reference file URLs
+        - Pending actions awaiting confirmation
         """
-        self.redis_client = redis.from_url(redis_url, decode_responses=True)
-        self.files_dir = Path("temp_files")
-        self.files_dir.mkdir(exist_ok=True)
-        
-        # TTL por tipo de dato
-        self.SESSION_TTL = int(timedelta(hours=24).total_seconds())  # 24h
-        self.FILE_TTL = int(timedelta(hours=2).total_seconds())      # 2h
-    
+        self.redis_client = aioredis.from_url(redis_url, decode_responses=True)
+
+        # TTL per data type
+        self.SESSION_TTL = int(timedelta(hours=24).total_seconds())
+        self.FILE_TTL = int(timedelta(hours=2).total_seconds())
+
     def _get_session_key(self, conversation_uuid: str) -> str:
-        """Genera key de Redis para la sesión."""
         return f"session:{conversation_uuid}"
-    
+
     def _get_files_key(self, conversation_uuid: str) -> str:
-        """Genera key de Redis para archivos de la sesión."""
         return f"files:{conversation_uuid}"
-    
+
     def _get_refs_key(self, conversation_uuid: str) -> str:
-        """Genera key para imágenes de referencia."""
         return f"refs:{conversation_uuid}"
-    
+
     def _get_pending_action_key(self, conversation_uuid: str) -> str:
-        """Genera key para acción pendiente de confirmación."""
         return f"pending_action:{conversation_uuid}"
-    
+
     def _get_just_generated_key(self, conversation_uuid: str) -> str:
-        """Genera key para flag de generación reciente."""
         return f"just_generated:{conversation_uuid}"
-    
+
     async def create_session(self, conversation_uuid: str) -> Dict:
-        """Crea una nueva sesión."""
+        """Create a new session."""
         session_key = self._get_session_key(conversation_uuid)
-        
+
         session_data = {
             "uuid": conversation_uuid,
             "created_at": datetime.now().isoformat(),
             "messages": [],
-            "model": os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+            "model": os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
         }
-        
-        self.redis_client.setex(
+
+        await self.redis_client.setex(
             session_key,
             self.SESSION_TTL,
-            json.dumps(session_data)
+            json.dumps(session_data),
         )
-        
+
         return session_data
-    
+
     async def get_session(self, conversation_uuid: str) -> Optional[Dict]:
-        """Obtiene datos de la sesión."""
+        """Get session data."""
         session_key = self._get_session_key(conversation_uuid)
-        data = self.redis_client.get(session_key)
-        
+        data = await self.redis_client.get(session_key)
+
         if data:
             return json.loads(data)
         return None
-    
+
     async def add_message(self, conversation_uuid: str, role: str, content: str):
-        """Agrega un mensaje al historial."""
+        """Append a message to history, keeping at most MAX_HISTORY_MESSAGES."""
         session = await self.get_session(conversation_uuid)
-        
+
         if not session:
             session = await self.create_session(conversation_uuid)
-        
-        session["messages"].append({
-            "role": role,
-            "content": content,
-            "timestamp": datetime.now().isoformat()
-        })
-        
+
+        session["messages"].append(
+            {
+                "role": role,
+                "content": content,
+                "timestamp": datetime.now().isoformat(),
+            }
+        )
+
+        # Truncate to prevent unbounded growth
+        if len(session["messages"]) > MAX_HISTORY_MESSAGES:
+            session["messages"] = session["messages"][-MAX_HISTORY_MESSAGES:]
+
         session_key = self._get_session_key(conversation_uuid)
-        self.redis_client.setex(
+        await self.redis_client.setex(
             session_key,
             self.SESSION_TTL,
-            json.dumps(session)
+            json.dumps(session),
         )
-    
+
     async def save_generated_file(
-        self, 
-        conversation_uuid: str, 
+        self,
+        conversation_uuid: str,
         file_url: str,
         file_type: str,
-        metadata: Dict = None
+        metadata: Dict = None,
     ) -> Dict:
-        """
-        Guarda metadata de archivo generado en Redis.
-        Retorna info del archivo.
-        """
+        """Save generated file metadata to Redis and return file info."""
         file_id = str(uuid.uuid4())
-        
-        # Guardar metadata en Redis
+
         file_info = {
             "file_id": file_id,
             "url": file_url,
             "type": file_type,
             "created_at": datetime.now().isoformat(),
-            **(metadata or {})
+            **(metadata or {}),
         }
-        
+
         files_key = self._get_files_key(conversation_uuid)
-        print(f"DEBUG [session_manager]: Saving file to Redis key='{files_key}', url='{file_url}', type='{file_type}'")
-        self.redis_client.lpush(files_key, json.dumps(file_info))
-        self.redis_client.expire(files_key, self.FILE_TTL)
-        
-        # Verify it was saved
-        count = self.redis_client.llen(files_key)
-        print(f"DEBUG [session_manager]: File saved. Total files in '{files_key}': {count}")
-        
+        logger.debug("Saving file to Redis key='%s', url='%s', type='%s'", files_key, file_url, file_type)
+        await self.redis_client.lpush(files_key, json.dumps(file_info))
+        await self.redis_client.expire(files_key, self.FILE_TTL)
+
+        count = await self.redis_client.llen(files_key)
+        logger.debug("File saved. Total files in '%s': %d", files_key, count)
+
         return file_info
-    
+
     async def get_pending_files(self, conversation_uuid: str) -> List[Dict]:
-        """Obtiene archivos pendientes de enviar al usuario."""
+        """Get pending files to send to the user."""
         files_key = self._get_files_key(conversation_uuid)
-        print(f"DEBUG [session_manager]: Getting pending files from Redis key='{files_key}'")
-        file_list = self.redis_client.lrange(files_key, 0, -1)
-        print(f"DEBUG [session_manager]: Found {len(file_list)} files in Redis")
-        
+        logger.debug("Getting pending files from Redis key='%s'", files_key)
+        file_list = await self.redis_client.lrange(files_key, 0, -1)
+        logger.debug("Found %d files in Redis", len(file_list))
+
         return [json.loads(f) for f in file_list]
-    
+
     async def clear_sent_files(self, conversation_uuid: str):
-        """Elimina archivos ya enviados (limpieza)."""
+        """Delete already-sent files (cleanup)."""
         files_key = self._get_files_key(conversation_uuid)
-        self.redis_client.delete(files_key)
-    
+        await self.redis_client.delete(files_key)
+
     async def save_reference_files(self, conversation_uuid: str, files_data: List[Dict]):
-        """Guarda archivos de referencia como URLs (persisten en la sesión)."""
+        """Save reference file URLs (persist for the session)."""
         refs_key = self._get_refs_key(conversation_uuid)
-        self.redis_client.setex(
+        await self.redis_client.setex(
             refs_key,
             self.SESSION_TTL,
-            json.dumps(files_data)
+            json.dumps(files_data),
         )
-    
+
     async def get_reference_files(self, conversation_uuid: str) -> List[Dict]:
-        """Obtiene archivos de referencia de la sesión."""
+        """Get reference files for the session."""
         refs_key = self._get_refs_key(conversation_uuid)
-        data = self.redis_client.get(refs_key)
-        
+        data = await self.redis_client.get(refs_key)
+
         if data:
             return json.loads(data)
         return []
-    
+
+    async def clear_reference_files(self, conversation_uuid: str):
+        """Delete reference files for the session."""
+        refs_key = self._get_refs_key(conversation_uuid)
+        await self.redis_client.delete(refs_key)
+
     async def save_pending_action(self, conversation_uuid: str, action: Dict):
         """
-        Guarda una acción pendiente de confirmación del usuario.
-        Se usa para ejecutar directamente cuando el usuario confirma.
-        
+        Save a pending action awaiting user confirmation.
+
         action = {
             "function": "generate_video" | "generate_image" | "generate_speech",
             "args": {...},
-            "cost_message": "...",  # El mensaje que se mostró al usuario
+            "cost_message": "...",
             "timestamp": "..."
         }
         """
         key = self._get_pending_action_key(conversation_uuid)
         action["timestamp"] = datetime.now().isoformat()
-        # TTL corto: 5 minutos para confirmación
-        self.redis_client.setex(key, 300, json.dumps(action))
-        print(f"DEBUG [session_manager]: Saved pending action '{action.get('function')}' for UUID='{conversation_uuid}'")
-    
+        # Short TTL: 5 minutes for confirmation window
+        await self.redis_client.setex(key, 300, json.dumps(action))
+        logger.debug("Saved pending action '%s' for UUID='%s'", action.get("function"), conversation_uuid)
+
     async def get_pending_action(self, conversation_uuid: str) -> Optional[Dict]:
-        """Obtiene la acción pendiente de confirmación."""
+        """Get the pending action awaiting confirmation."""
         key = self._get_pending_action_key(conversation_uuid)
-        data = self.redis_client.get(key)
+        data = await self.redis_client.get(key)
         if data:
             return json.loads(data)
         return None
-    
+
     async def clear_pending_action(self, conversation_uuid: str):
-        """Elimina la acción pendiente después de ejecutarla."""
+        """Delete the pending action after execution."""
         key = self._get_pending_action_key(conversation_uuid)
-        self.redis_client.delete(key)
-        print(f"DEBUG [session_manager]: Cleared pending action for UUID='{conversation_uuid}'")
-    
+        await self.redis_client.delete(key)
+        logger.debug("Cleared pending action for UUID='%s'", conversation_uuid)
+
     async def set_just_generated(self, conversation_uuid: str):
-        """Marca que se acaba de generar contenido. Expira en 60s."""
+        """Mark that content was just generated. Expires in 60 seconds."""
         key = self._get_just_generated_key(conversation_uuid)
-        self.redis_client.setex(key, 60, "1")
-        print(f"DEBUG [session_manager]: Set just_generated flag for UUID='{conversation_uuid}'")
-    
+        await self.redis_client.setex(key, 60, "1")
+        logger.debug("Set just_generated flag for UUID='%s'", conversation_uuid)
+
     async def get_just_generated(self, conversation_uuid: str) -> bool:
-        """Verifica si se acaba de generar contenido."""
+        """Check if content was just generated."""
         key = self._get_just_generated_key(conversation_uuid)
-        return self.redis_client.exists(key) > 0
-    
+        return await self.redis_client.exists(key) > 0
+
     async def clear_just_generated(self, conversation_uuid: str):
-        """Limpia el flag de generación reciente."""
+        """Clear the just-generated flag."""
         key = self._get_just_generated_key(conversation_uuid)
-        self.redis_client.delete(key)
-    
-    # Mantener compatibilidad con métodos antiguos
+        await self.redis_client.delete(key)
+
+    # Legacy compatibility methods
     async def save_reference_images(self, conversation_uuid: str, images_b64: List[str]):
-        """Legacy method - ahora guarda URLs."""
+        """Legacy method - now saves URLs."""
         files_data = [{"url": img, "type": "image"} for img in images_b64]
         await self.save_reference_files(conversation_uuid, files_data)
-    
+
     async def get_reference_images(self, conversation_uuid: str) -> List[str]:
-        """Legacy method - retorna URLs."""
+        """Legacy method - returns URLs."""
         files = await self.get_reference_files(conversation_uuid)
         return [f["url"] for f in files] if files else []
-    
+
     async def delete_session(self, conversation_uuid: str):
-        """Elimina una sesión completa."""
+        """Delete a complete session."""
         session_key = self._get_session_key(conversation_uuid)
         files_key = self._get_files_key(conversation_uuid)
         refs_key = self._get_refs_key(conversation_uuid)
         pending_key = self._get_pending_action_key(conversation_uuid)
-        
-        self.redis_client.delete(session_key, files_key, refs_key, pending_key)
+
+        await self.redis_client.delete(session_key, files_key, refs_key, pending_key)
 
 
 # Singleton
 _session_manager: Optional[SessionManager] = None
+
 
 def get_session_manager() -> SessionManager:
     global _session_manager

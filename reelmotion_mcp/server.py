@@ -1,5 +1,6 @@
 from typing import Any, Optional
 import os
+import logging
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
@@ -14,16 +15,16 @@ from starlette.responses import JSONResponse
 
 from chatbot import get_chatbot
 from prompts import REELMOTION_SYSTEM_PROMPT
-from tools import generate_image as generate_image_impl, generate_video as generate_video_impl, generate_speech as generate_speech_impl
+from tools import generate_image as generate_image_impl, generate_video as generate_video_impl, generate_speech as generate_speech_impl, craft_prompt as craft_prompt_impl
 from request_context import set_api_token, set_conversation_uuid
 from session_manager import get_session_manager
-
-#COMANDS TO RUN THIS PROYECT
-#.\venv\Scripts\activate
-#.\start_http.bat
+from logging_config import setup_logging
 
 # Load environment variables
 load_dotenv()
+
+setup_logging()
+logger = logging.getLogger(__name__)
 
 # Initialize FastMCP server with CORS middleware
 mcp = FastMCP(
@@ -121,9 +122,9 @@ async def chat_endpoint(request: Request):
                 return JSONResponse({"error": "Message is required"}, status_code=400)
 
         # Crear chatbot con UUID de conversación
-        print(f"DEBUG [server.py]: Creating/getting chatbot for UUID='{conversation_uuid}'")
+        logger.debug(f"Creating/getting chatbot for UUID='{conversation_uuid}'")
         chatbot = get_chatbot(conversation_uuid)
-        print(f"DEBUG [server.py]: Chatbot instance uuid='{chatbot.conversation_uuid}'")
+        logger.debug(f"Chatbot instance uuid='{chatbot.conversation_uuid}'")
         
         # Store reference file URLs in chatbot session (persists across messages)
         if file_urls:
@@ -133,8 +134,8 @@ async def chat_endpoint(request: Request):
         
         # Get generated files and include in response
         files = await chatbot.get_generated_files()
-        print(f"DEBUG [server.py]: Retrieved {len(files)} files from chatbot")
-        print(f"DEBUG [server.py]: Files: {files}")
+        logger.debug(f"Retrieved {len(files)} files from chatbot")
+        logger.debug(f"Files: {files}")
         
         # Limpiar archivos después de enviarlos
         session_manager = get_session_manager()
@@ -144,7 +145,7 @@ async def chat_endpoint(request: Request):
             "response": response,
             "files": files
         }
-        print(f"DEBUG [server.py]: Final response being sent: {final_response}")
+        logger.debug(f"Final response being sent: {final_response}")
         
         return JSONResponse(final_response)
     except Exception as e:
@@ -271,6 +272,28 @@ async def generate_speech(
         model_id: The model ID to use. Defaults to "eleven_multilingual_v2".
     """
     return await generate_speech_impl(text, voice_id, model_id)
+
+@mcp.tool
+async def craft_prompt(
+    idea: str,
+    media_type: str = "image",
+    user_answers: str = "",
+) -> str:
+    """
+    Refine and improve a raw idea into a production-ready prompt for AI image or video generation.
+
+    This tool asks targeted questions when details are missing and suggests concrete options
+    for the user to choose from. It NEVER invents details — it only guides and refines.
+
+    COST: Free (no tokens charged for prompt crafting).
+
+    Args:
+        idea: The user's raw description or idea (e.g., "a cat in space").
+        media_type: Target media type — "image" or "video". Defaults to "image".
+        user_answers: Optional answers to previous follow-up questions, to continue refining.
+    """
+    return await craft_prompt_impl(idea, media_type, user_answers)
+
 
 @mcp.tool
 async def chat(message: str, context: str = "") -> str:
