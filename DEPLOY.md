@@ -110,7 +110,7 @@ Contenido:
 
 ```ini
 [Unit]
-Description=ReelMotion MCP Server
+Description=reelmotion MCP Server
 After=network.target redis-server.service
 
 [Service]

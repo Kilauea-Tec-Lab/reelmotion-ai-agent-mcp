@@ -57,7 +57,7 @@ async def generate_image(
     reference_images: Optional[list] = None,
 ) -> str:
     """
-    Generate or edit an image using the ReelMotion backend.
+    Generate or edit an image using the reelmotion backend.
     Supports text-to-image (type 1), image-to-image (type 2), and multi-image reference (type 3).
 
     COST: Nano Banana 2 = 7 tokens, GPT = 6 tokens, Freepik = 1 token per image.

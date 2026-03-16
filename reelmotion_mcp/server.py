@@ -193,7 +193,7 @@ def generate_image(
     reference_images: Optional[list[str]] = None
 ) -> str:
     """
-    Generate or edit an image using the ReelMotion backend.
+    Generate or edit an image using the reelmotion backend.
     This tool supports both text-to-image generation AND image-to-image editing/transformation.
     COST: Nano Banana 2 = 7 tokens, GPT = 6 tokens, Freepik = 1 token per image.
     

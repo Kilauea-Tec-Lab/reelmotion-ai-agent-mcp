@@ -1,4 +1,4 @@
-"""Centralized logging configuration for the ReelMotion MCP server."""
+"""Centralized logging configuration for the reelmotion MCP server."""
 import logging
 import os
 

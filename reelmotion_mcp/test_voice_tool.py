@@ -4,7 +4,7 @@ import httpx
 import base64
 
 async def test_elevenlabs():
-    text = "Hola, esto es una prueba de generación de voz con ElevenLabs desde ReelMotion."
+    text = "Hola, esto es una prueba de generación de voz con ElevenLabs desde reelmotion."
     voice_id = "21m00Tcm4TlvDq8ikWAM" # Rachel
     # Using the key provided by the user
     api_key = os.getenv("ELEVENLABS_API_KEY", "sk_2255a4e8aaeaf2c8211f2ffc968686b602250cd260314f16")

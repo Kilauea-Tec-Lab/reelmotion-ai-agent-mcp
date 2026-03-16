@@ -1,4 +1,4 @@
-# ReelMotion AI Agent MCP
+# reelmotion AI Agent MCP
 
 AI-powered agent for image and video generation using Google Gemini and multiple AI models.
 
@@ -160,7 +160,7 @@ GET /health
          │
          ▼
 ┌─────────────────┐     ┌─────────────────┐
-│   Redis         │     │   ReelMotion    │
+│   Redis         │     │   reelmotion    │
 │   (Sessions)    │     │   Backend API   │
 └─────────────────┘     └─────────────────┘
 ```
@@ -178,11 +178,11 @@ VIDEO_CREATION_ENDPOINT=api/ai/mcp-video-generation
 
 ## Contributing
 
-This is a private project for ReelMotion Media Ltd.
+This is a private project for reelmotion Media Ltd.
 
 ## License
 
-Proprietary - All rights reserved ReelMotion Media Ltd.
+Proprietary - All rights reserved reelmotion Media Ltd.
 
 ## Support
 

@@ -1,6 +1,6 @@
-# ReelMotion MCP Server
+# reelmotion MCP Server
 
-This is a Model Context Protocol (MCP) server for ReelMotion.
+This is a Model Context Protocol (MCP) server for reelmotion.
 It provides tools to generate images and videos, and handle chat interactions.
 
 ## Prerequisites

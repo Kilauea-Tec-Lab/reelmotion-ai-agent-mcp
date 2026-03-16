@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-echo "🚀 Starting ReelMotion deployment..."
+echo "🚀 Starting reelmotion deployment..."
 
 echo "📥 Pulling latest code..."
 git pull origin main
