@@ -8,6 +8,7 @@ from typing import Optional
 from request_context import get_api_token, get_conversation_uuid
 from session_manager import get_session_manager
 from logging_config import setup_logging
+from moderation import is_disallowed_content, get_refusal_message
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -63,6 +64,12 @@ async def generate_image(
     COST: Nano Banana 2 = 7 tokens, GPT = 6 tokens, Freepik = 1 token per image.
     """
     logger.debug("Tool 'generate_image' called with prompt='%s', model='%s'", prompt, model)
+
+    # Defense-in-depth: refuse disallowed content even if it slipped past
+    # the chatbot-layer moderation (e.g., a stale pending action).
+    if is_disallowed_content(prompt):
+        logger.warning("generate_image refused: disallowed prompt content")
+        return get_refusal_message(prompt)
 
     # Clean model names passed by the LLM via reference args (we use session files instead)
     prompt = clean_prompt_from_model_mentions(prompt)
@@ -233,6 +240,12 @@ async def generate_video(
     """
     logger.debug("Tool 'generate_video' called with prompt='%s', model='%s', duration=%d", prompt, model, duration)
 
+    # Defense-in-depth: refuse disallowed content even if it slipped past
+    # the chatbot-layer moderation (e.g., a stale pending action).
+    if is_disallowed_content(prompt):
+        logger.warning("generate_video refused: disallowed prompt content")
+        return get_refusal_message(prompt)
+
     prompt = clean_prompt_from_model_mentions(prompt)
     duration = int(duration)
 
@@ -389,6 +402,11 @@ async def generate_speech(
     """
     import base64
     import uuid as uuid_lib
+
+    # Defense-in-depth: refuse disallowed text content for TTS too.
+    if is_disallowed_content(text):
+        logger.warning("generate_speech refused: disallowed text content")
+        return get_refusal_message(text)
 
     api_key = os.getenv("ELEVENLABS_API_KEY")
     if not api_key:

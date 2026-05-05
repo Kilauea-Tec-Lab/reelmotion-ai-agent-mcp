@@ -14,6 +14,11 @@ from tools import generate_image, generate_video, generate_speech
 from session_manager import get_session_manager
 from request_context import set_conversation_uuid
 from logging_config import setup_logging
+from moderation import (
+    is_disallowed_content,
+    is_disallowed_content_full,
+    get_refusal_message,
+)
 
 # Load environment variables
 load_dotenv()
@@ -1309,11 +1314,24 @@ class GeminiChatbot:
         """
         
         full_system_prompt = f"{REELMOTION_SYSTEM_PROMPT}\n\n{tool_instructions}"
-        
+
+        # Maximum-strictness safety filters on the main chat model.
+        # Third defense layer (after regex + LLM moderation) — Gemini will
+        # itself refuse to generate disallowed content even if both prior
+        # layers somehow missed something.
+        from google.generativeai.types import HarmCategory, HarmBlockThreshold
+        safety_settings = {
+            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
+            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
+            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
+            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
+        }
+
         self.model = genai.GenerativeModel(
-            self.model_name, 
+            self.model_name,
             system_instruction=full_system_prompt,
-            tools=[generate_image, generate_video, generate_speech]
+            tools=[generate_image, generate_video, generate_speech],
+            safety_settings=safety_settings,
         )
         self.chat_session = None
         
@@ -1500,9 +1518,40 @@ class GeminiChatbot:
         set_conversation_uuid(self.conversation_uuid)
 
         try:
+            # === CONTENT MODERATION (Google Play AI policy compliance) ===
+            # Two-layer block BEFORE the message reaches Gemini, at any
+            # workflow step:
+            #   1) Regex blocklist (fast, deterministic, catches obvious cases
+            #      including leet-speak/euphemisms/multilingual variants).
+            #   2) LLM semantic classifier (Gemini Flash) for paraphrases &
+            #      indirect descriptions regex can't predict.
+            if await is_disallowed_content_full(message):
+                refusal = get_refusal_message(message)
+                logger.warning(
+                    "Blocked disallowed user message in conversation %s",
+                    self.conversation_uuid,
+                )
+                # Persist a sanitized record of the user input + refusal so
+                # subsequent messages don't try to recover the bad prompt
+                # from history.
+                await self.session_manager.add_message(
+                    self.conversation_uuid,
+                    "user",
+                    "[message blocked by content policy]",
+                )
+                await self.session_manager.add_message(
+                    self.conversation_uuid,
+                    "assistant",
+                    refusal,
+                )
+                # Drop any pending generation so a later "yes" cannot execute
+                # something that relied on the blocked prompt.
+                await self.clear_pending_action()
+                return refusal
+
             if not self.chat_session:
                 await self.start_chat()
-            
+
             # === CHECK: Was something just generated? Reset workflow on reactions ===
             just_generated = await self.session_manager.get_just_generated(self.conversation_uuid)
             if just_generated:
