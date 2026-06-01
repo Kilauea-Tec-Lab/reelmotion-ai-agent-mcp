@@ -215,6 +215,117 @@ async def generate_image(
             return f"Error generating image: {str(e)}"
 
 
+# ---------------------------------------------------------------------------
+# Seedance 2.0 pricing & helpers
+# ---------------------------------------------------------------------------
+# Seedance is the only video tier whose price depends on RESOLUTION (not just
+# duration). The backend (/api/ai/generate-video) does the real charging; these
+# tables mirror its rates so the agent can quote the cost before generating.
+SEEDANCE2_MODELS = ("seedance-2.0", "seedance-2.0-fast")
+
+# tokens per second, indexed by resolution. "fast" tier has no 1080p.
+SEEDANCE2_TOKEN_RATES = {
+    "normal": {
+        "seedance-2.0": {"480p": 15, "720p": 32, "1080p": 72},
+        "seedance-2.0-fast": {"480p": 12, "720p": 26},
+    },
+    # Discounted rate applies ONLY in reference mode when reference_videos are
+    # sent (fal.ai charges ×0.6 in that case).
+    "reference_discount": {
+        "seedance-2.0": {"480p": 9, "720p": 20, "1080p": 43},
+        "seedance-2.0-fast": {"480p": 7, "720p": 16},
+    },
+}
+
+SEEDANCE2_VALID_ASPECT_RATIOS = ("auto", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16")
+
+
+def normalize_seedance_resolution(model: str, resolution: Optional[str]) -> str:
+    """Return a valid resolution for the given Seedance tier, falling back to 720p."""
+    res = (resolution or "720p").lower().strip()
+    valid_for_model = SEEDANCE2_TOKEN_RATES["normal"].get(model, {})
+    if res not in valid_for_model:
+        # Invalid resolution for this tier (e.g., 1080p on the fast tier) -> 720p
+        res = "720p"
+    return res
+
+
+def normalize_seedance_duration(duration) -> int:
+    """Normalize a Seedance duration to an int in the valid 4-15 range (default 5)."""
+    if duration in (None, "", "auto"):
+        return 5
+    try:
+        dur = int(duration)
+    except (TypeError, ValueError):
+        return 5
+    return max(4, min(15, dur))
+
+
+def compute_seedance2_cost(
+    model: str,
+    resolution: Optional[str],
+    duration,
+    has_reference_videos: bool = False,
+) -> int:
+    """Total token cost for a Seedance 2.0 generation = rate(resolution) × duration."""
+    res = normalize_seedance_resolution(model, resolution)
+    table_key = "reference_discount" if has_reference_videos else "normal"
+    per_sec = SEEDANCE2_TOKEN_RATES[table_key].get(model, {}).get(res)
+    if per_sec is None:
+        per_sec = SEEDANCE2_TOKEN_RATES["normal"].get(model, {}).get(res, 0)
+    return per_sec * normalize_seedance_duration(duration)
+
+
+def _build_seedance_media(
+    payload: dict,
+    context_files: Optional[list],
+    reference_images: Optional[list],
+    reference_videos: Optional[list],
+    reference_audios: Optional[list],
+    media_url: Optional[str],
+    end_frame: Optional[str],
+) -> bool:
+    """
+    Populate a Seedance payload with the right media fields and let the backend
+    autodetect the sub-mode:
+      - reference_images / reference_videos / reference_audios -> reference mode
+      - media_url -> image mode
+      - none -> text mode
+    Explicit args take precedence over session reference files.
+    Returns True if reference_videos were attached (discounted rate applies).
+    """
+    session_images: list = []
+    session_videos: list = []
+    if context_files:
+        valid = [f for f in context_files if not is_blob_url(f.get("url", ""))]
+        session_images = [f["url"] for f in valid if f.get("type") == "image"]
+        session_videos = [f["url"] for f in valid if f.get("type") == "video"]
+
+    video_urls = list(reference_videos) if reference_videos else session_videos
+    image_urls = list(reference_images) if reference_images else session_images
+    if media_url:
+        image_urls = [media_url] + [u for u in image_urls if u != media_url]
+
+    if video_urls:
+        # Reference mode (discounted): @Image dance like @Video, style transfer, etc.
+        payload["reference_videos"] = video_urls[:3]
+        if image_urls:
+            payload["reference_images"] = image_urls[:9]
+        if reference_audios:
+            payload["reference_audios"] = list(reference_audios)[:3]
+        return True
+
+    if image_urls:
+        # Image mode: animate a single frame (end_frame optional).
+        payload["media_url"] = image_urls[0]
+        if end_frame:
+            payload["end_frame"] = end_frame
+        return False
+
+    # Text mode: prompt only.
+    return False
+
+
 async def generate_video(
     prompt: str,
     model: str,
@@ -222,6 +333,14 @@ async def generate_video(
     aspect_ratio: str = "16:9",
     reference_image: Optional[str] = None,
     reference_video: Optional[str] = None,
+    resolution: str = "720p",
+    generate_audio: bool = True,
+    seed: Optional[int] = None,
+    media_url: Optional[str] = None,
+    end_frame: Optional[str] = None,
+    reference_images: Optional[list] = None,
+    reference_videos: Optional[list] = None,
+    reference_audios: Optional[list] = None,
 ) -> str:
     """
     Generate or edit a video using AI based on a text prompt.
@@ -237,6 +356,14 @@ async def generate_video(
     - sora-2-pro: 33 tokens/sec (4, 8, or 12s only)
     - kling-v3-omni-pro: 26 tokens/sec (3-15s)
     - kling-v3-omni-std: 19 tokens/sec (3-15s)
+
+    Seedance 2.0 (resolution-based pricing, 4-15s, default 5s):
+    - seedance-2.0: 480p=15, 720p=32, 1080p=72 tokens/sec
+    - seedance-2.0-fast: 480p=12, 720p=26 tokens/sec (no 1080p -> downgraded to 720p)
+    - Reference-video discount (reference_videos sent): seedance-2.0 480p=9/720p=20/1080p=43;
+      seedance-2.0-fast 480p=7/720p=16.
+    Seedance-only params: resolution, generate_audio, seed, media_url + end_frame
+    (image mode), reference_images/reference_videos/reference_audios (reference mode).
     """
     logger.debug("Tool 'generate_video' called with prompt='%s', model='%s', duration=%d", prompt, model, duration)
 
@@ -247,12 +374,16 @@ async def generate_video(
         return get_refusal_message(prompt)
 
     prompt = clean_prompt_from_model_mentions(prompt)
-    duration = int(duration)
+    is_seedance = model in SEEDANCE2_MODELS
+    # Seedance accepts an empty/"auto" duration (normalized to 5); other models
+    # expect an explicit integer.
+    duration = normalize_seedance_duration(duration) if is_seedance else int(duration)
 
     allowed_models = [
         "runway", "runway-aleph", "runway-4.5", "veo-3.1", "veo-3.1-flash", "veo-3.1-ultra",
         "luma-labs", "seedance-pro", "kling-v1", "sora-2", "sora-2-pro",
         "kling-v3-omni-pro", "kling-v3-omni-std",
+        "seedance-2.0", "seedance-2.0-fast",
     ]
 
     if model not in allowed_models:
@@ -272,6 +403,8 @@ async def generate_video(
         "kling-v1": [5, 10],
         "kling-v3-omni-pro": list(range(3, 16)),
         "kling-v3-omni-std": list(range(3, 16)),
+        "seedance-2.0": list(range(4, 16)),
+        "seedance-2.0-fast": list(range(4, 16)),
     }
 
     if model in duration_rules and duration not in duration_rules[model]:
@@ -320,7 +453,51 @@ async def generate_video(
         "aspect_ratio": aspect_ratio,
     }
 
-    if context_files:
+    if is_seedance:
+        # Resolution-based tier; the "fast" sub-tier has no 1080p.
+        res = normalize_seedance_resolution(model, resolution)
+        if (resolution or "").lower().strip() == "1080p" and res != "1080p":
+            logger.debug("%s does not support 1080p; using %s instead", model, res)
+        if aspect_ratio not in SEEDANCE2_VALID_ASPECT_RATIOS:
+            logger.debug("Aspect ratio '%s' invalid for Seedance; using 16:9", aspect_ratio)
+            payload["aspect_ratio"] = "16:9"
+        payload["resolution"] = res
+        payload["generate_audio"] = generate_audio
+        if seed is not None:
+            payload["seed"] = seed
+
+        # Blob-URL guard mirrors the non-seedance path (only error if blobs were
+        # the ONLY media and no explicit URLs were provided).
+        if context_files:
+            valid_context_files = [f for f in context_files if not is_blob_url(f.get("url", ""))]
+            blob_files = [f for f in context_files if is_blob_url(f.get("url", ""))]
+            if blob_files:
+                logger.warning("Filtered out %d blob: URLs from reference files", len(blob_files))
+            has_explicit = bool(media_url or reference_videos or reference_images)
+            if not valid_context_files and blob_files and not has_explicit:
+                return (
+                    "Error: The reference file could not be processed because it uses a temporary "
+                    "browser URL (blob:). Please try uploading the file again or use a direct URL."
+                )
+
+        # Bridge legacy singular args (set by the chatbot's pending actions) into
+        # the Seedance media model so image/reference modes still trigger even if
+        # the session reference files were somehow unavailable.
+        effective_media_url = media_url or reference_image
+        effective_ref_videos = reference_videos
+        if not effective_ref_videos and reference_video:
+            effective_ref_videos = [reference_video]
+
+        used_ref_videos = _build_seedance_media(
+            payload, context_files, reference_images, effective_ref_videos,
+            reference_audios, effective_media_url, end_frame,
+        )
+        cost = compute_seedance2_cost(model, res, duration, has_reference_videos=used_ref_videos)
+        logger.debug(
+            "Seedance payload: model=%s, resolution=%s, duration=%ds, ref_videos=%s, cost=%d tokens",
+            model, res, duration, used_ref_videos, cost,
+        )
+    elif context_files:
         valid_context_files = [f for f in context_files if not is_blob_url(f.get("url", ""))]
         blob_files = [f for f in context_files if is_blob_url(f.get("url", ""))]
         if blob_files:

@@ -87,18 +87,25 @@ COST_CONFIRMATION_PATTERN = re.compile(
     re.IGNORECASE
 )
 
-# Patterns to detect video model in conversation
+# Patterns to detect video model in conversation.
+# NOTE: order matters — more specific variants (e.g. *-fast, *-pro) are listed
+# BEFORE the base model so detection loops that break on first match pick them.
 VIDEO_MODEL_PATTERNS = {
-    'sora-2': re.compile(r'\b(?:sora[-\s]?2(?!\s*pro))\b', re.IGNORECASE),
+    'seedance-2.0-fast': re.compile(r'\bseedance[-\s]?2(?:\.0)?[-\s]?fast\b', re.IGNORECASE),
+    'seedance-2.0': re.compile(r'\bseedance[-\s]?2(?:\.0)?(?![\d.])(?![-\s]?fast)', re.IGNORECASE),
     'sora-2-pro': re.compile(r'\bsora[-\s]?2[-\s]?pro\b', re.IGNORECASE),
-    'veo-3.1': re.compile(r'\bveo[-\s]?3\.?1(?!\s*(?:flash|ultra))\b', re.IGNORECASE),
+    'sora-2': re.compile(r'\b(?:sora[-\s]?2(?!\s*pro))\b', re.IGNORECASE),
     'veo-3.1-flash': re.compile(r'\bveo[-\s]?3\.?1[-\s]?flash\b', re.IGNORECASE),
     'veo-3.1-ultra': re.compile(r'\bveo[-\s]?3\.?1[-\s]?ultra\b', re.IGNORECASE),
+    'veo-3.1': re.compile(r'\bveo[-\s]?3\.?1(?!\s*(?:flash|ultra))\b', re.IGNORECASE),
     'runway-aleph': re.compile(r'\brunway[-\s]?aleph\b', re.IGNORECASE),
     'runway-4.5': re.compile(r'\brunway[-\s]?4\.?5\b', re.IGNORECASE),
     'kling-v3-omni-pro': re.compile(r'\bkling[-\s]?v?3[-\s]?omni[-\s]?pro\b', re.IGNORECASE),
     'kling-v3-omni-std': re.compile(r'\bkling[-\s]?v?3[-\s]?omni[-\s]?std\b', re.IGNORECASE),
 }
+
+# Pattern to extract a chosen resolution (Seedance pricing depends on it)
+RESOLUTION_PATTERN = re.compile(r'\b(480p|720p|1080p)\b', re.IGNORECASE)
 
 # Patterns to extract duration
 DURATION_PATTERN = re.compile(r'(\d+)\s*(?:segundos?|seconds?|sec|s\b)', re.IGNORECASE)
@@ -134,7 +141,7 @@ def needs_clarification(message: str, has_ref_files: bool) -> tuple[bool, str]:
     msg_lower = message.lower().strip()
     
     # === CLEAR INTENT: VIDEO MODEL MENTIONED ===
-    video_model_keywords = ['sora', 'veo', 'kling', 'runway', 'haiper', 'minimax', 'aleph']
+    video_model_keywords = ['sora', 'veo', 'kling', 'runway', 'haiper', 'minimax', 'aleph', 'seedance']
     if any(model in msg_lower for model in video_model_keywords):
         return False, ""  # Clear: wants to generate VIDEO
     
@@ -336,7 +343,7 @@ def detect_video_params_from_history(history: list) -> dict:
             # Exclude model selections and duration-only messages from contextual acceptance
             # Match both standalone model names AND with preamble: "lets do Sora 2", "use runway aleph", "go with veo 3.1"
             has_video_model_ref = any(p.search(content) for p in VIDEO_MODEL_PATTERNS.values())
-            is_video_model_selection = bool(re.match(r'^\s*(?:(?:lets?\s+(?:do|go\s+with|use)|(?:go|use|i\'?ll?\s+(?:go|do|use))\s+(?:with\s+)?|i\s+want\s+|quiero\s+|usa\s+|vamos\s+(?:con\s+)?)\s*)?(?:sora[-\s]?2[-\s]?(?:pro)?|veo[-\s]?3\.?1[-\s]?(?:flash|ultra)?|kling[-\s]?(?:v?3[-\s]?omni[-\s]?(?:pro|std))?|runway[-\s]?(?:aleph|4\.?5)?)\s*[.,!?]*$', content, re.IGNORECASE))
+            is_video_model_selection = bool(re.match(r'^\s*(?:(?:lets?\s+(?:do|go\s+with|use)|(?:go|use|i\'?ll?\s+(?:go|do|use))\s+(?:with\s+)?|i\s+want\s+|quiero\s+|usa\s+|vamos\s+(?:con\s+)?)\s*)?(?:seedance[-\s]?2(?:\.0)?[-\s]?(?:fast)?|sora[-\s]?2[-\s]?(?:pro)?|veo[-\s]?3\.?1[-\s]?(?:flash|ultra)?|kling[-\s]?(?:v?3[-\s]?omni[-\s]?(?:pro|std))?|runway[-\s]?(?:aleph|4\.?5)?)\s*[.,!?]*$', content, re.IGNORECASE))
             is_duration_selection = re.match(r'^\s*\d+\s*(?:segundos?|seconds?|seg|sec|s)?\s*[.,!?]*$', content, re.IGNORECASE)
             # If message contains a video model name, it's a model selection, NOT prompt acceptance
             if not is_video_model_selection and not is_duration_selection and not has_video_model_ref:
@@ -412,7 +419,7 @@ def detect_video_params_from_history(history: list) -> dict:
                     break
                 continue
             # Skip STANDALONE model selection (just "sora 2" alone, "kling v3 omni pro", "lets do sora 2", etc.)
-            if re.match(r'^\s*(?:(?:lets?\s+(?:do|go\s+with|use)|(?:go|use|i\'?ll?\s+(?:go|do|use))\s+(?:with\s+)?|i\s+want\s+|quiero\s+|usa\s+|vamos\s+(?:con\s+)?)\s*)?(?:sora[-\s]?2[-\s]?(?:pro)?|veo[-\s]?3\.?1[-\s]?(?:flash|ultra)?|kling[-\s]?(?:v?3[-\s]?omni[-\s]?(?:pro|std))?|runway[-\s]?(?:aleph|4\.?5)?|haiper|minimax)\s*[.,!?]*$', content, re.IGNORECASE):
+            if re.match(r'^\s*(?:(?:lets?\s+(?:do|go\s+with|use)|(?:go|use|i\'?ll?\s+(?:go|do|use))\s+(?:with\s+)?|i\s+want\s+|quiero\s+|usa\s+|vamos\s+(?:con\s+)?)\s*)?(?:seedance[-\s]?2(?:\.0)?[-\s]?(?:fast)?|sora[-\s]?2[-\s]?(?:pro)?|veo[-\s]?3\.?1[-\s]?(?:flash|ultra)?|kling[-\s]?(?:v?3[-\s]?omni[-\s]?(?:pro|std))?|runway[-\s]?(?:aleph|4\.?5)?|haiper|minimax)\s*[.,!?]*$', content, re.IGNORECASE):
                 continue
             # Skip duration-only messages like "5 seconds", "5s", or just "4"
             if re.match(r'^\s*\d+\s*(?:segundos?|seconds?|seg|sec|s)?\s*[\.!?]*$', content, re.IGNORECASE):
@@ -460,7 +467,22 @@ def detect_video_params_from_history(history: list) -> dict:
                 if quote_match:
                     params['prompt'] = quote_match.group(1)
                     break
-    
+
+    # Detect resolution (Seedance pricing depends on it). Prefer a labelled
+    # "Resolution: X" line in an assistant message, then any 480p/720p/1080p token.
+    for msg in recent_reversed:
+        content = msg.get('content', '')
+        res_label = re.search(r'(?:resolution|resoluci[\u00f3o]n)\s*:\s*(480p|720p|1080p)', content, re.IGNORECASE)
+        if res_label:
+            params['resolution'] = res_label.group(1).lower()
+            break
+    if 'resolution' not in params:
+        for msg in recent_reversed:
+            res_match = RESOLUTION_PATTERN.search(msg.get('content', ''))
+            if res_match:
+                params['resolution'] = res_match.group(1).lower()
+                break
+
     return params
 
 # Voice name to voice_id mapping for speech detection
@@ -639,7 +661,7 @@ def _extract_all_params_from_confirmation(text: str) -> dict:
     text_lower = text.lower()
 
     # Detect action type from keyword presence
-    if any(w in text_lower for w in ["video", "vídeo", "sora", "veo", "runway", "kling", "tokens/se"]):
+    if any(w in text_lower for w in ["video", "vídeo", "sora", "veo", "runway", "kling", "seedance", "tokens/se"]):
         params["type"] = "video"
     elif any(w in text_lower for w in ["speech", "voice", "voz", "audio", "narración", "narration"]):
         params["type"] = "speech"
@@ -666,6 +688,14 @@ def _extract_all_params_from_confirmation(text: str) -> dict:
     if model_match:
         raw_model = model_match.group(1).strip().lower()
         model_map = {
+            "seedance 2.0 fast": "seedance-2.0-fast",
+            "seedance 2 fast": "seedance-2.0-fast",
+            "seedance2 fast": "seedance-2.0-fast",
+            "seedance-2.0-fast": "seedance-2.0-fast",
+            "seedance 2.0": "seedance-2.0",
+            "seedance 2": "seedance-2.0",
+            "seedance2": "seedance-2.0",
+            "seedance-2.0": "seedance-2.0",
             "sora 2 pro": "sora-2-pro",
             "sora2 pro": "sora-2-pro",
             "sora-2-pro": "sora-2-pro",
@@ -708,6 +738,15 @@ def _extract_all_params_from_confirmation(text: str) -> dict:
         cost_match = re.search(r"[×x\*]\s*(\d+)\s*(?:segundos?|seconds?|sec|s)\b", text, re.IGNORECASE)
         if cost_match:
             params["duration"] = int(cost_match.group(1))
+
+    # Extract resolution (Seedance only): "Resolution: X" line, else any token.
+    res_label = re.search(r"(?:resolution|resoluci[óo]n)\s*:\s*(480p|720p|1080p)", text, re.IGNORECASE)
+    if res_label:
+        params["resolution"] = res_label.group(1).lower()
+    else:
+        res_match = re.search(r"\b(480p|720p|1080p)\b", text, re.IGNORECASE)
+        if res_match:
+            params["resolution"] = res_match.group(1).lower()
 
     return params
 
@@ -1108,6 +1147,8 @@ class GeminiChatbot:
         - Based on THE_PROMPT, suggest a model and explain why briefly.
         - ⚠️ ALWAYS present the models as a FORMATTED LIST (one model per line with its cost and durations), never as inline text.
         - Show available models with costs AND valid durations:
+          → Seedance 2.0 Fast (resolution-based: 480p=12, 720p=26 tokens/sec) - 4 to 15 sec - fast & economical (max 720p)
+          → Seedance 2.0 (resolution-based: 480p=15, 720p=32, 1080p=72 tokens/sec) - 4 to 15 sec - supports 1080p
           → Sora 2 (11 tokens/sec) - 4, 8 or 12 sec - good quality
           → Runway 4.5 (14 tokens/sec) - 5, 8 or 10 sec - high quality
           → Runway Aleph (17 tokens/sec) - 5 or 10 sec - versatile
@@ -1119,9 +1160,18 @@ class GeminiChatbot:
           → Veo 3.1 Ultra (65 tokens/sec) - 8 sec only - maximum Veo quality
         - Say: "I suggest [model] because [reason]. Which model would you like to use?" (in user's language)
         - Wait for user to choose model.
-        
+
+        STEP 3.5 - ASK FOR RESOLUTION (ONLY for Seedance 2.0 / Seedance 2.0 Fast):
+        - ⚠️ This step applies ONLY when the chosen model is Seedance 2.0 or Seedance 2.0 Fast. For ALL OTHER models, SKIP this step entirely.
+        - Seedance pricing depends on the resolution, so you MUST ask for it before quoting the cost.
+          → Seedance 2.0: offer 480p, 720p, or 1080p.
+          → Seedance 2.0 Fast: offer ONLY 480p or 720p. If the user asks for 1080p, tell them the Fast tier does not support it and it will use 720p (or suggest switching to Seedance 2.0).
+        - Ask: "Which resolution? Options: [valid resolutions for the chosen model]" (in user's language)
+        - Wait for the user to choose. SAVE as THE_RESOLUTION.
+
         STEP 4 - ASK FOR DURATION:
         - Based on the chosen model, tell the user the valid durations:
+          → Seedance 2.0 / Seedance 2.0 Fast: any whole number from 4 to 15 seconds (default 5)
           → Sora 2 / Sora 2 Pro: ONLY 4, 8 or 12 seconds
           → Veo 3.1 / Veo 3.1 Flash / Veo 3.1 Ultra: ONLY 8 seconds (auto-set, just inform)
           → Runway Aleph: 5 or 10 seconds
@@ -1130,18 +1180,27 @@ class GeminiChatbot:
         - If the model only allows ONE duration (e.g., Veo 3.1 = 8s), inform the user and auto-set it. Move to Step 5 in the SAME response.
         - Otherwise ask: "How many seconds? Options: [valid durations]" (in user's language)
         - Wait for the user to choose. VALIDATE the duration is valid for the model.
-        
+
         STEP 5 - CONFIRM COST AND EXECUTE:
-        - Calculate cost: tokens_per_second × duration
+        - Calculate cost: tokens_per_second × duration.
+        - 💎 SEEDANCE 2.0 PRICING (resolution-based — pick the per-second rate from the chosen RESOLUTION):
+          → Normal rate:
+            • Seedance 2.0: 480p = 15, 720p = 32, 1080p = 72 tokens/sec
+            • Seedance 2.0 Fast: 480p = 12, 720p = 26 tokens/sec
+          → Discounted rate — applies ONLY when the user attached a REFERENCE VIDEO (video-to-video / reference mode):
+            • Seedance 2.0: 480p = 9, 720p = 20, 1080p = 43 tokens/sec
+            • Seedance 2.0 Fast: 480p = 7, 720p = 16 tokens/sec
+          → Use the DISCOUNTED rate ONLY if a reference video is attached; otherwise use the NORMAL rate.
         - Summarize what will be generated:
           → "I'm going to generate a video:"
           → "Prompt: [brief description of THE_PROMPT]"
           → "Model: [model]"
+          → "Resolution: [THE_RESOLUTION]"   ← include this line ONLY for Seedance models
           → "Duration: [X] seconds"
           → "Cost: [Y] tokens ([Z] tokens/sec × [X] sec)"
           → "Do you confirm?" (in user's language)
         - ⛔ DO NOT call the tool until the user explicitly confirms this step.
-        - Once confirmed, CALL generate_video immediately using THE_PROMPT.
+        - Once confirmed, CALL generate_video immediately using THE_PROMPT. For Seedance models, also pass resolution=THE_RESOLUTION.
         
         ═══════════════════════════════════════════════════
         WORKFLOW B: VIDEO EDITING (video-to-video)
@@ -1206,9 +1265,12 @@ class GeminiChatbot:
         1. ⚠️ PROMPT PARAMETER RULE: Same as image - NEVER use conversational replies as prompt.
         2. FORBIDDEN to modify the agreed-upon prompt without consent.
         3. When calling the tool, use EXACT model names:
+           - 'seedance-2.0', 'seedance-2.0-fast'
            - 'veo-3.1', 'veo-3.1-flash', 'veo-3.1-ultra'
            - 'runway-aleph', 'runway-4.5', 'sora-2', 'sora-2-pro'
            - 'kling-v3-omni-pro', 'kling-v3-omni-std'
+           For Seedance, also pass resolution ('480p'/'720p'/'1080p'). Seedance auto-detects
+           the mode: a reference video → reference mode (discounted), an image → image mode, prompt only → text mode.
         4. If there are attached images, use them as reference automatically (image-to-video).
         5. NEVER mention video URLs - they are sent automatically.
         6. IF THERE'S AN ERROR: Inform user. If they say "try again"/"retry", execute again without hesitation.
@@ -1658,7 +1720,7 @@ IMPORTANT: A tool was JUST executed successfully. The workflow is COMPLETE.
                             if blob_ref_urls:
                                 logger.warning(f"Filtered out {len(blob_ref_urls)} blob: URLs during reconstruction")
                             
-                            is_video = any(w in response_lower for w in ['video', 'vídeo', 'animar', 'animate', 'sora', 'veo', 'runway', 'kling', 'tokens/se'])
+                            is_video = any(w in response_lower for w in ['video', 'vídeo', 'animar', 'animate', 'sora', 'veo', 'runway', 'kling', 'seedance', 'tokens/se'])
                             is_speech = any(w in response_lower for w in ['speech', 'voice', 'voz', 'audio', 'narración'])
                             is_image = any(w in response_lower for w in ['imagen', 'image', 'foto', 'picture', 'gpt', 'nano banana 2', 'nano banana', 'freepik'])
                             
@@ -1671,9 +1733,11 @@ IMPORTANT: A tool was JUST executed successfully. The workflow is COMPLETE.
                                         "model": params['model'],
                                         "duration": params.get('duration', 8)
                                     }
+                                    if params.get('resolution'):
+                                        action_args["resolution"] = params['resolution']
                                     if ref_urls:
                                         action_args["reference_image"] = ref_urls[0]
-                                    logger.debug(f"Reconstructed VIDEO action: model={params['model']}, duration={action_args['duration']}")
+                                    logger.debug(f"Reconstructed VIDEO action: model={params['model']}, duration={action_args['duration']}, resolution={action_args.get('resolution')}")
                                     await self.save_pending_action("generate_video", action_args, last_assistant)
                                     reconstructed = True
                             elif is_speech:
@@ -2176,8 +2240,9 @@ Keep it brief and helpful."""
                     model = conf_params.get("model")
                     duration = conf_params.get("duration")
                     prompt = conf_params.get("prompt")
+                    resolution = conf_params.get("resolution")
 
-                    if not model or not duration:
+                    if not model or not duration or not resolution:
                         session = await self.session_manager.get_session(self.conversation_uuid)
                         history = session.get("messages", []) if session else []
                         history_with_current = history + [{"role": "assistant", "content": response_text}]
@@ -2185,6 +2250,7 @@ Keep it brief and helpful."""
                         model = model or fallback.get("model")
                         duration = duration or fallback.get("duration")
                         prompt = prompt or fallback.get("prompt")
+                        resolution = resolution or fallback.get("resolution")
 
                     if model and duration:
                         action_args = {
@@ -2192,6 +2258,9 @@ Keep it brief and helpful."""
                             "model": model,
                             "duration": duration,
                         }
+                        # Resolution only affects Seedance tiers; pass it through when known.
+                        if model in ("seedance-2.0", "seedance-2.0-fast") and resolution:
+                            action_args["resolution"] = resolution
                         if ref_urls:
                             action_args["reference_image"] = ref_urls[0]
                         logger.debug("Saving pending VIDEO action: %s", action_args)

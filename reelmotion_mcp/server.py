@@ -220,20 +220,28 @@ def generate_video(
     duration: int,
     aspect_ratio: str = "16:9",
     reference_image: Optional[str] = None,
-    reference_video: Optional[str] = None
+    reference_video: Optional[str] = None,
+    resolution: str = "720p",
+    generate_audio: bool = True,
+    seed: Optional[int] = None,
+    media_url: Optional[str] = None,
+    end_frame: Optional[str] = None,
+    reference_images: Optional[list] = None,
+    reference_videos: Optional[list] = None,
+    reference_audios: Optional[list] = None,
 ) -> str:
     """
     Generate or edit a video using AI based on a text prompt.
     This tool supports text-to-video, image-to-video, AND video-to-video editing.
     IMPORTANT: User must confirm model, duration, and token cost before calling this tool.
-    
+
     Use cases:
     - Text-to-video: Generate a new video from a text description.
     - Image-to-video: Animate a reference image into a video.
     - Video-to-video (editing): Transform or edit an existing video using a text prompt + reference video.
       Examples: change style, add effects, modify movement, re-edit scenes.
       Supported models for video-to-video: runway-aleph, kling-v3-omni-std, kling-v3-omni-pro.
-    
+
     Token costs per second and valid durations:
     - runway-aleph: 17 tokens/sec (5-10s) - video-to-video editing
     - runway-4.5: 14 tokens/sec (5, 8, or 10s) - high quality
@@ -244,16 +252,37 @@ def generate_video(
     - sora-2-pro: 33 tokens/sec (4, 8, or 12s only)
     - kling-v3-omni-pro: 26 tokens/sec (3-15s) - text/image-to-video
     - kling-v3-omni-std: 19 tokens/sec (3-15s) - video-to-video editing
-    
+
+    Seedance 2.0 (RESOLUTION-based pricing, 4-15s duration, default 5s):
+    - seedance-2.0: 480p=15, 720p=32, 1080p=72 tokens/sec (supports 1080p)
+    - seedance-2.0-fast: 480p=12, 720p=26 tokens/sec (max 720p; 1080p auto-downgraded to 720p)
+    - Reference-video discount (reference_videos sent): seedance-2.0 480p=9/720p=20/1080p=43;
+      seedance-2.0-fast 480p=7/720p=16.
+    - Mode is auto-detected: reference_images/reference_videos/reference_audios -> reference mode;
+      media_url -> image mode; prompt only -> text mode.
+
     Args:
         prompt: Description of the video to generate or editing instructions (exact user text, NO modifications)
         model: AI model to use. See token costs above.
         duration: Video duration in seconds. Valid durations depend on model (see above)
-        aspect_ratio: '16:9', '9:16', or '1:1'. Defaults to '16:9'
+        aspect_ratio: '16:9', '9:16', '1:1', etc. Seedance also accepts auto/21:9/4:3/3:4. Defaults to '16:9'
         reference_image: URL of reference image (for image-to-video generation)
         reference_video: URL of reference video (for video-to-video editing with runway-aleph, kling-v3)
+        resolution: '480p', '720p', or '1080p' (Seedance only; fast tier caps at 720p). Defaults to '720p'
+        generate_audio: Whether to generate audio (Seedance only). Defaults to True. Does not affect price.
+        seed: Optional random seed for reproducibility (Seedance only)
+        media_url: Reference image URL for Seedance image mode (with optional end_frame)
+        end_frame: Optional last-frame image URL for Seedance image mode
+        reference_images: List of reference image URLs for Seedance reference mode (max 9)
+        reference_videos: List of reference video URLs for Seedance reference mode (max 3, triggers discount)
+        reference_audios: List of reference audio URLs for Seedance reference mode (max 3)
     """
-    return generate_video_impl(prompt, model, duration, aspect_ratio, reference_image, reference_video)
+    return generate_video_impl(
+        prompt, model, duration, aspect_ratio, reference_image, reference_video,
+        resolution=resolution, generate_audio=generate_audio, seed=seed,
+        media_url=media_url, end_frame=end_frame, reference_images=reference_images,
+        reference_videos=reference_videos, reference_audios=reference_audios,
+    )
 
 @mcp.tool
 async def generate_speech(
