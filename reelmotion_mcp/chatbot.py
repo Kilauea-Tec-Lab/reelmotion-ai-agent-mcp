@@ -93,8 +93,6 @@ COST_CONFIRMATION_PATTERN = re.compile(
 VIDEO_MODEL_PATTERNS = {
     'seedance-2.0-fast': re.compile(r'\bseedance[-\s]?2(?:\.0)?[-\s]?fast\b', re.IGNORECASE),
     'seedance-2.0': re.compile(r'\bseedance[-\s]?2(?:\.0)?(?![\d.])(?![-\s]?fast)', re.IGNORECASE),
-    'sora-2-pro': re.compile(r'\bsora[-\s]?2[-\s]?pro\b', re.IGNORECASE),
-    'sora-2': re.compile(r'\b(?:sora[-\s]?2(?!\s*pro))\b', re.IGNORECASE),
     'veo-3.1-flash': re.compile(r'\bveo[-\s]?3\.?1[-\s]?flash\b', re.IGNORECASE),
     'veo-3.1-ultra': re.compile(r'\bveo[-\s]?3\.?1[-\s]?ultra\b', re.IGNORECASE),
     'veo-3.1': re.compile(r'\bveo[-\s]?3\.?1(?!\s*(?:flash|ultra))\b', re.IGNORECASE),
@@ -141,7 +139,7 @@ def needs_clarification(message: str, has_ref_files: bool) -> tuple[bool, str]:
     msg_lower = message.lower().strip()
     
     # === CLEAR INTENT: VIDEO MODEL MENTIONED ===
-    video_model_keywords = ['sora', 'veo', 'kling', 'runway', 'haiper', 'minimax', 'aleph', 'seedance']
+    video_model_keywords = ['veo', 'kling', 'runway', 'haiper', 'minimax', 'aleph', 'seedance']
     if any(model in msg_lower for model in video_model_keywords):
         return False, ""  # Clear: wants to generate VIDEO
     
@@ -187,7 +185,7 @@ def _is_model_listing_message(content: str) -> bool:
     Handles multiple markdown formats: '- Model', '* Model', '**Model**', '* **Model**', etc.
     """
     content_lower = content.lower()
-    model_keywords = ['runway', 'veo', 'sora', 'kling']
+    model_keywords = ['runway', 'veo', 'kling']
     # Count how many distinct model names appear in the message
     model_count = sum(1 for kw in model_keywords if kw in content_lower)
     # If 3+ model names appear, it's very likely a listing (not a single model mention)
@@ -195,7 +193,7 @@ def _is_model_listing_message(content: str) -> bool:
         return True
     # Also detect by bullet-point patterns with model names
     bullet_patterns = [
-        r'[\*\-]\s+\*{0,2}(?:Runway|Veo|Sora|Kling)',  # * Model, - Model, * **Model**, - **Model**
+        r'[\*\-]\s+\*{0,2}(?:Runway|Veo|Kling)',  # * Model, - Model, * **Model**, - **Model**
         r'[\*\-]\s+\*{0,2}(?:GPT|Nano Banana 2|Freepik)',  # Image model listings
     ]
     bullet_matches = sum(1 for p in bullet_patterns if re.search(p, content))
@@ -341,9 +339,9 @@ def detect_video_params_from_history(history: list) -> dict:
             # 2. Is contextual acceptance? (Assistant asked to approve/refine + User says something short/positive)
             is_contextual = False
             # Exclude model selections and duration-only messages from contextual acceptance
-            # Match both standalone model names AND with preamble: "lets do Sora 2", "use runway aleph", "go with veo 3.1"
+            # Match both standalone model names AND with preamble: "lets do Veo 3.1", "use runway aleph", "go with seedance 2.0"
             has_video_model_ref = any(p.search(content) for p in VIDEO_MODEL_PATTERNS.values())
-            is_video_model_selection = bool(re.match(r'^\s*(?:(?:lets?\s+(?:do|go\s+with|use)|(?:go|use|i\'?ll?\s+(?:go|do|use))\s+(?:with\s+)?|i\s+want\s+|quiero\s+|usa\s+|vamos\s+(?:con\s+)?)\s*)?(?:seedance[-\s]?2(?:\.0)?[-\s]?(?:fast)?|sora[-\s]?2[-\s]?(?:pro)?|veo[-\s]?3\.?1[-\s]?(?:flash|ultra)?|kling[-\s]?(?:v?3[-\s]?omni[-\s]?(?:pro|std))?|runway[-\s]?(?:aleph|4\.?5)?)\s*[.,!?]*$', content, re.IGNORECASE))
+            is_video_model_selection = bool(re.match(r'^\s*(?:(?:lets?\s+(?:do|go\s+with|use)|(?:go|use|i\'?ll?\s+(?:go|do|use))\s+(?:with\s+)?|i\s+want\s+|quiero\s+|usa\s+|vamos\s+(?:con\s+)?)\s*)?(?:seedance[-\s]?2(?:\.0)?[-\s]?(?:fast)?|veo[-\s]?3\.?1[-\s]?(?:flash|ultra)?|kling[-\s]?(?:v?3[-\s]?omni[-\s]?(?:pro|std))?|runway[-\s]?(?:aleph|4\.?5)?)\s*[.,!?]*$', content, re.IGNORECASE))
             is_duration_selection = re.match(r'^\s*\d+\s*(?:segundos?|seconds?|seg|sec|s)?\s*[.,!?]*$', content, re.IGNORECASE)
             # If message contains a video model name, it's a model selection, NOT prompt acceptance
             if not is_video_model_selection and not is_duration_selection and not has_video_model_ref:
@@ -418,8 +416,8 @@ def detect_video_params_from_history(history: list) -> dict:
                 if 'prompt' in params:
                     break
                 continue
-            # Skip STANDALONE model selection (just "sora 2" alone, "kling v3 omni pro", "lets do sora 2", etc.)
-            if re.match(r'^\s*(?:(?:lets?\s+(?:do|go\s+with|use)|(?:go|use|i\'?ll?\s+(?:go|do|use))\s+(?:with\s+)?|i\s+want\s+|quiero\s+|usa\s+|vamos\s+(?:con\s+)?)\s*)?(?:seedance[-\s]?2(?:\.0)?[-\s]?(?:fast)?|sora[-\s]?2[-\s]?(?:pro)?|veo[-\s]?3\.?1[-\s]?(?:flash|ultra)?|kling[-\s]?(?:v?3[-\s]?omni[-\s]?(?:pro|std))?|runway[-\s]?(?:aleph|4\.?5)?|haiper|minimax)\s*[.,!?]*$', content, re.IGNORECASE):
+            # Skip STANDALONE model selection (just "veo 3.1" alone, "kling v3 omni pro", "lets do seedance 2.0", etc.)
+            if re.match(r'^\s*(?:(?:lets?\s+(?:do|go\s+with|use)|(?:go|use|i\'?ll?\s+(?:go|do|use))\s+(?:with\s+)?|i\s+want\s+|quiero\s+|usa\s+|vamos\s+(?:con\s+)?)\s*)?(?:seedance[-\s]?2(?:\.0)?[-\s]?(?:fast)?|veo[-\s]?3\.?1[-\s]?(?:flash|ultra)?|kling[-\s]?(?:v?3[-\s]?omni[-\s]?(?:pro|std))?|runway[-\s]?(?:aleph|4\.?5)?|haiper|minimax)\s*[.,!?]*$', content, re.IGNORECASE):
                 continue
             # Skip duration-only messages like "5 seconds", "5s", or just "4"
             if re.match(r'^\s*\d+\s*(?:segundos?|seconds?|seg|sec|s)?\s*[\.!?]*$', content, re.IGNORECASE):
@@ -428,7 +426,7 @@ def detect_video_params_from_history(history: list) -> dict:
             if re.match(r'^\s*(?:i want to |quiero |me gustaría )?(?:create|make|genera[rt]?|crea[rt]?|haz(?:me)?|anima[rt]?|animate)\s+(?:a\s+|un\s+|una\s+)?(?:video|vídeo|imagen|image|clip)\s*[.,!?]*$', content, re.IGNORECASE):
                 continue
             # Skip creation COMMANDS that include model names or durations (these are instructions, NOT descriptive prompts)
-            # e.g., "Genera un video de esta imagen con veo 3.1 fast de 4s" or "Create a video with sora 2 pro 8 seconds"
+            # e.g., "Genera un video de esta imagen con veo 3.1 fast de 4s" or "Create a video with veo 3.1 ultra 8 seconds"
             if re.search(r'(?:crea[rt]?|genera[rt]?|make|create|haz(?:me)?|anima[rt]?|animate)\s+.*(?:video|vídeo|imagen|image|clip)', content, re.IGNORECASE):
                 has_video_model = any(p.search(content) for p in VIDEO_MODEL_PATTERNS.values())
                 has_image_model = any(p.search(content) for p in IMAGE_MODEL_PATTERNS.values())
@@ -661,7 +659,7 @@ def _extract_all_params_from_confirmation(text: str) -> dict:
     text_lower = text.lower()
 
     # Detect action type from keyword presence
-    if any(w in text_lower for w in ["video", "vídeo", "sora", "veo", "runway", "kling", "seedance", "tokens/se"]):
+    if any(w in text_lower for w in ["video", "vídeo", "veo", "runway", "kling", "seedance", "tokens/se"]):
         params["type"] = "video"
     elif any(w in text_lower for w in ["speech", "voice", "voz", "audio", "narración", "narration"]):
         params["type"] = "speech"
@@ -696,12 +694,6 @@ def _extract_all_params_from_confirmation(text: str) -> dict:
             "seedance 2": "seedance-2.0",
             "seedance2": "seedance-2.0",
             "seedance-2.0": "seedance-2.0",
-            "sora 2 pro": "sora-2-pro",
-            "sora2 pro": "sora-2-pro",
-            "sora-2-pro": "sora-2-pro",
-            "sora 2": "sora-2",
-            "sora2": "sora-2",
-            "sora-2": "sora-2",
             "veo 3.1 ultra": "veo-3.1-ultra",
             "veo-3.1-ultra": "veo-3.1-ultra",
             "veo 3.1 flash": "veo-3.1-flash",
@@ -973,7 +965,7 @@ class GeminiChatbot:
         - You MUST respond in the SAME language the user is writing in.
         - Detect the language from EACH user message. Track the LAST CLEARLY IDENTIFIABLE language.
         - If the user writes in English, respond in English. If the user writes in Spanish, respond in Spanish. Same for any other language.
-        - AMBIGUOUS MESSAGES: Short replies like "no", "ok", "yes", "gpt", "sora 2", "5s", model names, or single words that exist in multiple languages are NOT a language switch. KEEP the last clearly detected language (default: English).
+        - AMBIGUOUS MESSAGES: Short replies like "no", "ok", "yes", "gpt", "veo 3.1", "5s", model names, or single words that exist in multiple languages are NOT a language switch. KEEP the last clearly detected language (default: English).
         - LANGUAGE SWITCH: Only change language if the user writes a CLEAR sentence in a different language or explicitly requests it.
         - This applies to ALL messages: questions, confirmations, cost info, errors, EVERYTHING.
         - Keep technical terms and model names in their original form (e.g., "Nano Banana 2", "GPT", "Freepik").
@@ -993,7 +985,7 @@ class GeminiChatbot:
            - "Animate" + reference to image/video = VIDEO workflow
            - "Create video" = VIDEO workflow
            - "Edit video" + reference video = VIDEO-TO-VIDEO workflow
-           - Mentions video models: Sora 2, Sora 2 Pro, Veo 3.1, Runway Aleph, Runway 4.5, etc.
+           - Mentions video models: Seedance 2.0, Veo 3.1, Runway Aleph, Runway 4.5, etc.
            - IMPORTANT: Start the VIDEO WORKFLOW, do NOT call the tool directly.
            - For video EDITING (video-to-video), the user MUST provide a reference video.
              Supported models for video editing: Runway Aleph, Kling V3 Omni Std, Kling V3 Omni Pro.
@@ -1127,7 +1119,7 @@ class GeminiChatbot:
         STEP 1 - IDENTIFY INTENT AND ASK FOR THE PROMPT:
         - When you detect the user wants to create a VIDEO, ask: "What do you want the video to show? Describe the action, scene, or animation." (in user's language)
         - If the user already provided a clear DESCRIPTIVE prompt, take it and IMMEDIATELY move to Step 2 in the SAME response.
-        - ⚠️ COMMAND vs PROMPT: "Create a video with sora 2" is a COMMAND (not a prompt). "A frog jumping in the jungle" IS a prompt.
+        - ⚠️ COMMAND vs PROMPT: "Create a video with veo 3.1" is a COMMAND (not a prompt). "A frog jumping in the jungle" IS a prompt.
         - If message has model names or durations, it's a COMMAND → still ask for descriptive prompt.
         - Wait for response. SAVE as THE_PROMPT.
         
@@ -1149,13 +1141,11 @@ class GeminiChatbot:
         - Show available models with costs AND valid durations:
           → Seedance 2.0 Fast (resolution-based: 480p=12, 720p=26 tokens/sec) - 4 to 15 sec - fast & economical (max 720p)
           → Seedance 2.0 (resolution-based: 480p=15, 720p=32, 1080p=72 tokens/sec) - 4 to 15 sec - supports 1080p
-          → Sora 2 (11 tokens/sec) - 4, 8 or 12 sec - good quality
           → Runway 4.5 (14 tokens/sec) - 5, 8 or 10 sec - high quality
           → Runway Aleph (17 tokens/sec) - 5 or 10 sec - versatile
           → Veo 3.1 Flash (17 tokens/sec) - 8 sec only - fast and good quality
           → Kling V3 Omni Std (19 tokens/sec) - 3 to 15 sec - text/image-to-video
           → Kling V3 Omni Pro (26 tokens/sec) - 3 to 15 sec - text/image-to-video, better quality
-          → Sora 2 Pro (33 tokens/sec) - 4, 8 or 12 sec - maximum Sora quality
           → Veo 3.1 (44 tokens/sec) - 8 sec only - high quality
           → Veo 3.1 Ultra (65 tokens/sec) - 8 sec only - maximum Veo quality
         - Say: "I suggest [model] because [reason]. Which model would you like to use?" (in user's language)
@@ -1172,7 +1162,6 @@ class GeminiChatbot:
         STEP 4 - ASK FOR DURATION:
         - Based on the chosen model, tell the user the valid durations:
           → Seedance 2.0 / Seedance 2.0 Fast: any whole number from 4 to 15 seconds (default 5)
-          → Sora 2 / Sora 2 Pro: ONLY 4, 8 or 12 seconds
           → Veo 3.1 / Veo 3.1 Flash / Veo 3.1 Ultra: ONLY 8 seconds (auto-set, just inform)
           → Runway Aleph: 5 or 10 seconds
           → Runway 4.5: 5, 8 or 10 seconds
@@ -1231,7 +1220,7 @@ class GeminiChatbot:
           → **Runway Aleph** (17 tokens/sec) - 5 or 10 sec - High quality editing
           → **Kling V3 Omni Std** (19 tokens/sec) - 3 to 15 sec - Flexible duration ⭐ Recommended
           → **Kling V3 Omni Pro** (26 tokens/sec) - 3 to 15 sec - Better quality
-        - ⛔ DO NOT show any other models (Sora, Veo, Runway 4.5, etc.) - they do NOT support video-to-video.
+        - ⛔ DO NOT show any other models (Veo, Runway 4.5, Seedance, etc.) - they do NOT support video-to-video.
         - Suggest Kling V3 Omni Std as the most economical option.
         - Ask: "Which model would you like to use?" (in user's language)
         - Wait for user to choose. SAVE as THE_MODEL.
@@ -1267,7 +1256,7 @@ class GeminiChatbot:
         3. When calling the tool, use EXACT model names:
            - 'seedance-2.0', 'seedance-2.0-fast'
            - 'veo-3.1', 'veo-3.1-flash', 'veo-3.1-ultra'
-           - 'runway-aleph', 'runway-4.5', 'sora-2', 'sora-2-pro'
+           - 'runway-aleph', 'runway-4.5'
            - 'kling-v3-omni-pro', 'kling-v3-omni-std'
            For Seedance, also pass resolution ('480p'/'720p'/'1080p'). Seedance auto-detects
            the mode: a reference video → reference mode (discounted), an image → image mode, prompt only → text mode.
@@ -1720,7 +1709,7 @@ IMPORTANT: A tool was JUST executed successfully. The workflow is COMPLETE.
                             if blob_ref_urls:
                                 logger.warning(f"Filtered out {len(blob_ref_urls)} blob: URLs during reconstruction")
                             
-                            is_video = any(w in response_lower for w in ['video', 'vídeo', 'animar', 'animate', 'sora', 'veo', 'runway', 'kling', 'seedance', 'tokens/se'])
+                            is_video = any(w in response_lower for w in ['video', 'vídeo', 'animar', 'animate', 'veo', 'runway', 'kling', 'seedance', 'tokens/se'])
                             is_speech = any(w in response_lower for w in ['speech', 'voice', 'voz', 'audio', 'narración'])
                             is_image = any(w in response_lower for w in ['imagen', 'image', 'foto', 'picture', 'gpt', 'nano banana 2', 'nano banana', 'freepik'])
                             

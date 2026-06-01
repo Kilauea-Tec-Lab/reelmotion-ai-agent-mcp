@@ -6,7 +6,7 @@ AI-powered agent for image and video generation using Google Gemini and multiple
 
 - 🤖 **Gemini-powered chatbot** with multi-language support (English/Spanish auto-detection)
 - 🖼️ **Image generation** (Nano Banana, GPT models)
-- 🎬 **Video generation** (Runway Aleph, Veo 3.1, Sora 2, and more)
+- 🎬 **Video generation** (Runway Aleph, Veo 3.1, Seedance 2.0, and more)
 - 💾 **Redis-based session management** for concurrent conversations
 - 🔄 **Reference file persistence** (images/videos via URL)
 - 📊 **Token cost calculation** before generation
@@ -141,8 +141,6 @@ GET /health
 - **Veo 3.1** (48 tokens/sec) - 8 seconds, high quality
 - **Veo 3.1 Flash** (21 tokens/sec) - 8 seconds, fast & economical
 - **Veo 3.1 Ultra** (60 tokens/sec) - 8 seconds, maximum quality
-- **Sora 2** (15 tokens/sec) - 4, 8, or 12 seconds
-- **Sora 2 Pro** (30 tokens/sec) - 4, 8, or 12 seconds, maximum quality
 
 ## Architecture
 

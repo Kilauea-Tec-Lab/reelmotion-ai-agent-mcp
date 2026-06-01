@@ -24,7 +24,7 @@ def clean_prompt_from_model_mentions(prompt: str) -> str:
     Remove model name mentions from the prompt before sending to the backend.
 
     Examples:
-        "anima este video con sora 2" -> "anima este video"
+        "anima este video con veo 3.1" -> "anima este video"
         "genera una imagen con GPT" -> "genera una imagen"
         "create a video using runway aleph" -> "create a video"
     """
@@ -32,12 +32,12 @@ def clean_prompt_from_model_mentions(prompt: str) -> str:
         return prompt
 
     patterns = [
-        # English: "with sora 2", "using runway aleph", etc.
-        r"\s+(?:with|using|via|through|by)\s+(?:sora[-\s]?2(?:\s+pro)?|runway(?:[-\s]?(?:aleph|4\.?5))?|veo[-\s]?3\.?1(?:[-\s]?(?:flash|ultra))?|nano[-\s]?banana|gpt|freepik|luma[-\s]?labs?|seedance[-\s]?pro|kling[-\s]?(?:v?3[-\s]?omni[-\s]?(?:pro|std)|v1))\s*$",
-        # Spanish: "con sora 2", "usando runway aleph", etc.
-        r"\s+(?:con|usando|mediante|por)\s+(?:sora[-\s]?2(?:\s+pro)?|runway(?:[-\s]?(?:aleph|4\.?5))?|veo[-\s]?3\.?1(?:[-\s]?(?:flash|ultra))?|nano[-\s]?banana|gpt|freepik|luma[-\s]?labs?|seedance[-\s]?pro|kling[-\s]?(?:v?3[-\s]?omni[-\s]?(?:pro|std)|v1))\s*$",
+        # English: "with veo 3.1", "using runway aleph", etc.
+        r"\s+(?:with|using|via|through|by)\s+(?:runway(?:[-\s]?(?:aleph|4\.?5))?|veo[-\s]?3\.?1(?:[-\s]?(?:flash|ultra))?|nano[-\s]?banana|gpt|freepik|luma[-\s]?labs?|seedance[-\s]?pro|kling[-\s]?(?:v?3[-\s]?omni[-\s]?(?:pro|std)|v1))\s*$",
+        # Spanish: "con veo 3.1", "usando runway aleph", etc.
+        r"\s+(?:con|usando|mediante|por)\s+(?:runway(?:[-\s]?(?:aleph|4\.?5))?|veo[-\s]?3\.?1(?:[-\s]?(?:flash|ultra))?|nano[-\s]?banana|gpt|freepik|luma[-\s]?labs?|seedance[-\s]?pro|kling[-\s]?(?:v?3[-\s]?omni[-\s]?(?:pro|std)|v1))\s*$",
         # Bare model name at end without preposition
-        r"\s+(?:sora[-\s]?2(?:\s+pro)?|runway[-\s]?(?:aleph|4\.?5)|veo[-\s]?3\.?1[-\s]?(?:flash|ultra)|kling[-\s]?v?3[-\s]?omni[-\s]?(?:pro|std))\s*$",
+        r"\s+(?:runway[-\s]?(?:aleph|4\.?5)|veo[-\s]?3\.?1[-\s]?(?:flash|ultra)|kling[-\s]?v?3[-\s]?omni[-\s]?(?:pro|std))\s*$",
     ]
 
     cleaned = prompt
@@ -352,8 +352,6 @@ async def generate_video(
     - veo-3.1: 44 tokens/sec (8s only)
     - veo-3.1-flash: 17 tokens/sec (8s only)
     - veo-3.1-ultra: 65 tokens/sec (8s only)
-    - sora-2: 11 tokens/sec (4, 8, or 12s only)
-    - sora-2-pro: 33 tokens/sec (4, 8, or 12s only)
     - kling-v3-omni-pro: 26 tokens/sec (3-15s)
     - kling-v3-omni-std: 19 tokens/sec (3-15s)
 
@@ -381,7 +379,7 @@ async def generate_video(
 
     allowed_models = [
         "runway", "runway-aleph", "runway-4.5", "veo-3.1", "veo-3.1-flash", "veo-3.1-ultra",
-        "luma-labs", "seedance-pro", "kling-v1", "sora-2", "sora-2-pro",
+        "luma-labs", "seedance-pro", "kling-v1",
         "kling-v3-omni-pro", "kling-v3-omni-std",
         "seedance-2.0", "seedance-2.0-fast",
     ]
@@ -390,8 +388,6 @@ async def generate_video(
         return f"Error: Invalid model '{model}'. Allowed models are: {', '.join(allowed_models)}"
 
     duration_rules = {
-        "sora-2": [4, 8, 12],
-        "sora-2-pro": [4, 8, 12],
         "veo-3.1": [8],
         "veo-3.1-flash": [8],
         "veo-3.1-ultra": [8],

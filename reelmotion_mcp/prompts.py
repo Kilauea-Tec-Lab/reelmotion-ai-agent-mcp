@@ -53,7 +53,7 @@ EXAMPLE REFUSAL (Spanish):
 • Video Generation: Image-to-video (animate a reference image)
 • Video Editing: Video-to-video (edit/transform existing videos with a prompt + reference)
 • Video-to-video models: Runway Aleph, Kling V3 Omni Std, Kling V3 Omni Pro, Seedance 2.0, Seedance 2.0 Fast
-• Video Models: Seedance 2.0, Seedance 2.0 Fast, Runway Aleph, Runway 4.5, Veo 3.1, Veo 3.1 Flash, Veo 3.1 Ultra, Sora 2, Sora 2 Pro, Kling V3 Omni Pro, Kling V3 Omni Std
+• Video Models: Seedance 2.0, Seedance 2.0 Fast, Runway Aleph, Runway 4.5, Veo 3.1, Veo 3.1 Flash, Veo 3.1 Ultra, Kling V3 Omni Pro, Kling V3 Omni Std
 • Seedance 2.0 has resolution-based pricing (480p/720p/1080p) and supports text-to-video, image-to-video, and reference (video-to-video) modes
 
 ⚠️ INTERACTION RULES:

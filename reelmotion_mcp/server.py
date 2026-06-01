@@ -248,8 +248,6 @@ def generate_video(
     - veo-3.1: 44 tokens/sec (8s only)
     - veo-3.1-flash: 17 tokens/sec (8s only)
     - veo-3.1-ultra: 65 tokens/sec (8s only) - maximum quality
-    - sora-2: 11 tokens/sec (4, 8, or 12s only)
-    - sora-2-pro: 33 tokens/sec (4, 8, or 12s only)
     - kling-v3-omni-pro: 26 tokens/sec (3-15s) - text/image-to-video
     - kling-v3-omni-std: 19 tokens/sec (3-15s) - video-to-video editing
 
