@@ -1,4 +1,5 @@
 import redis.asyncio as aioredis
+from redis import exceptions as redis_exceptions
 import json
 import os
 import uuid
@@ -196,6 +197,32 @@ class SessionManager:
         key = self._get_pending_action_key(conversation_uuid)
         await self.redis_client.delete(key)
         logger.debug("Cleared pending action for UUID='%s'", conversation_uuid)
+
+    async def claim_pending_action(self, conversation_uuid: str) -> Optional[Dict]:
+        """
+        Atomically fetch AND delete the pending action (GETDEL).
+
+        Replaces the get-then-delete sequence whose race window allowed two
+        concurrent confirmations to execute the same generation twice.
+        Returns None if there was no action — i.e. another concurrent request
+        already claimed it.
+        """
+        key = self._get_pending_action_key(conversation_uuid)
+        try:
+            data = await self.redis_client.getdel(key)
+        except (redis_exceptions.ResponseError, AttributeError):
+            # GETDEL needs Redis >= 6.2 (the local redis-portable is older).
+            # Emulate it with a Lua script, which is still atomic.
+            data = await self.redis_client.eval(
+                "local v = redis.call('GET', KEYS[1]); "
+                "if v then redis.call('DEL', KEYS[1]) end; return v",
+                1,
+                key,
+            )
+        if not data:
+            return None
+        logger.debug("Claimed pending action for UUID='%s'", conversation_uuid)
+        return json.loads(data)
 
     async def set_just_generated(self, conversation_uuid: str):
         """Mark that content was just generated. Expires in 60 seconds."""

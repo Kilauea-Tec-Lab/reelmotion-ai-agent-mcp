@@ -16,7 +16,14 @@ from starlette.responses import JSONResponse
 from chatbot import get_chatbot
 from prompts import REELMOTION_SYSTEM_PROMPT
 from tools import generate_image as generate_image_impl, generate_video as generate_video_impl, generate_speech as generate_speech_impl, craft_prompt as craft_prompt_impl
-from request_context import set_api_token, set_conversation_uuid
+from request_context import (
+    set_api_token,
+    set_conversation_uuid,
+    set_token_balance,
+    set_chat_id,
+    clear_insufficient_block,
+    get_insufficient_block,
+)
 from session_manager import get_session_manager
 from logging_config import setup_logging
 
@@ -75,7 +82,9 @@ async def chat_endpoint(request: Request):
             context = data.get("context", "")
             token = data.get("token")
             conversation_uuid = data.get("conversation_uuid")
-            
+            tokens_raw = data.get("tokens")
+            chat_id = data.get("chat_id")
+
             # Handle file URLs from form data (no more binary uploads)
             # Expecting: files[0]=URL, files[1]=URL, etc.
             # and file_types[0]=image, file_types[1]=video, etc.
@@ -95,7 +104,9 @@ async def chat_endpoint(request: Request):
             context = data.get("context", "")
             token = data.get("token")
             conversation_uuid = data.get("conversation_uuid")
-            
+            tokens_raw = data.get("tokens")
+            chat_id = data.get("chat_id")
+
             # Extract file URLs from JSON
             # Expecting: {"files": ["url1", "url2"], "file_types": ["image", "video"]}
             file_urls = data.get("files", [])
@@ -113,6 +124,21 @@ async def chat_endpoint(request: Request):
 
         if token:
             set_api_token(str(token))
+
+        # User token balance (sent by Laravel). None = unknown -> never block.
+        token_balance = None
+        if tokens_raw is not None and str(tokens_raw).strip() != "":
+            try:
+                token_balance = max(0, int(float(str(tokens_raw))))
+            except (TypeError, ValueError):
+                logger.warning("Non-numeric 'tokens' value received: %r", tokens_raw)
+        set_token_balance(token_balance)
+
+        if chat_id:
+            set_chat_id(str(chat_id))
+
+        # Reset per-request insufficient-balance flag
+        clear_insufficient_block()
 
         if not message:
             # If files are attached but no message, use a default analysis prompt
@@ -145,6 +171,15 @@ async def chat_endpoint(request: Request):
             "response": response,
             "files": files
         }
+
+        # Surface insufficient-balance blocks to the caller (extra keys are
+        # ignored by Laravel today, so this is backward compatible).
+        block = get_insufficient_block()
+        if block:
+            final_response["insufficient_tokens"] = True
+            final_response["tokens_required"] = block["required"]
+            final_response["tokens_available"] = block["available"]
+
         logger.debug(f"Final response being sent: {final_response}")
         
         return JSONResponse(final_response)

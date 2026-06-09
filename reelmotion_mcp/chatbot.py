@@ -12,7 +12,22 @@ from cachetools import TTLCache
 from prompts import REELMOTION_SYSTEM_PROMPT
 from tools import generate_image, generate_video, generate_speech
 from session_manager import get_session_manager
-from request_context import set_conversation_uuid
+from request_context import (
+    set_conversation_uuid,
+    get_token_balance,
+    set_insufficient_block,
+)
+from pricing import (
+    estimate_generation_cost,
+    affordable_options,
+    build_insufficient_balance_message,
+    is_spanish,
+)
+from generation_errors import (
+    GENERATION_ERROR_PREFIX,
+    parse_generation_error,
+    fallback_error_message,
+)
 from logging_config import setup_logging
 from moderation import (
     is_disallowed_content,
@@ -1469,7 +1484,10 @@ class GeminiChatbot:
         action = {
             "function": function_name,
             "args": args,
-            "cost_message": cost_message
+            "cost_message": cost_message,
+            # Pre-computed so the confirmation request can validate the balance
+            # without re-deriving the cost. May be None (legacy/unknown model).
+            "estimated_cost": estimate_generation_cost(function_name, args),
         }
         await self.session_manager.save_pending_action(self.conversation_uuid, action)
     
@@ -1485,16 +1503,58 @@ class GeminiChatbot:
         """
         Execute a pending action directly without going through Gemini.
         Returns (tool_result, response_text).
+
+        Before executing it validates the user's token balance with the FRESH
+        value from the current request, then claims the action atomically so
+        two concurrent confirmations cannot double-execute (= double charge).
         """
+        # Non-destructive peek to validate the balance before claiming
         action = await self.get_pending_action()
         if not action:
             return None, None
-        
+
         function_name = action.get("function")
         args = action.get("args", {}).copy()  # Copy to avoid modifying original
-        
+
+        # Corrupt/unknown action: discard it and answer with a friendly message
+        # (checked BEFORE the claim so the raw name never reaches the user).
+        if function_name not in ("generate_image", "generate_video", "generate_speech"):
+            logger.error("Unknown pending function '%s' — discarding action", function_name)
+            await self.clear_pending_action()
+            lang = "es" if is_spanish(action.get("cost_message", "")) else "en"
+            return None, fallback_error_message("unknown", lang)
+
+        # === BALANCE GATE (fresh balance from the confirming request) ===
+        balance = get_token_balance()
+        cost = action.get("estimated_cost")
+        if cost is None:
+            cost = estimate_generation_cost(function_name, args)
+        if balance is not None and cost is not None and cost > balance:
+            set_insufficient_block({"required": cost, "available": balance})
+            lang = "es" if is_spanish(action.get("cost_message", "")) else "en"
+            message = build_insufficient_balance_message(
+                cost, balance, lang, affordable_options(balance)
+            )
+            # Deliberately keep the pending action (5-min TTL): the user can
+            # adjust the parameters or top up and confirm again.
+            logger.debug(
+                "Blocked pending action '%s': cost=%s > balance=%s",
+                function_name, cost, balance,
+            )
+            return None, message
+
+        # === ATOMIC CLAIM (replaces the get-then-delete race) ===
+        action = await self.session_manager.claim_pending_action(self.conversation_uuid)
+        if not action:
+            # A concurrent request already claimed and executed it
+            logger.debug("Pending action already claimed by a concurrent request")
+            return None, None
+
+        function_name = action.get("function")
+        args = action.get("args", {}).copy()
+
         logger.debug(f"Executing pending action '{function_name}' directly with args: {args}")
-        
+
         # Get reference images if needed and not already in args
         ref_files = await self.get_reference_files()
         if ref_files and function_name in ["generate_image", "generate_video"]:
@@ -1523,24 +1583,117 @@ class GeminiChatbot:
             elif function_name == "generate_speech":
                 tool_result = await generate_speech(**args)
             else:
-                return None, f"Error: Unknown pending function '{function_name}'"
-            
-            # Clear the pending action after successful execution
-            await self.clear_pending_action()
-            
+                # Unreachable (validated before the claim) — friendly safety net
+                lang = "es" if is_spanish(action.get("cost_message", "")) else "en"
+                return None, fallback_error_message("unknown", lang)
+
+            # NOTE: no clear_pending_action() needed — the atomic claim above
+            # already removed the action from Redis.
+
+            # Generator failed: explain WHY in plain language (LLM with code fallback)
+            if tool_result and (
+                tool_result.startswith(GENERATION_ERROR_PREFIX)
+                or tool_result.lower().startswith("error")
+            ):
+                lang = "es" if is_spanish(action.get("cost_message", "")) else "en"
+                friendly = await self._explain_generation_error(tool_result, lang)
+                # tool_result=None so callers never set the just_generated flag
+                return None, friendly
+
             # Generate success message - tool WAS actually called here
             response_text = self._generate_contextual_success_message(tool_result, tool_was_called=True)
             if not response_text:
                 # Fallback if message generation returns None (shouldn't happen for pending actions)
                 response_text = tool_result if tool_result else "⚠️ Could not determine the operation result."
             return tool_result, response_text
-            
+
         except Exception as e:
             import traceback
             logger.error("Failed to execute pending action: %s\n%s", e, traceback.format_exc())
-            await self.clear_pending_action()
-            return None, f"Error executing {function_name}: {str(e)}"
+            lang = "es" if is_spanish(action.get("cost_message", "")) else "en"
+            friendly = await self._explain_generation_error(
+                f"Error executing {function_name}: {str(e)}", lang
+            )
+            return None, friendly
     
+    async def _explain_generation_error(self, error_text: str, lang: str) -> str:
+        """
+        Turn a technical generator error (GENERATION_ERROR | ... or raw Error: ...)
+        into a short, plain-language explanation for the user.
+
+        Uses a one-shot Gemini call (fresh lightweight model, NOT the chat
+        session, to avoid polluting history). Falls back to a code-generated
+        message per error category if the LLM is slow or unavailable.
+        """
+        parsed = parse_generation_error(error_text) or {
+            "category": "unknown",
+            "detail": error_text[:300],
+        }
+        fallback = fallback_error_message(parsed["category"], lang)
+
+        language_name = "Spanish" if lang == "es" else "English"
+        prompt = (
+            "A media generation just failed with this technical error:\n"
+            f"{error_text[:600]}\n\n"
+            f"Explain to the end user, in {language_name}, in 2-3 friendly sentences, "
+            "why it failed and what they can do (rephrase the prompt, try again later, "
+            "top up tokens, or contact support — whichever fits the error). "
+            "Do NOT include JSON, HTTP codes, stack traces, or technical jargon. "
+            "Do NOT invent causes beyond what the error says. Do NOT blame the user."
+        )
+        try:
+            model = genai.GenerativeModel(
+                model_name=os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+            )
+            response = await asyncio.wait_for(
+                model.generate_content_async(prompt), timeout=8.0
+            )
+            if response.text and response.text.strip():
+                return "⚠️ " + response.text.strip()
+        except Exception as e:
+            logger.debug("LLM error explanation failed, using fallback: %s", e)
+        return fallback
+
+    async def _save_pending_or_block(
+        self, function_name: str, action_args: dict, confirmation_text: str
+    ) -> Optional[str]:
+        """
+        Save the pending action, unless the user's balance can't cover the cost.
+
+        Returns the replacement response (insufficient-balance message with
+        concrete affordable alternatives) when blocked, or None after saving
+        normally. Never blocks when the cost or the balance is unknown — the
+        Laravel backend remains the final biller.
+        """
+        cost = estimate_generation_cost(function_name, action_args)
+        if cost is None:
+            # Unknown/legacy model: best-effort fallback to the cost Gemini
+            # itself quoted ("Cost: **352** tokens", "Costo total: 352 tokens",
+            # "El costo es 352 tokens"...). If it doesn't match either, the
+            # action is saved normally — never block blind.
+            match = re.search(
+                r"(?:cost|costo)[^\d\n]{0,30}(\d+)\s*\**\s*tokens",
+                confirmation_text,
+                re.IGNORECASE,
+            )
+            if match:
+                cost = int(match.group(1))
+
+        balance = get_token_balance()
+        if balance is not None and cost is not None and cost > balance:
+            set_insufficient_block({"required": cost, "available": balance})
+            lang = "es" if is_spanish(confirmation_text) else "en"
+            logger.debug(
+                "Blocked saving pending '%s': cost=%d > balance=%d",
+                function_name, cost, balance,
+            )
+            return build_insufficient_balance_message(
+                cost, balance, lang, affordable_options(balance)
+            )
+
+        await self.save_pending_action(function_name, action_args, confirmation_text)
+        return None
+
     def _extract_function_from_history(self) -> tuple[str, dict]:
         """
         Try to extract function call info from recent chat history.
@@ -1670,10 +1823,12 @@ IMPORTANT: A tool was JUST executed successfully. The workflow is COMPLETE.
                     
                     # Execute directly without going through Gemini
                     tool_result, response_text = await self.execute_pending_action()
-                    
+
                     if response_text:
-                        # Mark that a generation just happened
-                        await self.session_manager.set_just_generated(self.conversation_uuid)
+                        if tool_result:
+                            # Mark that a generation just happened — only when a
+                            # tool actually ran (not for balance blocks / errors)
+                            await self.session_manager.set_just_generated(self.conversation_uuid)
                         # Save response
                         await self.session_manager.add_message(
                             self.conversation_uuid,
@@ -1757,7 +1912,9 @@ IMPORTANT: A tool was JUST executed successfully. The workflow is COMPLETE.
                                 await self.session_manager.add_message(self.conversation_uuid, "user", message)
                                 tool_result, response_text = await self.execute_pending_action()
                                 if response_text:
-                                    await self.session_manager.set_just_generated(self.conversation_uuid)
+                                    if tool_result:
+                                        # Only flag real generations (not blocks/errors)
+                                        await self.session_manager.set_just_generated(self.conversation_uuid)
                                     await self.session_manager.add_message(self.conversation_uuid, "assistant", response_text)
                                     return response_text
             
@@ -1839,6 +1996,22 @@ IMPORTANT: A tool was JUST executed successfully. The workflow is COMPLETE.
                         logger.error(f"Failed to download {file_type} for analysis: {e}")
                         parts.append(f"Note: Unable to load {file_type} from URL. Error: {str(e)}\n\n")
             
+            # Inject the user's CURRENT token balance so Gemini can advise on
+            # affordable models/durations. Per-request only — it is never
+            # persisted to Redis history (only `message` is saved), so the
+            # balance can't go stale across turns. NOTE: the timeout-retry
+            # path below resends the bare `message` and loses this note for
+            # that attempt; acceptable.
+            balance = get_token_balance()
+            if balance is not None:
+                parts.append(
+                    f"[SYSTEM CONTEXT — current user token balance: {balance} tokens. "
+                    f"Use this when recommending models/durations or when the user asks "
+                    f"what they can afford. Never invent or guess a different balance. "
+                    f"Do not mention the balance unless it is relevant. "
+                    f"Do not treat this note as a user message.]\n\n"
+                )
+
             # Add the user's message
             parts.append(message)
             
@@ -2021,7 +2194,7 @@ If unsure, ask for clarification. Respond in the user's language (default: Engli
                         logger.warning(f"Gemini timed out processing function result")
                         # If we have a tool result AND tool was actually called, return success
                         if tool_was_actually_called and tool_result:
-                            response_text = self._generate_contextual_success_message(tool_result, tool_was_called=True)
+                            response_text = self._generate_contextual_success_message(tool_result, tool_was_called=True, lang="es" if is_spanish(message) else "en")
                             if response_text:
                                 await self.session_manager.add_message(
                                     self.conversation_uuid,
@@ -2067,11 +2240,16 @@ If unsure, ask for clarification. Respond in the user's language (default: Engli
                     if tool_was_actually_called and last_tool_result:
                         # Tool WAS called - check if it succeeded or failed
                         tool_result_lower = last_tool_result.lower() if last_tool_result else ""
-                        is_error = tool_result_lower.startswith("error")
-                        
+                        is_error = (
+                            tool_result_lower.startswith("error")
+                            or last_tool_result.startswith(GENERATION_ERROR_PREFIX)
+                        )
+
                         if is_error:
-                            # Tool was called but FAILED - tell the user what went wrong
-                            response_text = f"⚠️ There was a problem generating your content: {last_tool_result}\nPlease try again or adjust the parameters."
+                            # Tool was called but FAILED - explain why in plain language
+                            response_text = await self._explain_generation_error(
+                                last_tool_result, "es" if is_spanish(message) else "en"
+                            )
                         else:
                             # Tool was called and SUCCEEDED - generate success message
                             try:
@@ -2090,10 +2268,10 @@ Please generate a SHORT, friendly response to the user confirming the operation 
                                 if followup_response.text:
                                     response_text = followup_response.text
                                 else:
-                                    response_text = self._generate_contextual_success_message(last_tool_result, tool_was_called=True)
+                                    response_text = self._generate_contextual_success_message(last_tool_result, tool_was_called=True, lang="es" if is_spanish(message) else "en")
                             except Exception as e:
                                 logger.debug(f"Failed to get followup response: {e}")
-                                response_text = self._generate_contextual_success_message(last_tool_result, tool_was_called=True)
+                                response_text = self._generate_contextual_success_message(last_tool_result, tool_was_called=True, lang="es" if is_spanish(message) else "en")
                     else:
                         # NO tool was called - NEVER say "Done" or "Your video is ready"
                         # Ask Gemini to produce a real response
@@ -2141,7 +2319,7 @@ Keep it brief and helpful."""
                                     
                                     tool_was_actually_called = True
                                     last_tool_result = tool_result
-                                    response_text = self._generate_contextual_success_message(tool_result, tool_was_called=True)
+                                    response_text = self._generate_contextual_success_message(tool_result, tool_was_called=True, lang="es" if is_spanish(message) else "en")
                                     logger.debug(f"Recovery tool execution success: {rfunc_name}")
                                 except Exception as te:
                                     logger.error(f"Recovery tool execution failed: {te}")
@@ -2193,7 +2371,7 @@ Keep it brief and helpful."""
                     logger.warning(f"Gemini response error: {error_str}")
                     if tool_was_actually_called and last_tool_result:
                         # Tool was called - show its result
-                        result_msg = self._generate_contextual_success_message(last_tool_result, tool_was_called=True)
+                        result_msg = self._generate_contextual_success_message(last_tool_result, tool_was_called=True, lang="es" if is_spanish(message) else "en")
                         response_text = result_msg if result_msg else str(last_tool_result)
                     else:
                         # No tool was called - ask user to retry
@@ -2253,7 +2431,11 @@ Keep it brief and helpful."""
                         if ref_urls:
                             action_args["reference_image"] = ref_urls[0]
                         logger.debug("Saving pending VIDEO action: %s", action_args)
-                        await self.save_pending_action("generate_video", action_args, response_text)
+                        blocked = await self._save_pending_or_block(
+                            "generate_video", action_args, response_text
+                        )
+                        if blocked:
+                            response_text = blocked
 
                 elif action_type == "speech":
                     text_val = conf_params.get("prompt")  # "prompt" key holds speech text too
@@ -2270,7 +2452,11 @@ Keep it brief and helpful."""
                     if text_val:
                         action_args = {"text": text_val, "voice_id": voice_id}
                         logger.debug("Saving pending SPEECH action")
-                        await self.save_pending_action("generate_speech", action_args, response_text)
+                        blocked = await self._save_pending_or_block(
+                            "generate_speech", action_args, response_text
+                        )
+                        if blocked:
+                            response_text = blocked
 
                 elif action_type == "image":
                     model = conf_params.get("model")
@@ -2295,7 +2481,11 @@ Keep it brief and helpful."""
                                 len(ref_urls),
                             )
                         logger.debug("Saving pending IMAGE action: %s", action_args)
-                        await self.save_pending_action("generate_image", action_args, response_text)
+                        blocked = await self._save_pending_or_block(
+                            "generate_image", action_args, response_text
+                        )
+                        if blocked:
+                            response_text = blocked
             
             # Guardar respuesta del asistente en Redis
             await self.session_manager.add_message(
@@ -2321,7 +2511,7 @@ Keep it brief and helpful."""
         self.chat_session = None
         await self.session_manager.delete_session(self.conversation_uuid)
     
-    def _generate_contextual_success_message(self, tool_result: str, tool_was_called: bool = False) -> str:
+    def _generate_contextual_success_message(self, tool_result: str, tool_was_called: bool = False, lang: str = "en") -> str:
         """Generate a contextual success message based on tool result.
         
         CRITICAL: Only returns success messages if tool_was_called is True AND
@@ -2331,9 +2521,15 @@ Keep it brief and helpful."""
         if not tool_result or not tool_was_called:
             # No tool was executed - NEVER return a success message
             return None
-        
+
         tool_result_lower = tool_result.lower()
-        
+
+        # Structured generator error: return the friendly per-category message
+        # instead of dumping the technical string on the user.
+        if tool_result.startswith(GENERATION_ERROR_PREFIX):
+            parsed = parse_generation_error(tool_result) or {"category": "unknown"}
+            return fallback_error_message(parsed["category"], lang)
+
         # Check if the tool result indicates an actual error
         if tool_result_lower.startswith("error"):
             return f"⚠️ There was a problem processing your request: {tool_result}"

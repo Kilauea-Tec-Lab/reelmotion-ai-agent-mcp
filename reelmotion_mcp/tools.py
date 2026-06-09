@@ -9,6 +9,23 @@ from request_context import get_api_token, get_conversation_uuid
 from session_manager import get_session_manager
 from logging_config import setup_logging
 from moderation import is_disallowed_content, get_refusal_message
+from pricing import (
+    SEEDANCE2_MODELS,
+    SEEDANCE2_TOKEN_RATES,
+    SEEDANCE2_VALID_ASPECT_RATIOS,
+    VIDEO_DURATION_RULES,
+    normalize_seedance_resolution,
+    normalize_seedance_duration,
+    compute_seedance2_cost,
+    speech_cost,
+)
+from generation_errors import (
+    CATEGORY_BACKEND_UNAVAILABLE,
+    CATEGORY_TIMEOUT,
+    CATEGORY_UNKNOWN,
+    format_generation_error,
+    parse_backend_error,
+)
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -62,6 +79,7 @@ async def generate_image(
     Supports text-to-image (type 1), image-to-image (type 2), and multi-image reference (type 3).
 
     COST: Nano Banana 2 = 7 tokens, GPT = 6 tokens, Freepik = 1 token per image.
+    (Source of truth: pricing.py IMAGE_COSTS.)
     """
     logger.debug("Tool 'generate_image' called with prompt='%s', model='%s'", prompt, model)
 
@@ -147,8 +165,10 @@ async def generate_image(
 
         try:
             timeout = httpx.Timeout(180.0, connect=10.0)
-            with httpx.Client(timeout=timeout) as client:
-                response = client.post(url, json=payload, headers=headers)
+            # AsyncClient: a sync client here would block the event loop for
+            # every other conversation while the backend generates.
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.post(url, json=payload, headers=headers)
                 response.raise_for_status()
                 result = response.json()
 
@@ -171,9 +191,28 @@ async def generate_image(
             logger.debug("Reference files cleared after use")
 
             return f"Images generated successfully with {model}."
+        except httpx.HTTPStatusError as e:
+            parsed = parse_backend_error(e.response.status_code, e.response.text)
+            logger.error(
+                "Error generating image (HTTP %d, with context images): %s",
+                parsed["status"], parsed["detail"],
+            )
+            return format_generation_error("image", parsed["category"], parsed["status"], parsed["detail"])
+        except httpx.TimeoutException:
+            logger.error("Error generating image (with context images): timeout after 180s")
+            return format_generation_error(
+                "image", CATEGORY_TIMEOUT, 0,
+                "The image service did not respond within 180 seconds.",
+            )
+        except httpx.HTTPError as e:
+            logger.error("Error generating image (network, with context images): %s", e)
+            return format_generation_error(
+                "image", CATEGORY_BACKEND_UNAVAILABLE, 0,
+                f"Could not reach the image service: {e}",
+            )
         except Exception as e:
             logger.error("Error generating image (with context images): %s", e)
-            return f"Error generating image: {str(e)}"
+            return format_generation_error("image", CATEGORY_UNKNOWN, 0, str(e))
 
     else:
         # Text-only generation — no reference images
@@ -189,8 +228,8 @@ async def generate_image(
 
         try:
             timeout = httpx.Timeout(180.0, connect=10.0)
-            with httpx.Client(timeout=timeout) as client:
-                response = client.post(url, json=payload, headers=headers)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.post(url, json=payload, headers=headers)
                 response.raise_for_status()
                 result = response.json()
 
@@ -210,70 +249,34 @@ async def generate_image(
                     )
 
             return f"Images generated successfully with {model}."
+        except httpx.HTTPStatusError as e:
+            parsed = parse_backend_error(e.response.status_code, e.response.text)
+            logger.error(
+                "Error generating image (HTTP %d, text-only): %s",
+                parsed["status"], parsed["detail"],
+            )
+            return format_generation_error("image", parsed["category"], parsed["status"], parsed["detail"])
+        except httpx.TimeoutException:
+            logger.error("Error generating image (text-only): timeout after 180s")
+            return format_generation_error(
+                "image", CATEGORY_TIMEOUT, 0,
+                "The image service did not respond within 180 seconds.",
+            )
+        except httpx.HTTPError as e:
+            logger.error("Error generating image (network, text-only): %s", e)
+            return format_generation_error(
+                "image", CATEGORY_BACKEND_UNAVAILABLE, 0,
+                f"Could not reach the image service: {e}",
+            )
         except Exception as e:
             logger.error("Error generating image (text-only): %s", e)
-            return f"Error generating image: {str(e)}"
+            return format_generation_error("image", CATEGORY_UNKNOWN, 0, str(e))
 
 
 # ---------------------------------------------------------------------------
-# Seedance 2.0 pricing & helpers
+# Seedance 2.0 helpers
 # ---------------------------------------------------------------------------
-# Seedance is the only video tier whose price depends on RESOLUTION (not just
-# duration). The backend (/api/ai/generate-video) does the real charging; these
-# tables mirror its rates so the agent can quote the cost before generating.
-SEEDANCE2_MODELS = ("seedance-2.0", "seedance-2.0-fast")
-
-# tokens per second, indexed by resolution. "fast" tier has no 1080p.
-SEEDANCE2_TOKEN_RATES = {
-    "normal": {
-        "seedance-2.0": {"480p": 15, "720p": 32, "1080p": 72},
-        "seedance-2.0-fast": {"480p": 12, "720p": 26},
-    },
-    # Discounted rate applies ONLY in reference mode when reference_videos are
-    # sent (fal.ai charges ×0.6 in that case).
-    "reference_discount": {
-        "seedance-2.0": {"480p": 9, "720p": 20, "1080p": 43},
-        "seedance-2.0-fast": {"480p": 7, "720p": 16},
-    },
-}
-
-SEEDANCE2_VALID_ASPECT_RATIOS = ("auto", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16")
-
-
-def normalize_seedance_resolution(model: str, resolution: Optional[str]) -> str:
-    """Return a valid resolution for the given Seedance tier, falling back to 720p."""
-    res = (resolution or "720p").lower().strip()
-    valid_for_model = SEEDANCE2_TOKEN_RATES["normal"].get(model, {})
-    if res not in valid_for_model:
-        # Invalid resolution for this tier (e.g., 1080p on the fast tier) -> 720p
-        res = "720p"
-    return res
-
-
-def normalize_seedance_duration(duration) -> int:
-    """Normalize a Seedance duration to an int in the valid 4-15 range (default 5)."""
-    if duration in (None, "", "auto"):
-        return 5
-    try:
-        dur = int(duration)
-    except (TypeError, ValueError):
-        return 5
-    return max(4, min(15, dur))
-
-
-def compute_seedance2_cost(
-    model: str,
-    resolution: Optional[str],
-    duration,
-    has_reference_videos: bool = False,
-) -> int:
-    """Total token cost for a Seedance 2.0 generation = rate(resolution) × duration."""
-    res = normalize_seedance_resolution(model, resolution)
-    table_key = "reference_discount" if has_reference_videos else "normal"
-    per_sec = SEEDANCE2_TOKEN_RATES[table_key].get(model, {}).get(res)
-    if per_sec is None:
-        per_sec = SEEDANCE2_TOKEN_RATES["normal"].get(model, {}).get(res, 0)
-    return per_sec * normalize_seedance_duration(duration)
+# Pricing tables and cost helpers live in pricing.py (single source of truth).
 
 
 def _build_seedance_media(
@@ -346,7 +349,7 @@ async def generate_video(
     Generate or edit a video using AI based on a text prompt.
     Supports text-to-video, image-to-video, and video-to-video editing.
 
-    Token costs per second:
+    Token costs per second (source of truth: pricing.py VIDEO_TOKEN_RATES):
     - runway-aleph: 17 tokens/sec (5-10s)
     - runway-4.5: 14 tokens/sec (5, 8, or 10s)
     - veo-3.1: 44 tokens/sec (8s only)
@@ -387,26 +390,11 @@ async def generate_video(
     if model not in allowed_models:
         return f"Error: Invalid model '{model}'. Allowed models are: {', '.join(allowed_models)}"
 
-    duration_rules = {
-        "veo-3.1": [8],
-        "veo-3.1-flash": [8],
-        "veo-3.1-ultra": [8],
-        "luma-labs": [5],
-        "seedance-pro": [5],
-        "runway": [5, 10],
-        "runway-aleph": [5, 10],
-        "runway-4.5": [5, 8, 10],
-        "kling-v1": [5, 10],
-        "kling-v3-omni-pro": list(range(3, 16)),
-        "kling-v3-omni-std": list(range(3, 16)),
-        "seedance-2.0": list(range(4, 16)),
-        "seedance-2.0-fast": list(range(4, 16)),
-    }
-
-    if model in duration_rules and duration not in duration_rules[model]:
+    # Valid durations per model live in pricing.py (single source of truth).
+    if model in VIDEO_DURATION_RULES and duration not in VIDEO_DURATION_RULES[model]:
         return (
             f"Error: Duration {duration}s is not valid for model '{model}'. "
-            f"Allowed durations: {duration_rules[model]} seconds."
+            f"Allowed durations: {VIDEO_DURATION_RULES[model]} seconds."
         )
 
     logger.debug("Duration %ds validated for model %s", duration, model)
@@ -530,10 +518,13 @@ async def generate_video(
     logger.debug("Payload: %s", json.dumps(payload, indent=2))
 
     try:
-        # httpx.Client with a large timeout; async polling is the long-term solution
-        # but requires backend changes outside this codebase.
-        with httpx.Client(timeout=12000.0) as client:
-            response = client.post(url, json=payload, headers=headers)
+        # 900s matches the chatbot-layer ceiling (it gives up at 15 min anyway);
+        # async polling is the long-term solution but requires backend changes
+        # outside this codebase. AsyncClient keeps the event loop free for
+        # other conversations while the backend generates.
+        timeout = httpx.Timeout(900.0, connect=15.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(url, json=payload, headers=headers)
             logger.debug("Response status: %d", response.status_code)
             response.raise_for_status()
             result = response.json()
@@ -550,16 +541,26 @@ async def generate_video(
             return "Video generation initiated but URL not immediately available. Check status later."
 
     except httpx.HTTPStatusError as e:
-        error_detail = f"HTTP Error {e.response.status_code}: {e.response.text}"
-        logger.error("Error generating video (HTTP): %s", error_detail)
-        return f"Error generating video: {error_detail}"
+        parsed = parse_backend_error(e.response.status_code, e.response.text)
+        logger.error("Error generating video (HTTP %d): %s", parsed["status"], parsed["detail"])
+        return format_generation_error("video", parsed["category"], parsed["status"], parsed["detail"])
     except httpx.TimeoutException:
-        logger.error("Error generating video: Request timeout")
-        return "Error generating video: Request timeout after 1800s"
+        logger.error("Error generating video: request timeout after 900s")
+        return format_generation_error(
+            "video", CATEGORY_TIMEOUT, 0,
+            "The video service did not respond within 900 seconds (15 min). "
+            "The generation may still complete on the backend.",
+        )
+    except httpx.HTTPError as e:
+        logger.error("Error generating video (network): %s", e)
+        return format_generation_error(
+            "video", CATEGORY_BACKEND_UNAVAILABLE, 0,
+            f"Could not reach the video service: {e}",
+        )
     except Exception as e:
         import traceback
         logger.error("Error generating video: %s\n%s", e, traceback.format_exc())
-        return f"Error generating video: {type(e).__name__}: {str(e)}"
+        return format_generation_error("video", CATEGORY_UNKNOWN, 0, f"{type(e).__name__}: {str(e)}")
 
 
 async def generate_speech(
@@ -570,8 +571,9 @@ async def generate_speech(
     """
     Generate speech/audio from text using the ElevenLabs API.
 
-    COST: 1-500 characters = 1 token, 500-999 characters = 8 tokens,
-          1000+ characters = 13 tokens per 1000 chars.
+    COST: 1-500 characters = 1 token, 501-999 characters = 8 tokens,
+          1000+ characters = 13 tokens per 1000 chars (rounded up).
+    (Source of truth: pricing.py speech_cost().)
     """
     import base64
     import uuid as uuid_lib
@@ -632,7 +634,8 @@ async def generate_speech(
         if backend_url and api_token:
             backend_url = backend_url.rstrip("/")
             callback_url = f"{backend_url}/api/ai/mcp-voice-generation"
-            tokens_cost = 5
+            # Real tiered cost (was hardcoded to 5, under/over-billing every TTS)
+            tokens_cost = speech_cost(len(text))
 
             # Backend requires an http/https URL — use a placeholder for the Data URI
             req_uuid = str(uuid_lib.uuid4())
@@ -669,9 +672,25 @@ async def generate_speech(
 
         return f"Audio generated successfully ({len(audio_content)} bytes). Link generated automatically."
 
+    except httpx.HTTPStatusError as e:
+        parsed = parse_backend_error(e.response.status_code, e.response.text)
+        logger.error("Error generating speech (HTTP %d): %s", parsed["status"], parsed["detail"])
+        return format_generation_error("speech", parsed["category"], parsed["status"], parsed["detail"])
+    except httpx.TimeoutException:
+        logger.error("Error generating speech: timeout after 30s")
+        return format_generation_error(
+            "speech", CATEGORY_TIMEOUT, 0,
+            "The speech service did not respond within 30 seconds.",
+        )
+    except httpx.HTTPError as e:
+        logger.error("Error generating speech (network): %s", e)
+        return format_generation_error(
+            "speech", CATEGORY_BACKEND_UNAVAILABLE, 0,
+            f"Could not reach the speech service: {e}",
+        )
     except Exception as e:
         logger.error("Error generating speech: %s", e)
-        return f"Error generating speech: {str(e)}"
+        return format_generation_error("speech", CATEGORY_UNKNOWN, 0, str(e))
 
 
 # ---------------------------------------------------------------------------
