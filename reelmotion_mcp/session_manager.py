@@ -48,6 +48,9 @@ class SessionManager:
     def _get_just_generated_key(self, conversation_uuid: str) -> str:
         return f"just_generated:{conversation_uuid}"
 
+    def _get_workflow_state_key(self, conversation_uuid: str) -> str:
+        return f"workflow_state:{conversation_uuid}"
+
     async def create_session(self, conversation_uuid: str) -> Dict:
         """Create a new session."""
         session_key = self._get_session_key(conversation_uuid)
@@ -224,6 +227,44 @@ class SessionManager:
         logger.debug("Claimed pending action for UUID='%s'", conversation_uuid)
         return json.loads(data)
 
+    async def save_workflow_state(self, conversation_uuid: str, state: Dict):
+        """Persist the explicit workflow state (see workflow_state.py for the schema)."""
+        from workflow_state import WORKFLOW_STATE_TTL
+
+        key = self._get_workflow_state_key(conversation_uuid)
+        state["updated_at"] = datetime.now().isoformat()
+        await self.redis_client.setex(key, WORKFLOW_STATE_TTL, json.dumps(state))
+        logger.debug(
+            "Saved workflow state type=%s step=%s for UUID='%s'",
+            state.get("workflow_type"), state.get("step"), conversation_uuid,
+        )
+
+    async def get_workflow_state(self, conversation_uuid: str) -> Optional[Dict]:
+        """
+        Get the workflow state, or None when absent, corrupt, or from a
+        different schema version (deploy-safe: callers always tolerate None).
+        """
+        from workflow_state import STATE_VERSION
+
+        key = self._get_workflow_state_key(conversation_uuid)
+        data = await self.redis_client.get(key)
+        if not data:
+            return None
+        try:
+            state = json.loads(data)
+        except json.JSONDecodeError:
+            logger.warning("Corrupt workflow state for UUID='%s'; ignoring", conversation_uuid)
+            return None
+        if not isinstance(state, dict) or state.get("version") != STATE_VERSION:
+            return None
+        return state
+
+    async def clear_workflow_state(self, conversation_uuid: str):
+        """Delete the workflow state (after a generation completes or resets)."""
+        key = self._get_workflow_state_key(conversation_uuid)
+        await self.redis_client.delete(key)
+        logger.debug("Cleared workflow state for UUID='%s'", conversation_uuid)
+
     async def set_just_generated(self, conversation_uuid: str):
         """Mark that content was just generated. Expires in 60 seconds."""
         key = self._get_just_generated_key(conversation_uuid)
@@ -257,8 +298,11 @@ class SessionManager:
         files_key = self._get_files_key(conversation_uuid)
         refs_key = self._get_refs_key(conversation_uuid)
         pending_key = self._get_pending_action_key(conversation_uuid)
+        workflow_key = self._get_workflow_state_key(conversation_uuid)
 
-        await self.redis_client.delete(session_key, files_key, refs_key, pending_key)
+        await self.redis_client.delete(
+            session_key, files_key, refs_key, pending_key, workflow_key
+        )
 
 
 # Singleton

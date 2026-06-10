@@ -48,6 +48,14 @@ def clean_prompt_from_model_mentions(prompt: str) -> str:
     if not prompt:
         return prompt
 
+    # JSON prompts (Veo 3 style) must reach the backend byte-identical — any
+    # rewrite would corrupt the structure. If the prompt contains a JSON
+    # object at all, never touch it.
+    from workflow_state import detect_json_prompt
+    if detect_json_prompt(prompt) is not None:
+        logger.debug("Prompt contains JSON (prompt_is_json=True); passing through verbatim")
+        return prompt
+
     patterns = [
         # English: "with veo 3.1", "using runway aleph", etc.
         r"\s+(?:with|using|via|through|by)\s+(?:runway(?:[-\s]?(?:aleph|4\.?5))?|veo[-\s]?3\.?1(?:[-\s]?(?:flash|ultra))?|nano[-\s]?banana|gpt|freepik|luma[-\s]?labs?|seedance[-\s]?pro|kling[-\s]?(?:v?3[-\s]?omni[-\s]?(?:pro|std)|v1))\s*$",
@@ -726,9 +734,32 @@ For VIDEOS (all of the above, plus):
   - Subject movement & pacing (slow motion, fast action, gentle idle, walking)
   - Scene open & close (fade in, hard cut in, motion blur out, freeze frame)
 
+JSON PROMPT FORMAT (advanced, for VIDEO models — especially Veo):
+Structured JSON prompts give video models finer control than prose. Offer this
+format when the user targets a video model and wants precise control, or when
+the user already pasted a JSON prompt. The template:
+```json
+{
+  "scene": "where and when the action happens",
+  "subject": "who/what the video is about",
+  "action": "what happens during the clip",
+  "camera": {"movement": "dolly/pan/orbit/static", "angle": "low/high/eye-level", "lens": "wide/tele/macro"},
+  "lighting": "light sources, mood, time of day",
+  "style": "cinematic/anime/documentary/etc.",
+  "audio": {"music": "...", "sfx": "...", "dialogue": "..."},
+  "duration": "8s"
+}
+```
+Rules for JSON prompts:
+- If the user supplies a JSON prompt, improve it AS JSON: suggest missing keys,
+  never silently alter the values they wrote — propose changes and ask.
+- Always output the complete JSON object inside a ```json fenced block.
+- The JSON is sent to the generator character-for-character.
+
 OUTPUT FORMAT when enough detail is gathered:
 ✨ Refined Prompt:
 "[Full refined prompt, rich in detail and optimized for the target model]"
+(or, for JSON prompts, the complete object in a ```json fenced block after the ✨ marker)
 
 Then ask: "Would you like to adjust anything, or are you ready to generate?"
 """
@@ -738,6 +769,7 @@ async def craft_prompt(
     idea: str,
     media_type: str = "image",
     user_answers: str = "",
+    output_format: str = "text",
 ) -> str:
     """
     Refine and improve a raw idea into a production-ready prompt for AI image or video generation.
@@ -749,6 +781,7 @@ async def craft_prompt(
         idea: The user's raw description or idea for the image/video.
         media_type: "image" or "video". Defaults to "image".
         user_answers: Optional answers the user has already provided to follow-up questions.
+        output_format: "text" (prose prompt) or "json" (Veo 3 style structured JSON prompt).
     """
     import google.generativeai as genai
 
@@ -767,6 +800,11 @@ async def craft_prompt(
     user_message = f"Media type: {media_type}\nIdea: {idea}"
     if user_answers.strip():
         user_message += f"\nAdditional details provided: {user_answers}"
+    if output_format == "json":
+        user_message += (
+            "\nOutput format: JSON prompt (use the JSON PROMPT FORMAT template, "
+            "output the complete object in a ```json fenced block)."
+        )
 
     try:
         response = await model.generate_content_async(user_message)
