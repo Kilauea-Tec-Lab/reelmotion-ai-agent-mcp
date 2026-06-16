@@ -244,6 +244,25 @@ def affordable_options(balance: int) -> Dict:
     return {"images": images, "videos": videos, "speech_max_chars": speech_max_chars}
 
 
+def min_video_cost() -> int:
+    """
+    Cheapest possible video generation across all priced models/resolutions.
+
+    Used as the "low balance" threshold: below this the user cannot generate
+    ANY video, so the frontend should surface a buy-tokens CTA.
+    """
+    costs = [
+        rate * min(VIDEO_DURATION_RULES[model])
+        for model, rate in VIDEO_TOKEN_RATES.items()
+        if VIDEO_DURATION_RULES.get(model)
+    ]
+    for model, res_table in SEEDANCE2_TOKEN_RATES["normal"].items():
+        durations = VIDEO_DURATION_RULES.get(model)
+        if durations:
+            costs.extend(rate * min(durations) for rate in res_table.values())
+    return min(costs) if costs else 0
+
+
 # ---------------------------------------------------------------------------
 # Language heuristic + insufficient-balance message (code-generated, not LLM)
 # ---------------------------------------------------------------------------

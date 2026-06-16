@@ -1,5 +1,7 @@
 from typing import Any, Optional
 import os
+import re
+import unicodedata
 import logging
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -26,12 +28,149 @@ from request_context import (
 )
 from session_manager import get_session_manager
 from logging_config import setup_logging
+from pricing import min_video_cost
 
 # Load environment variables
 load_dotenv()
 
 setup_logging()
 logger = logging.getLogger(__name__)
+
+# Below this balance the user cannot generate ANY video — suggest buying tokens.
+LOW_BALANCE_THRESHOLD = min_video_cost()
+if LOW_BALANCE_THRESHOLD <= 0:
+    # Pricing tables empty/misconfigured — the mechanical low-balance
+    # tokens_sale hint would silently never fire. Surface it loudly.
+    logger.warning(
+        "LOW_BALANCE_THRESHOLD is %s (min_video_cost returned no priced models); "
+        "mechanical low-balance tokens_sale hints are disabled.",
+        LOW_BALANCE_THRESHOLD,
+    )
+
+# Frontend action hints returned in the /api/chat response ("actions" key).
+ACTION_EDITOR = "editor"          # show a "go to editor" button
+ACTION_TOKENS_SALE = "tokens_sale"  # show a "buy tokens" button
+
+# The bot can surface an action conversationally by emitting a hidden marker
+# like <<ACTION:editor>> or <<ACTION:tokens_sale>> anywhere in its reply
+# (instructed in the system prompt). We strip these out before the text is
+# shown to the user and fold them into the "actions" array.
+# The optional leading horizontal space is absorbed so removing an in-sentence
+# marker ("see <<ACTION:editor>> here") doesn't leave a double space behind.
+ACTION_MARKER_PATTERN = re.compile(
+    r"[ \t]?<<\s*ACTION\s*:\s*(editor|tokens_sale)\s*>>", re.IGNORECASE
+)
+
+
+def extract_action_markers(text: str):
+    """
+    Pull <<ACTION:...>> markers the bot emitted out of its reply.
+    Returns (clean_text, marker_actions) where clean_text has the markers
+    (and the whitespace they leave behind) removed, and marker_actions is the
+    ordered, de-duplicated list of action names the bot requested.
+    """
+    if not text:
+        return text, []
+
+    marker_actions = []
+    for match in ACTION_MARKER_PATTERN.finditer(text):
+        action = match.group(1).lower()
+        if action not in marker_actions:
+            marker_actions.append(action)
+
+    clean_text = ACTION_MARKER_PATTERN.sub("", text)
+    # Only collapse blank lines left where an own-line marker used to be.
+    # (Deliberately NOT touching horizontal whitespace runs — those may be
+    # meaningful in code snippets or formatted text in the reply.)
+    clean_text = re.sub(r"\n{3,}", "\n\n", clean_text).strip()
+    return clean_text, marker_actions
+
+
+# Deterministic intent detection on the USER's message, so the action fires
+# even if Gemini forgets to emit the marker. Phrases are matched on an
+# accent-folded, lower-cased copy of the message (so "dónde" == "donde").
+EDITOR_REQUEST_PHRASES = (
+    # Spanish — asking where/how to edit or to go to the editor
+    "donde edito", "donde puedo editar", "donde se edita", "donde lo edito",
+    "como edito", "como puedo editar", "como lo edito", "quiero editar",
+    "ir al editor", "al editor", "abrir editor", "abrir el editor",
+    "abre el editor", "llevame al editor", "ir a editar", "editar el video",
+    "editar mi video", "editar este video", "editar la imagen", "editar esto",
+    # English
+    "where do i edit", "where can i edit", "how do i edit", "how can i edit",
+    "go to the editor", "go to editor", "open the editor", "open editor",
+    "take me to the editor", "i want to edit", "edit the video", "edit my video",
+    "edit this video", "edit the image", "edit this",
+)
+# tokens_sale fires when the user clearly wants to ACQUIRE tokens. Detected as
+# either a standalone recharge/top-up phrase, OR a "token/credit" word together
+# with a purchase verb anywhere in the message (so "quiero comprar más ...
+# tokens" matches even when the words aren't adjacent). Purchase verbs are
+# deliberately acquisition-specific so "quiero generar con mis tokens" (use,
+# not buy) does NOT trigger it.
+TOKENS_STANDALONE_PHRASES = (
+    "top up", "top-up", "topup", "recargar", "recarga", "recharge",
+)
+TOKEN_WORDS = ("token", "credito", "credit")
+TOKEN_BUY_VERBS = (
+    "comprar", "compro", "compra", "buy", "purchase", "get more",
+    "conseguir", "obtener", "necesito", "dame", "give me", "quiero mas",
+)
+
+
+def _fold(text: str) -> str:
+    """Lower-case and strip accents for tolerant phrase matching."""
+    decomposed = unicodedata.normalize("NFKD", text or "")
+    return "".join(c for c in decomposed if not unicodedata.combining(c)).lower()
+
+
+def _wants_to_buy_tokens(folded: str) -> bool:
+    if any(phrase in folded for phrase in TOKENS_STANDALONE_PHRASES):
+        return True
+    has_token_word = any(word in folded for word in TOKEN_WORDS)
+    has_buy_verb = any(verb in folded for verb in TOKEN_BUY_VERBS)
+    return has_token_word and has_buy_verb
+
+
+def detect_user_requested_actions(message: str) -> list:
+    """
+    Action hints derived directly from what the USER asked for, independent of
+    the bot's reply or balance — e.g. "¿dónde edito el video?" → editor,
+    "quiero comprar más tokens" → tokens_sale. Returns an ordered, de-duplicated
+    list (editor before tokens_sale).
+    """
+    folded = _fold(message)
+    actions = []
+    if any(phrase in folded for phrase in EDITOR_REQUEST_PHRASES):
+        actions.append(ACTION_EDITOR)
+    if _wants_to_buy_tokens(folded):
+        actions.append(ACTION_TOKENS_SALE)
+    return actions
+
+
+def compute_response_actions(
+    files: list, insufficient_block, token_balance, marker_actions=None
+) -> list:
+    """
+    Action hints for the frontend, derived from the request outcome AND any
+    actions the bot requested conversationally via <<ACTION:...>> markers:
+    - "editor" when a generation succeeded (fresh files) OR the bot suggested
+      opening the editor (e.g. the user asked where to edit an existing asset).
+    - "tokens_sale" when a generation was blocked for insufficient balance,
+      the balance is too low to generate any video, OR the bot proactively
+      suggested topping up because the user is running low.
+    """
+    marker_actions = marker_actions or []
+    actions = []
+    if files or ACTION_EDITOR in marker_actions:
+        actions.append(ACTION_EDITOR)
+    if (
+        insufficient_block
+        or (token_balance is not None and token_balance < LOW_BALANCE_THRESHOLD)
+        or ACTION_TOKENS_SALE in marker_actions
+    ):
+        actions.append(ACTION_TOKENS_SALE)
+    return actions
 
 # Initialize FastMCP server with CORS middleware
 mcp = FastMCP(
@@ -157,7 +296,16 @@ async def chat_endpoint(request: Request):
             await chatbot.set_reference_files(file_urls, file_types)
         
         response = await chatbot.send_message(message, context, file_urls=file_urls, file_types=file_types)
-        
+
+        # Pull any <<ACTION:...>> markers the bot emitted and strip them from
+        # the user-facing text, then add anything the USER explicitly asked for
+        # (e.g. "where do I edit?" / "I want to buy tokens") so the action fires
+        # even when Gemini forgets the marker.
+        response, marker_actions = extract_action_markers(response)
+        for action in detect_user_requested_actions(message):
+            if action not in marker_actions:
+                marker_actions.append(action)
+
         # Get generated files and include in response
         files = await chatbot.get_generated_files()
         logger.debug(f"Retrieved {len(files)} files from chatbot")
@@ -179,6 +327,14 @@ async def chat_endpoint(request: Request):
             final_response["insufficient_tokens"] = True
             final_response["tokens_required"] = block["required"]
             final_response["tokens_available"] = block["available"]
+
+        # Frontend action hints: "editor" (generation succeeded or the bot
+        # suggested editing → open editor button) and/or "tokens_sale" (no/low
+        # tokens, a block, or the bot suggested topping up → buy tokens button).
+        # Omitted entirely when there is nothing to suggest.
+        actions = compute_response_actions(files, block, token_balance, marker_actions)
+        if actions:
+            final_response["actions"] = actions
 
         logger.debug(f"Final response being sent: {final_response}")
         

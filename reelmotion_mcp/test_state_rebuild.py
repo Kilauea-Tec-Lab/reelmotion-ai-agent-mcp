@@ -254,6 +254,133 @@ class TestRecoveryPathBalanceGate:
         assert "352" in response and "10" in response
 
 
+def _fc_response(name, args):
+    from types import SimpleNamespace
+
+    fc = SimpleNamespace(name=name, args=args)
+    part = SimpleNamespace(text=None, function_call=fc)
+    return SimpleNamespace(
+        candidates=[SimpleNamespace(content=SimpleNamespace(parts=[part]))],
+        parts=[],
+        text=None,
+    )
+
+
+def _text_response(text):
+    from types import SimpleNamespace
+
+    part = SimpleNamespace(text=text, function_call=None)
+    return SimpleNamespace(
+        candidates=[SimpleNamespace(content=SimpleNamespace(parts=[part]))],
+        parts=[],
+        text=text,
+    )
+
+
+VIDEO_FC_ARGS = {
+    "prompt": "una rana saltando en la selva",
+    "model": "veo-3.1",
+    "duration": 8,
+}
+
+UNCONFIRMED_MESSAGE = "una rana saltando en la selva con veo 3.1"
+
+EXTRACTOR_EMPTY = patch.object(
+    chatbot_module, "extract_generation_params", new=AsyncMock(return_value={})
+)
+
+
+class TestConfirmationGate:
+    """A generation tool call from Gemini must NEVER execute unless the user's
+    current message confirms a cost message we previously sent."""
+
+    def test_unconfirmed_tool_call_is_intercepted(self, make_bot):
+        bot = make_bot()
+        set_token_balance(None)
+        confirmation_text = "El video costará 352 tokens (44 × 8s). ¿Confirmas?"
+        bot.chat_session.send_message_async = AsyncMock(
+            side_effect=[
+                _fc_response("generate_video", VIDEO_FC_ARGS),
+                _text_response(confirmation_text),
+            ]
+        )
+
+        with MODERATION_OK, EXTRACTOR_EMPTY, patch.object(
+            chatbot_module, "generate_video", new=AsyncMock()
+        ) as tool:
+            response = run(bot.send_message(UNCONFIRMED_MESSAGE))
+
+        tool.assert_not_awaited()
+        assert bot.session_manager.pending is not None
+        assert bot.session_manager.pending["function"] == "generate_video"
+        assert bot.session_manager.pending["args"]["duration"] == 8
+        assert response == confirmation_text
+        bot.session_manager.set_just_generated.assert_not_awaited()
+
+    def test_confirmed_call_after_cost_message_executes(self, make_bot):
+        history = [
+            {"role": "user", "content": "una rana saltando, veo 3.1"},
+            {"role": "assistant", "content": COST_MESSAGE},
+        ]
+        bot = make_bot(history=history)
+        set_token_balance(None)
+        bot.chat_session.send_message_async = AsyncMock(
+            side_effect=[
+                _fc_response("generate_video", VIDEO_FC_ARGS),
+                _text_response("Your video is ready!"),
+            ]
+        )
+
+        with MODERATION_OK, EXTRACTOR_EMPTY, patch.object(
+            chatbot_module, "generate_video", new=AsyncMock(return_value="ok video")
+        ) as tool:
+            response = run(bot.send_message("yes"))
+
+        tool.assert_awaited_once()
+        assert response == "Your video is ready!"
+        bot.session_manager.set_just_generated.assert_awaited_once()
+
+    def test_unconfirmed_call_with_insufficient_balance_blocks(self, make_bot):
+        bot = make_bot()
+        set_token_balance(10)  # veo-3.1 8s = 352 tokens
+        bot.chat_session.send_message_async = AsyncMock(
+            side_effect=[
+                _fc_response("generate_video", VIDEO_FC_ARGS),
+                _text_response("ok"),  # reply to the close-out function_response
+            ]
+        )
+
+        with MODERATION_OK, EXTRACTOR_EMPTY, patch.object(
+            chatbot_module, "generate_video", new=AsyncMock()
+        ) as tool:
+            response = run(bot.send_message(UNCONFIRMED_MESSAGE))
+
+        tool.assert_not_awaited()
+        assert "352" in response and "10" in response
+        assert bot.session_manager.pending is None  # blocked → nothing saved
+
+    def test_gemini_insisting_gets_deterministic_confirmation(self, make_bot):
+        bot = make_bot()
+        set_token_balance(None)
+        bot.chat_session.send_message_async = AsyncMock(
+            side_effect=[
+                _fc_response("generate_video", VIDEO_FC_ARGS),
+                _fc_response("generate_video", VIDEO_FC_ARGS),  # insists
+                _text_response("irrelevant"),  # reply to second close-out
+            ]
+        )
+
+        with MODERATION_OK, EXTRACTOR_EMPTY, patch.object(
+            chatbot_module, "generate_video", new=AsyncMock()
+        ) as tool:
+            response = run(bot.send_message(UNCONFIRMED_MESSAGE))
+
+        tool.assert_not_awaited()
+        assert bot.session_manager.pending is not None
+        assert "352" in response  # code-generated cost confirmation
+        assert "onfirma" in response  # "¿Confirmas...?" (Spanish message)
+
+
 class TestMergeStateIntoArgs:
     def test_json_prompt_overrides_gemini_mangled_arg(self, make_bot):
         bot = make_bot()

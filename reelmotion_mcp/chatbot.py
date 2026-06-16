@@ -62,6 +62,14 @@ COST_CONFIRMATION_PATTERN = re.compile(
     re.IGNORECASE
 )
 
+# Tools that spend the user's tokens — they may ONLY run after the user
+# explicitly confirmed a cost message (enforced in code, not just the prompt).
+GENERATION_TOOL_NAMES = ("generate_image", "generate_video", "generate_speech")
+
+# How many unconfirmed tool calls we bounce back to Gemini before answering
+# with a code-generated cost confirmation ourselves.
+MAX_CONFIRMATION_INTERCEPTIONS = 2
+
 def needs_clarification(message: str, has_ref_files: bool) -> tuple[bool, str]:
     """
     Check if a message is ambiguous and needs clarification.
@@ -152,6 +160,13 @@ class GeminiChatbot:
         Each step MUST happen in a SEPARATE message exchange (user sends message → you respond → user sends next message → you respond).
         You CANNOT complete multiple steps in a single response.
         If ANY step is missing, you MUST ask for it before proceeding.
+
+        🔒 HARD RULE — COST CONFIRMATION BEFORE EVERY GENERATION:
+        NEVER call generate_image / generate_video / generate_speech unless the user's
+        MOST RECENT message explicitly confirms the cost you quoted in your previous message.
+        Even when you already have ALL the parameters, your next reply must be the cost
+        summary + confirmation question — NOT a tool call. The system BLOCKS unconfirmed
+        tool calls, so calling early only wastes a turn.
         
         MCP ACTION DETECTION (CRITICAL - APPLY FIRST):
         Before responding, ALWAYS analyze if the user wants to execute an MCP tool action.
@@ -934,6 +949,78 @@ class GeminiChatbot:
         await self.save_pending_action(function_name, action_args, confirmation_text)
         return None
 
+    async def _user_confirmed_cost_this_turn(self, message: str) -> bool:
+        """
+        True ONLY when the user's current message is a confirmation AND the
+        last assistant message was a cost confirmation question. This is the
+        single condition under which a generation tool call from Gemini may
+        execute directly — everything else must go through a pending action.
+        """
+        if not is_confirmation(message):
+            return False
+        session = await self.session_manager.get_session(self.conversation_uuid)
+        history = session.get("messages", []) if session else []
+        for msg in reversed(history):
+            if msg.get("role") == "assistant":
+                return bool(COST_CONFIRMATION_PATTERN.search(msg.get("content", "")))
+        return False
+
+    def _build_cost_confirmation_text(
+        self, func_name: str, func_args: dict, cost: Optional[int], lang: str
+    ) -> str:
+        """Code-generated cost confirmation message (fallback when Gemini won't write one)."""
+        model = func_args.get("model")
+        duration = func_args.get("duration")
+        resolution = func_args.get("resolution")
+        if lang == "es":
+            lines = ["Antes de generar necesito que confirmes el costo:"]
+            if model:
+                lines.append(f"- Modelo: {model}")
+            if resolution:
+                lines.append(f"- Resolución: {resolution}")
+            if duration:
+                lines.append(f"- Duración: {duration} segundos")
+            lines.append(
+                f"- Costo: {cost} tokens" if cost is not None
+                else "- Costo: se calculará al generar"
+            )
+            lines.append("\n¿Confirmas que quieres continuar?")
+        else:
+            lines = ["Before generating, please confirm the cost:"]
+            if model:
+                lines.append(f"- Model: {model}")
+            if resolution:
+                lines.append(f"- Resolution: {resolution}")
+            if duration:
+                lines.append(f"- Duration: {duration} seconds")
+            lines.append(
+                f"- Cost: {cost} tokens" if cost is not None
+                else "- Cost: will be calculated on generation"
+            )
+            lines.append("\nDo you confirm?")
+        return "\n".join(lines)
+
+    async def _close_function_call(self, func_name: str, note: str, timeout: float = 60):
+        """
+        Send a function_response back to Gemini so the chat history never
+        holds a dangling function call. Returns Gemini's reply or None.
+        """
+        try:
+            return await asyncio.wait_for(
+                self.chat_session.send_message_async(
+                    genai.protos.Part(
+                        function_response=genai.protos.FunctionResponse(
+                            name=func_name,
+                            response={"result": note},
+                        )
+                    )
+                ),
+                timeout=timeout,
+            )
+        except Exception as e:
+            logger.debug("Failed to close function call %s: %s", func_name, e)
+            return None
+
     def _extract_function_from_history(self) -> tuple[str, dict]:
         """
         Try to extract function call info from recent chat history.
@@ -1351,6 +1438,12 @@ If unsure, ask for clarification. Respond in the user's language (default: Engli
             try:
                 last_tool_result = None
                 tool_was_actually_called = False  # Track if ANY tool was actually executed
+                # CONFIRMATION GATE: a generation tool may only run directly
+                # when the user's current message confirms a cost we quoted.
+                # Anything else gets intercepted into a pending action.
+                user_confirmed_cost = await self._user_confirmed_cost_this_turn(message)
+                forced_confirmation_text = None
+                confirmation_interceptions = 0
                 while True:
                     fc = None
                     candidate_parts = None
@@ -1394,7 +1487,54 @@ If unsure, ask for clarification. Respond in the user's language (default: Engli
                     func_args = self._merge_state_into_args(func_name, func_args, state)
 
                     logger.debug(f"Handling function call: {func_name}")
-                    
+
+                    # === CONFIRMATION GATE (deterministic) ===
+                    # Gemini tried to generate without the user confirming the
+                    # cost first. Save the action as pending and force a cost
+                    # confirmation question instead — no tokens are spent.
+                    if func_name in GENERATION_TOOL_NAMES and not user_confirmed_cost:
+                        confirmation_interceptions += 1
+                        gate_cost = estimate_generation_cost(func_name, func_args)
+                        gate_lang = "es" if is_spanish(message) else "en"
+                        logger.warning(
+                            "Intercepted unconfirmed %s call (cost=%s) — forcing cost confirmation",
+                            func_name, gate_cost,
+                        )
+                        blocked = await self._save_pending_or_block(func_name, func_args, message)
+                        if blocked:
+                            # Insufficient balance: answer with the block
+                            # message, after closing the dangling call.
+                            await self._close_function_call(
+                                func_name,
+                                "BLOCKED: insufficient token balance. Do not call any tool again.",
+                            )
+                            if state is not None:
+                                await self.session_manager.save_workflow_state(
+                                    self.conversation_uuid, state
+                                )
+                            await self.session_manager.add_message(
+                                self.conversation_uuid, "assistant", blocked
+                            )
+                            return blocked
+
+                        gate_note = (
+                            "CONFIRMATION_REQUIRED: the user has NOT confirmed this "
+                            "generation yet. Nothing was generated and no tokens were "
+                            "spent. "
+                            + (f"The exact cost is {gate_cost} tokens. " if gate_cost is not None else "")
+                            + "Reply to the user in their language with a short summary "
+                            "(model, duration/resolution if applicable) and the cost in "
+                            "tokens, then ask them to confirm. Do NOT call any tool "
+                            "again until the user confirms."
+                        )
+                        response = await self._close_function_call(func_name, gate_note)
+                        if response is None or confirmation_interceptions >= MAX_CONFIRMATION_INTERCEPTIONS:
+                            forced_confirmation_text = self._build_cost_confirmation_text(
+                                func_name, func_args, gate_cost, gate_lang
+                            )
+                            break
+                        continue
+
                     tool_result = "Error: Unknown function"
                     try:
                         if func_name == "generate_image":
@@ -1486,7 +1626,12 @@ If unsure, ask for clarification. Respond in the user's language (default: Engli
                 except ValueError:
                     # response.text accessor failed - response has no valid parts
                     pass
-                
+
+                # Gemini kept insisting on unconfirmed tool calls — answer with
+                # our own cost confirmation (the pending action is already saved).
+                if forced_confirmation_text:
+                    response_text = forced_confirmation_text
+
                 # If still no response, handle based on whether a tool was ACTUALLY called
                 if not response_text:
                     logger.debug(f"No text in Gemini response. tool_was_actually_called={tool_was_actually_called}")
@@ -1568,7 +1713,22 @@ Keep it brief and helpful."""
                                 # balance itself before spending tokens.
                                 rcost = estimate_generation_cost(rfunc_name, rfunc_args)
                                 rbalance = get_token_balance()
-                                if rbalance is not None and rcost is not None and rcost > rbalance:
+                                if rfunc_name in GENERATION_TOOL_NAMES and not user_confirmed_cost:
+                                    # CONFIRMATION GATE — same rule as the main
+                                    # loop: never generate without the user
+                                    # confirming the cost first.
+                                    logger.warning(
+                                        "Intercepted unconfirmed recovery %s call (cost=%s)",
+                                        rfunc_name, rcost,
+                                    )
+                                    rlang = "es" if is_spanish(message) else "en"
+                                    blocked = await self._save_pending_or_block(
+                                        rfunc_name, rfunc_args, message
+                                    )
+                                    response_text = blocked or self._build_cost_confirmation_text(
+                                        rfunc_name, rfunc_args, rcost, rlang
+                                    )
+                                elif rbalance is not None and rcost is not None and rcost > rbalance:
                                     set_insufficient_block({"required": rcost, "available": rbalance})
                                     lang = "es" if is_spanish(message) else "en"
                                     response_text = build_insufficient_balance_message(
