@@ -10,6 +10,7 @@ import pytest
 
 import chatbot as chatbot_module
 from chatbot import GeminiChatbot
+from pricing import affordable_options
 from request_context import (
     clear_insufficient_block,
     get_insufficient_block,
@@ -225,3 +226,172 @@ class TestSavePendingOrBlock:
         )
         assert blocked is None
         bot.session_manager.save_pending_action.assert_awaited_once()
+
+
+class TestConversationLanguageOverridesHeuristic:
+    """
+    The block must render in the CONVERSATION language, not in whatever
+    language the internal cost/confirmation string happens to be written in.
+    """
+
+    def test_lang_for_prefers_conversation_language(self, bot):
+        bot._conv_lang = "en"
+        # Spanish fallback text, but the resolved conversation is English
+        assert bot._lang_for("El costo será 352 tokens. ¿Confirmas?") == "en"
+
+    def test_lang_for_falls_back_to_heuristic_when_unresolved(self, bot):
+        bot._conv_lang = None
+        assert bot._lang_for("El costo será 352 tokens. ¿Confirmas?") == "es"
+        assert bot._lang_for("Cost: 352 tokens. Do you confirm?") == "en"
+
+    def test_execute_pending_block_uses_english_when_conversation_is_english(self, bot):
+        # Reproduces the reported bug: Spanish cost_message but English chat.
+        bot.session_manager.get_pending_action = AsyncMock(return_value=dict(VIDEO_ACTION))
+        bot._conv_lang = "en"
+        set_token_balance(10)
+
+        with patch.object(chatbot_module, "generate_video", new=AsyncMock()):
+            (tool_result, response), block = run_with_block(bot.execute_pending_action())
+
+        assert tool_result is None
+        assert "don't have enough tokens" in response  # English, not Spanish
+        assert "No tienes tokens suficientes" not in response
+
+    def test_save_pending_block_uses_spanish_when_conversation_is_spanish(self, bot):
+        # English confirmation text, but the conversation is Spanish.
+        bot._conv_lang = "es"
+        set_token_balance(10)
+
+        blocked, _ = run_with_block(
+            bot._save_pending_or_block(
+                "generate_video",
+                {"prompt": "a sunset", "model": "veo-3.1", "duration": 8},
+                "Cost: 352 tokens. Do you confirm?",
+            )
+        )
+        assert blocked is not None
+        assert "No tienes tokens suficientes" in blocked
+
+
+class TestResolveConversationLanguage:
+    def _history(self, *pairs):
+        return [{"role": role, "content": content} for role, content in pairs]
+
+    def test_clear_current_message_wins(self, bot):
+        bot.session_manager.get_session = AsyncMock(return_value={"messages": []})
+        lang = asyncio.run(
+            bot._resolve_conversation_language("genera un video de un perro", [])
+        )
+        assert lang == "es"
+
+    def test_ambiguous_current_falls_back_to_history(self, bot):
+        history = self._history(
+            ("user", "generate a realistic image of a pug"),
+            ("assistant", "Which model would you like to use?"),
+        )
+        lang = asyncio.run(
+            bot._resolve_conversation_language("veo 3.1 flash 8 sec", history)
+        )
+        assert lang == "en"
+
+    def test_history_uses_user_messages_only(self, bot):
+        # Assistant spoke English, but the last clear USER message was Spanish.
+        history = self._history(
+            ("user", "quiero un video de una rana saltando"),
+            ("assistant", "Which model would you like to use?"),
+        )
+        lang = asyncio.run(
+            bot._resolve_conversation_language("8", history)
+        )
+        assert lang == "es"
+
+    def test_defaults_to_english_when_no_signal(self, bot):
+        lang = asyncio.run(bot._resolve_conversation_language("ok", []))
+        assert lang == "en"
+
+
+class TestBuildLanguageSample:
+    def test_joins_recent_user_messages_only(self, bot):
+        history = [
+            {"role": "user", "content": "erstelle ein Video von einem Hund"},
+            {"role": "assistant", "content": "Which model?"},
+        ]
+        sample = bot._build_language_sample("veo 3.1", history)
+        assert "veo 3.1" in sample
+        assert "erstelle ein Video" in sample
+        assert "Which model?" not in sample  # assistant turns excluded
+
+    def test_skips_empty_messages(self, bot):
+        sample = bot._build_language_sample("hola", [{"role": "user", "content": "  "}])
+        assert sample == "hola"
+
+
+class TestLocalizeBalanceBlock:
+    """
+    DATA is always code-computed; only the wording is localized. Spanish/English
+    use the deterministic template (no model call); other languages are rendered
+    by a one-shot model with the template as the offline fallback.
+    """
+
+    def test_english_sample_returns_template_without_model_call(self, bot):
+        bot._conv_lang = "en"
+        bot._lang_sample = "generate a video of a dog running in the park"
+        with patch.object(chatbot_module.genai, "GenerativeModel") as model_cls:
+            block = asyncio.run(
+                bot._localize_balance_block(352, 10, affordable_options(10))
+            )
+        assert "don't have enough tokens" in block
+        model_cls.assert_not_called()  # es/en never hit the LLM
+
+    def test_spanish_sample_returns_template_without_model_call(self, bot):
+        bot._conv_lang = "es"
+        bot._lang_sample = "genera un video de un perro corriendo en el parque"
+        with patch.object(chatbot_module.genai, "GenerativeModel") as model_cls:
+            block = asyncio.run(
+                bot._localize_balance_block(352, 10, affordable_options(10))
+            )
+        assert "No tienes tokens suficientes" in block
+        model_cls.assert_not_called()
+
+    def test_other_language_sample_invokes_model(self, bot):
+        bot._conv_lang = "en"  # default for an undetected language
+        bot._lang_sample = "erstelle ein Video von einem springenden Frosch bitte"
+
+        fake_model = MagicMock()
+        fake_model.generate_content_async = AsyncMock(
+            return_value=MagicMock(text="⚠️ Sie haben nicht genügend Tokens.")
+        )
+        with patch.object(chatbot_module.genai, "GenerativeModel", return_value=fake_model) as model_cls:
+            block = asyncio.run(
+                bot._localize_balance_block(352, 10, affordable_options(10))
+            )
+        model_cls.assert_called_once()
+        assert block == "⚠️ Sie haben nicht genügend Tokens."
+
+    def test_other_language_falls_back_to_template_on_model_failure(self, bot):
+        bot._conv_lang = "en"
+        bot._lang_sample = "erstelle ein Video von einem springenden Frosch bitte"
+
+        fake_model = MagicMock()
+        fake_model.generate_content_async = AsyncMock(side_effect=RuntimeError("boom"))
+        with patch.object(chatbot_module.genai, "GenerativeModel", return_value=fake_model):
+            block = asyncio.run(
+                bot._localize_balance_block(352, 10, affordable_options(10))
+            )
+        # Falls back to the English template — a block is never lost.
+        assert "don't have enough tokens" in block
+
+    def test_no_sample_uses_fallback_text_and_skips_model(self, bot):
+        # Outside an active turn (e.g. helper called in isolation): no sample,
+        # so language comes from the fallback text and the model is never called.
+        bot._conv_lang = None
+        bot._lang_sample = ""
+        with patch.object(chatbot_module.genai, "GenerativeModel") as model_cls:
+            block = asyncio.run(
+                bot._localize_balance_block(
+                    352, 10, affordable_options(10),
+                    fallback_text="El costo es 352 tokens. ¿Confirmas?",
+                )
+            )
+        assert "No tienes tokens suficientes" in block
+        model_cls.assert_not_called()

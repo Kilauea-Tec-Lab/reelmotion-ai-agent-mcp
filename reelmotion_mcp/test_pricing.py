@@ -9,7 +9,9 @@ from pricing import (
     affordable_options,
     build_insufficient_balance_message,
     compute_seedance2_cost,
+    detect_language,
     estimate_generation_cost,
+    is_insufficient_balance_message,
     is_spanish,
     speech_cost,
 )
@@ -190,6 +192,63 @@ class TestLanguageAndMessage:
         msg = build_insufficient_balance_message(160, 0, "en", affordable_options(0))
         assert "top up" in msg.lower()
         assert "Freepik" not in msg
+
+
+# ---------------------------------------------------------------------------
+# detect_language (tri-state, used to resolve the conversation language)
+# ---------------------------------------------------------------------------
+class TestDetectLanguage:
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "genera una imagen realista de un pug en el mundial",
+            "quiero comprar más tokens",
+            "hazme un video de una rana saltando",
+            "¿cuántos tokens cuesta esto?",
+            "necesito que confirmes antes de generar",
+        ],
+    )
+    def test_clear_spanish_returns_es(self, text):
+        assert detect_language(text) == "es"
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "generate a realistic image of a pug at the world cup",
+            "i want to buy more tokens",
+            "make me a video of a frog jumping",
+            "how much does this cost?",
+            "where do i edit this video?",
+        ],
+    )
+    def test_clear_english_returns_en(self, text):
+        assert detect_language(text) == "en"
+
+    @pytest.mark.parametrize(
+        "text",
+        ["veo 3.1 flash 8 sec", "gpt", "8", "5s", "", "   ", "nano banana 2"],
+    )
+    def test_ambiguous_or_empty_returns_none(self, text):
+        # Bare model names / numbers / short tokens carry no clear signal — the
+        # caller must fall back to the running conversation language.
+        assert detect_language(text) is None
+
+
+# ---------------------------------------------------------------------------
+# is_insufficient_balance_message (recognises the code-generated block)
+# ---------------------------------------------------------------------------
+class TestIsInsufficientBalanceMessage:
+    def test_recognises_spanish_block(self):
+        msg = build_insufficient_balance_message(352, 10, "es", affordable_options(10))
+        assert is_insufficient_balance_message(msg) is True
+
+    def test_recognises_english_block(self):
+        msg = build_insufficient_balance_message(352, 10, "en", affordable_options(10))
+        assert is_insufficient_balance_message(msg) is True
+
+    def test_ignores_unrelated_text(self):
+        assert is_insufficient_balance_message("Which model would you like to use?") is False
+        assert is_insufficient_balance_message("") is False
 
 
 # ---------------------------------------------------------------------------

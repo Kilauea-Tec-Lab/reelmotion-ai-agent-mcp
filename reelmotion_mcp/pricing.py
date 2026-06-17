@@ -272,11 +272,70 @@ _SPANISH_MARKERS = (
     " el ", " la ", " los ", " las ", " para ", " con ", " tu ",
 )
 
-
 def is_spanish(text: str) -> bool:
     """Keyword heuristic to pick the message language. Defaults to English."""
     lowered = (text or "").lower()
     return any(marker in lowered for marker in _SPANISH_MARKERS)
+
+
+# Dedicated, scoring-based marker sets for detect_language. Unlike
+# _SPANISH_MARKERS (bare substring match, used only by the is_spanish
+# fallback) these are matched on WORD BOUNDARIES so e.g. "crea"/"genera" can't
+# falsely fire inside the English words "create"/"generate". Strong signals
+# (accents, ¿/¡/ñ) never occur in English, so any hit is decisive. Ambiguous
+# tokens shared by both languages ("a", "video", "no") are deliberately in
+# neither set.
+_ES_STRONG = ("¿", "¡", "ñ", "á", "é", "í", "ó", "ú")
+_ES_WORDS = (
+    "el", "la", "los", "las", "un", "una", "para", "con", "tu", "que", "por",
+    "del", "de", "es", "mas", "esto", "este", "costo", "imagen", "genera",
+    "segundos", "quiero", "necesito", "puedes", "hazme", "crea", "dame",
+    "confirmas", "confirmar", "cuesta",
+)
+_EN_WORDS = (
+    "the", "with", "your", "you", "for", "and", "please", "what", "would",
+    "want", "generate", "create", "make", "yes", "okay", "thanks", "thank",
+    "how", "where", "this", "that", "give", "more", "buy", "edit", "seconds",
+    "i", "to", "of", "in", "is", "my", "can", "do", "me",
+)
+
+
+def detect_language(text: str) -> Optional[str]:
+    """
+    Best-effort, tri-state language detection for a SINGLE message.
+
+    Returns 'es' or 'en' when one language clearly dominates, or None when the
+    text carries no clear signal (e.g. a bare model name "veo 3.1", a number,
+    "ok", an empty string). None lets the caller fall back to the running
+    conversation language instead of forcing a switch on an ambiguous reply.
+    """
+    lowered = (text or "").strip().lower()
+    if not lowered:
+        return None
+    padded = f" {lowered} "
+    es = sum(1 for m in _ES_STRONG if m in lowered)
+    es += sum(1 for w in _ES_WORDS if f" {w} " in padded)
+    en = sum(1 for w in _EN_WORDS if f" {w} " in padded)
+    if es > en:
+        return "es"
+    if en > es:
+        return "en"
+    return None
+
+
+# Stable openings of the code-generated insufficient-balance message in each
+# language. Used to recognise the block in conversation history so the agent
+# can be made aware it was shown (the block bypasses Gemini's chat session).
+_INSUFFICIENT_BALANCE_HEADERS = (
+    "no tienes tokens suficientes",
+    "you don't have enough tokens",
+)
+
+
+def is_insufficient_balance_message(text: str) -> bool:
+    """True if `text` is (the start of) a code-generated balance-block message."""
+    lowered = (text or "").lower()
+    return any(header in lowered for header in _INSUFFICIENT_BALANCE_HEADERS)
 
 
 _MAX_LISTED_VIDEOS = 4

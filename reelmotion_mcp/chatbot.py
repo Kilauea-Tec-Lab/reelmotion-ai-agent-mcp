@@ -22,6 +22,9 @@ from pricing import (
     affordable_options,
     build_insufficient_balance_message,
     is_spanish,
+    detect_language,
+    is_insufficient_balance_message,
+    min_video_cost,
 )
 from generation_errors import (
     GENERATION_ERROR_PREFIX,
@@ -134,6 +137,15 @@ class GeminiChatbot:
         self.model_name = model_name or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
         self.conversation_uuid = conversation_uuid or "default"
         self.session_manager = get_session_manager()
+
+        # Resolved language of the CURRENT conversation ('es' | 'en'), set once
+        # per send_message from the user's running history. None = not yet
+        # resolved → helpers fall back to a per-text heuristic (see _lang_for).
+        self._conv_lang: Optional[str] = None
+        # Recent user text used to render the balance block in ANY language when
+        # the conversation is neither Spanish nor English (see
+        # _localize_balance_block). Empty outside an active send_message turn.
+        self._lang_sample: str = ""
         
         # Critical tool usage instructions
         tool_instructions = """
@@ -753,7 +765,107 @@ class GeminiChatbot:
                 merged["voice_id"] = params["voice_id"]
 
         return merged
-    
+
+    def _lang_for(self, fallback_text: str = "") -> str:
+        """
+        Language to render a code-generated message in.
+
+        Prefers the conversation language resolved for this turn (the single
+        source of truth, derived from the user's running history). Falls back
+        to a per-text heuristic only when called outside an active
+        send_message turn (e.g. unit tests on the helpers in isolation).
+        """
+        if self._conv_lang:
+            return self._conv_lang
+        return "es" if is_spanish(fallback_text) else "en"
+
+    async def _resolve_conversation_language(
+        self, current_message: str, history: Optional[list] = None
+    ) -> str:
+        """
+        Resolve the conversation language ('es' | 'en'), defaulting to English.
+
+        Mirrors the system prompt's rule: take the language of the CURRENT
+        message when it is clearly identifiable, otherwise the most recent
+        clearly-identifiable USER message. Ambiguous replies (model names,
+        numbers, "ok") never force a switch — they fall through to history.
+        """
+        lang = detect_language(current_message)
+        if lang:
+            return lang
+
+        if history is None:
+            session = await self.session_manager.get_session(self.conversation_uuid)
+            history = session.get("messages", []) if session else []
+        for msg in reversed(history or []):
+            if msg.get("role") == "user":
+                lang = detect_language(msg.get("content", ""))
+                if lang:
+                    return lang
+        return "en"
+
+    def _build_language_sample(
+        self, current_message: str, history: Optional[list] = None, limit: int = 5
+    ) -> str:
+        """
+        A short blob of the user's most recent messages, used to render the
+        balance block in the user's language when it is neither Spanish nor
+        English. Joining several turns makes language detection robust to a
+        single ambiguous reply (a bare model name, a number).
+        """
+        candidates = [current_message]
+        for msg in reversed(history or []):
+            if msg.get("role") == "user":
+                candidates.append(msg.get("content", ""))
+        picked = [c for c in candidates if c and c.strip()][:limit]
+        return "\n".join(picked)
+
+    async def _localize_balance_block(
+        self, required: int, balance: int, options: dict, fallback_text: str = ""
+    ) -> str:
+        """
+        Render the insufficient-balance block in the conversation's language.
+
+        The DATA (cost, balance, affordable alternatives) is always computed in
+        code. For Spanish/English we return the hand-written template directly
+        (zero latency, fully deterministic — the common case). For any OTHER
+        language we ask a fast one-shot model (not the chat session) to rewrite
+        the English template in the user's language, preserving every number,
+        model name and the structure. On timeout/failure we fall back to the
+        template, so a block is never lost.
+        """
+        lang = self._lang_for(self._lang_sample or fallback_text)
+        template = build_insufficient_balance_message(required, balance, lang, options)
+
+        # Confident Spanish/English (or no usable sample, e.g. unit tests) →
+        # deterministic template, no model call.
+        if not self._lang_sample or detect_language(self._lang_sample) in ("es", "en"):
+            return template
+
+        english = build_insufficient_balance_message(required, balance, "en", options)
+        prompt = (
+            "Rewrite the MESSAGE below in the SAME language the user is writing "
+            "in (infer it from USER TEXT).\n\n"
+            f"USER TEXT:\n{self._lang_sample[:500]}\n\n"
+            f"MESSAGE:\n{english}\n\n"
+            "Rules: keep ALL numbers, token counts, model names (e.g. Freepik, "
+            "GPT, Nano Banana 2, veo-3.1) and the ⚠️ emoji EXACTLY as written; "
+            "keep the same bullet/line structure; do not add or remove "
+            "information; output ONLY the rewritten message, nothing else."
+        )
+        try:
+            model = genai.GenerativeModel(
+                model_name=os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+            )
+            response = await asyncio.wait_for(
+                model.generate_content_async(prompt), timeout=8.0
+            )
+            if response.text and response.text.strip():
+                return response.text.strip()
+        except Exception as e:
+            logger.debug("Balance-block localization failed, using template: %s", e)
+        return template
+
     async def execute_pending_action(self) -> tuple[str, str]:
         """
         Execute a pending action directly without going through Gemini.
@@ -776,7 +888,7 @@ class GeminiChatbot:
         if function_name not in ("generate_image", "generate_video", "generate_speech"):
             logger.error("Unknown pending function '%s' — discarding action", function_name)
             await self.clear_pending_action()
-            lang = "es" if is_spanish(action.get("cost_message", "")) else "en"
+            lang = self._lang_for(action.get("cost_message", ""))
             return None, fallback_error_message("unknown", lang)
 
         # === BALANCE GATE (fresh balance from the confirming request) ===
@@ -786,9 +898,9 @@ class GeminiChatbot:
             cost = estimate_generation_cost(function_name, args)
         if balance is not None and cost is not None and cost > balance:
             set_insufficient_block({"required": cost, "available": balance})
-            lang = "es" if is_spanish(action.get("cost_message", "")) else "en"
-            message = build_insufficient_balance_message(
-                cost, balance, lang, affordable_options(balance)
+            message = await self._localize_balance_block(
+                cost, balance, affordable_options(balance),
+                fallback_text=action.get("cost_message", ""),
             )
             # Deliberately keep the pending action (5-min TTL): the user can
             # adjust the parameters or top up and confirm again.
@@ -839,7 +951,7 @@ class GeminiChatbot:
                 tool_result = await generate_speech(**args)
             else:
                 # Unreachable (validated before the claim) — friendly safety net
-                lang = "es" if is_spanish(action.get("cost_message", "")) else "en"
+                lang = self._lang_for(action.get("cost_message", ""))
                 return None, fallback_error_message("unknown", lang)
 
             # NOTE: no clear_pending_action() needed — the atomic claim above
@@ -850,7 +962,7 @@ class GeminiChatbot:
                 tool_result.startswith(GENERATION_ERROR_PREFIX)
                 or tool_result.lower().startswith("error")
             ):
-                lang = "es" if is_spanish(action.get("cost_message", "")) else "en"
+                lang = self._lang_for(action.get("cost_message", ""))
                 friendly = await self._explain_generation_error(tool_result, lang)
                 # tool_result=None so callers never set the just_generated flag
                 return None, friendly
@@ -865,7 +977,7 @@ class GeminiChatbot:
         except Exception as e:
             import traceback
             logger.error("Failed to execute pending action: %s\n%s", e, traceback.format_exc())
-            lang = "es" if is_spanish(action.get("cost_message", "")) else "en"
+            lang = self._lang_for(action.get("cost_message", ""))
             friendly = await self._explain_generation_error(
                 f"Error executing {function_name}: {str(e)}", lang
             )
@@ -937,13 +1049,13 @@ class GeminiChatbot:
         balance = get_token_balance()
         if balance is not None and cost is not None and cost > balance:
             set_insufficient_block({"required": cost, "available": balance})
-            lang = "es" if is_spanish(confirmation_text) else "en"
             logger.debug(
                 "Blocked saving pending '%s': cost=%d > balance=%d",
                 function_name, cost, balance,
             )
-            return build_insufficient_balance_message(
-                cost, balance, lang, affordable_options(balance)
+            return await self._localize_balance_block(
+                cost, balance, affordable_options(balance),
+                fallback_text=confirmation_text,
             )
 
         await self.save_pending_action(function_name, action_args, confirmation_text)
@@ -1083,6 +1195,26 @@ class GeminiChatbot:
 
             if not self.chat_session:
                 await self.start_chat()
+
+            # === CONVERSATION LANGUAGE (single source of truth for this turn) ===
+            # Every code-generated message (cost confirmation, balance block,
+            # error explanation, success line) renders in THIS language instead
+            # of guessing per-text — internal cost/confirmation strings are full
+            # of Spanish vocabulary and would otherwise force Spanish on an
+            # English conversation. Snapshot the pre-turn history once and reuse
+            # it for both language detection and balance-block awareness below.
+            pre_turn_session = await self.session_manager.get_session(self.conversation_uuid)
+            pre_turn_history = (
+                pre_turn_session.get("messages", []) if pre_turn_session else []
+            )
+            # Reset first so a raised resolution never leaves a stale language
+            # from a previous turn on this cached (per-uuid) instance.
+            self._conv_lang = None
+            self._lang_sample = ""
+            self._conv_lang = await self._resolve_conversation_language(
+                message, pre_turn_history
+            )
+            self._lang_sample = self._build_language_sample(message, pre_turn_history)
 
             # === EXPLICIT WORKFLOW STATE (workflow_state.py) ===
             # Single source of truth for the current workflow, step, and
@@ -1342,6 +1474,32 @@ IMPORTANT: A tool was JUST executed successfully. The workflow is COMPLETE.
                     f"Do not treat this note as a user message.]\n\n"
                 )
 
+            # Make Gemini AWARE of a balance block it "showed" last turn. The
+            # block is code-generated and returned directly, so it never entered
+            # Gemini's chat session — without this note Gemini would act as if it
+            # had never told the user they were short on tokens. Detected from
+            # the pre-turn history snapshot (the block IS saved to Redis history).
+            last_assistant = next(
+                (m.get("content", "") for m in reversed(pre_turn_history)
+                 if m.get("role") == "assistant"),
+                "",
+            )
+            # Skip the note once the balance has recovered enough to afford a
+            # generation again (e.g. the user topped up between turns) — at that
+            # point the workflow proceeds normally and the nudge would be noise.
+            min_cost = min_video_cost()
+            still_short = balance is None or (min_cost > 0 and balance < min_cost)
+            if still_short and is_insufficient_balance_message(last_assistant):
+                parts.append(
+                    "[SYSTEM CONTEXT — your previous reply told the user they do "
+                    "NOT have enough tokens for the requested generation. Nothing "
+                    "was generated and no tokens were spent. Continue from there: "
+                    "help them choose a cheaper model/shorter duration/lower "
+                    "resolution they can afford, or suggest topping up. Do not "
+                    "repeat the full balance breakdown unless they ask. Do not "
+                    "treat this note as a user message.]\n\n"
+                )
+
             # Inject the explicit workflow state so Gemini trusts it instead of
             # re-deriving the step from 50 history messages. Per-request only —
             # never persisted to Redis history.
@@ -1495,7 +1653,7 @@ If unsure, ask for clarification. Respond in the user's language (default: Engli
                     if func_name in GENERATION_TOOL_NAMES and not user_confirmed_cost:
                         confirmation_interceptions += 1
                         gate_cost = estimate_generation_cost(func_name, func_args)
-                        gate_lang = "es" if is_spanish(message) else "en"
+                        gate_lang = self._lang_for(message)
                         logger.warning(
                             "Intercepted unconfirmed %s call (cost=%s) — forcing cost confirmation",
                             func_name, gate_cost,
@@ -1588,7 +1746,7 @@ If unsure, ask for clarification. Respond in the user's language (default: Engli
                         logger.warning(f"Gemini timed out processing function result")
                         # If we have a tool result AND tool was actually called, return success
                         if tool_was_actually_called and tool_result:
-                            response_text = self._generate_contextual_success_message(tool_result, tool_was_called=True, lang="es" if is_spanish(message) else "en")
+                            response_text = self._generate_contextual_success_message(tool_result, tool_was_called=True, lang=self._lang_for(message))
                             if response_text:
                                 await self.session_manager.add_message(
                                     self.conversation_uuid,
@@ -1647,7 +1805,7 @@ If unsure, ask for clarification. Respond in the user's language (default: Engli
                         if is_error:
                             # Tool was called but FAILED - explain why in plain language
                             response_text = await self._explain_generation_error(
-                                last_tool_result, "es" if is_spanish(message) else "en"
+                                last_tool_result, self._lang_for(message)
                             )
                         else:
                             # Tool was called and SUCCEEDED - generate success message
@@ -1667,10 +1825,10 @@ Please generate a SHORT, friendly response to the user confirming the operation 
                                 if followup_response.text:
                                     response_text = followup_response.text
                                 else:
-                                    response_text = self._generate_contextual_success_message(last_tool_result, tool_was_called=True, lang="es" if is_spanish(message) else "en")
+                                    response_text = self._generate_contextual_success_message(last_tool_result, tool_was_called=True, lang=self._lang_for(message))
                             except Exception as e:
                                 logger.debug(f"Failed to get followup response: {e}")
-                                response_text = self._generate_contextual_success_message(last_tool_result, tool_was_called=True, lang="es" if is_spanish(message) else "en")
+                                response_text = self._generate_contextual_success_message(last_tool_result, tool_was_called=True, lang=self._lang_for(message))
                     else:
                         # NO tool was called - NEVER say "Done" or "Your video is ready"
                         # Ask Gemini to produce a real response
@@ -1721,7 +1879,7 @@ Keep it brief and helpful."""
                                         "Intercepted unconfirmed recovery %s call (cost=%s)",
                                         rfunc_name, rcost,
                                     )
-                                    rlang = "es" if is_spanish(message) else "en"
+                                    rlang = self._lang_for(message)
                                     blocked = await self._save_pending_or_block(
                                         rfunc_name, rfunc_args, message
                                     )
@@ -1730,9 +1888,9 @@ Keep it brief and helpful."""
                                     )
                                 elif rbalance is not None and rcost is not None and rcost > rbalance:
                                     set_insufficient_block({"required": rcost, "available": rbalance})
-                                    lang = "es" if is_spanish(message) else "en"
-                                    response_text = build_insufficient_balance_message(
-                                        rcost, rbalance, lang, affordable_options(rbalance)
+                                    response_text = await self._localize_balance_block(
+                                        rcost, rbalance, affordable_options(rbalance),
+                                        fallback_text=message,
                                     )
                                     logger.warning(
                                         "Blocked recovery tool call '%s': cost=%s > balance=%s",
@@ -1754,7 +1912,7 @@ Keep it brief and helpful."""
                                         await self.session_manager.set_just_generated(self.conversation_uuid)
                                         await self.session_manager.clear_workflow_state(self.conversation_uuid)
                                         state = None
-                                        response_text = self._generate_contextual_success_message(tool_result, tool_was_called=True, lang="es" if is_spanish(message) else "en")
+                                        response_text = self._generate_contextual_success_message(tool_result, tool_was_called=True, lang=self._lang_for(message))
                                         logger.debug(f"Recovery tool execution success: {rfunc_name}")
                                     except Exception as te:
                                         logger.error(f"Recovery tool execution failed: {te}")
@@ -1806,7 +1964,7 @@ Keep it brief and helpful."""
                     logger.warning(f"Gemini response error: {error_str}")
                     if tool_was_actually_called and last_tool_result:
                         # Tool was called - show its result
-                        result_msg = self._generate_contextual_success_message(last_tool_result, tool_was_called=True, lang="es" if is_spanish(message) else "en")
+                        result_msg = self._generate_contextual_success_message(last_tool_result, tool_was_called=True, lang=self._lang_for(message))
                         response_text = result_msg if result_msg else str(last_tool_result)
                     else:
                         # No tool was called - ask user to retry
