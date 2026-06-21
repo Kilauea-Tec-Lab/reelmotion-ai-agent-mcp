@@ -348,7 +348,7 @@ class GeminiChatbot:
         - Show available models with costs AND valid durations:
           → Seedance 2.0 Fast (resolution-based: 480p=12, 720p=26 tokens/sec) - 4 to 15 sec - fast & economical (max 720p)
           → Seedance 2.0 (resolution-based: 480p=15, 720p=32, 1080p=72 tokens/sec) - 4 to 15 sec - supports 1080p
-          → Runway 4.5 (14 tokens/sec) - 5, 8 or 10 sec - high quality
+          → Runway 4.5 (13 tokens/sec) - 5, 8 or 10 sec - high quality
           → Runway Aleph (17 tokens/sec) - 5 or 10 sec - versatile
           → Veo 3.1 Flash (17 tokens/sec) - 8 sec only - fast and good quality
           → Kling V3 Omni Std (19 tokens/sec) - 3 to 15 sec - text/image-to-video

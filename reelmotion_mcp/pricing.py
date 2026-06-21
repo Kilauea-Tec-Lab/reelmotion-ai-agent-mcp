@@ -27,7 +27,7 @@ IMAGE_COSTS: Dict[str, int] = {
 # ---------------------------------------------------------------------------
 VIDEO_TOKEN_RATES: Dict[str, int] = {
     "runway-aleph": 17,
-    "runway-4.5": 14,
+    "runway-4.5": 13,
     "veo-3.1": 44,
     "veo-3.1-flash": 17,
     "veo-3.1-ultra": 65,

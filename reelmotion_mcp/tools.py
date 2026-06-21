@@ -1,4 +1,6 @@
 import os
+import asyncio
+import time
 import httpx
 import json
 import logging
@@ -337,6 +339,147 @@ def _build_seedance_media(
     return False
 
 
+# ---------------------------------------------------------------------------
+# Async video generation (202 + poll) helpers
+# ---------------------------------------------------------------------------
+# Some providers (currently runway-4.5) no longer return the finished video in
+# the POST response: the backend answers 202 with a generation_id + poll_url and
+# we poll a cheap DB-backed status endpoint until the job is done. We branch on
+# the HTTP STATUS, never the provider name, so any provider the backend migrates
+# to async later works without changes here.
+POLL_INITIAL_DELAY_S = 5.0     # wait before the first status check
+POLL_FAST_INTERVAL_S = 5.0     # poll cadence during the first minute
+POLL_FAST_WINDOW_S = 60.0      # how long the fast cadence lasts
+POLL_SLOW_INTERVAL_S = 12.0    # poll cadence after the first minute (10-15s)
+POLL_MAX_WAIT_S = 900.0        # give up after ~15 min (non-fatal: may finish later)
+POLL_STATUS_TIMEOUT_S = 30.0   # per-request timeout for a single status GET
+
+STATUS_COMPLETED = "completed"
+STATUS_FAILED = "failed"
+
+
+def classify_poll_result(result: Optional[dict]) -> dict:
+    """
+    Interpret a generation-status payload into a terminal/pending decision.
+
+    Pure (no I/O) so it can be unit-tested in isolation. Returns one of:
+      {"state": "completed", "result_url": str|None}
+      {"state": "failed", "error": str, "refunded": bool}
+      {"state": "pending"}   # queued/processing/unknown/empty -> keep polling
+    """
+    if not isinstance(result, dict):
+        return {"state": "pending"}
+
+    status = str(result.get("status") or "").lower()
+
+    if status == STATUS_COMPLETED:
+        return {"state": "completed", "result_url": result.get("result_url")}
+
+    if status == STATUS_FAILED:
+        return {
+            "state": "failed",
+            "error": str(result.get("error") or "The provider reported a failed generation."),
+            "refunded": bool(result.get("refunded")),
+        }
+
+    return {"state": "pending"}
+
+
+async def _poll_generation_status(
+    status_url: str,
+    headers: dict,
+    media_type: str,
+    model: str,
+    conversation_uuid: str,
+    session_manager,
+) -> str:
+    """
+    Poll the backend generation-status endpoint until the job reaches a terminal
+    state (completed/failed) or POLL_MAX_WAIT_S elapses.
+
+    On completion the result_url is saved to the session exactly like the
+    synchronous path, so the chatbot contract (a plain success/error string) is
+    unchanged. A timeout is NOT fatal — the job may still finish on the backend,
+    so we return a timeout-category message instead of a hard error.
+    """
+    gen_type = media_type or "video"
+    deadline = time.monotonic() + POLL_MAX_WAIT_S
+    timeout = httpx.Timeout(POLL_STATUS_TIMEOUT_S, connect=10.0)
+
+    await asyncio.sleep(POLL_INITIAL_DELAY_S)
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        while True:
+            result = None
+            try:
+                response = await client.get(status_url, headers=headers)
+                response.raise_for_status()
+                result = response.json()
+            except httpx.HTTPStatusError as e:
+                # Auth/permission errors won't recover — fail fast.
+                if e.response.status_code in (401, 403):
+                    parsed = parse_backend_error(e.response.status_code, e.response.text)
+                    logger.error("Polling auth error (HTTP %d): %s", parsed["status"], parsed["detail"])
+                    return format_generation_error(gen_type, parsed["category"], parsed["status"], parsed["detail"])
+                # Other HTTP errors (5xx, transient 404) — keep polling.
+                logger.warning("Transient polling HTTP error %d; will retry", e.response.status_code)
+            except httpx.HTTPError as e:
+                logger.warning("Transient polling network error; will retry: %s", e)
+
+            decision = classify_poll_result(result)
+            logger.debug("Poll decision=%s for %s", decision["state"], status_url)
+
+            if decision["state"] == STATUS_COMPLETED:
+                result_url = decision.get("result_url")
+                if result_url:
+                    await session_manager.save_generated_file(conversation_uuid, result_url, gen_type)
+                    await session_manager.clear_reference_files(conversation_uuid)
+                    logger.debug("Async generation completed; result saved")
+                    return f"Video generated successfully with {model}."
+                logger.warning("Completed status without result_url")
+                return format_generation_error(
+                    gen_type, CATEGORY_UNKNOWN, 0,
+                    "The generation completed but no result URL was returned.",
+                )
+
+            if decision["state"] == STATUS_FAILED:
+                detail = decision["error"]
+                if decision["refunded"]:
+                    detail += " Your tokens were automatically refunded."
+                logger.error("Async generation failed: %s (refunded=%s)", detail, decision["refunded"])
+                return format_generation_error(gen_type, CATEGORY_UNKNOWN, 0, detail)
+
+            if time.monotonic() >= deadline:
+                logger.warning("Async generation polling timed out after %.0fs", POLL_MAX_WAIT_S)
+                return format_generation_error(
+                    gen_type, CATEGORY_TIMEOUT, 0,
+                    "The video is taking longer than expected and is still processing. "
+                    "It may finish shortly — check your library in a few minutes.",
+                )
+
+            elapsed = POLL_MAX_WAIT_S - (deadline - time.monotonic())
+            interval = POLL_FAST_INTERVAL_S if elapsed < POLL_FAST_WINDOW_S else POLL_SLOW_INTERVAL_S
+            await asyncio.sleep(interval)
+
+
+def _build_status_url(backend_url: str, accepted: dict) -> Optional[str]:
+    """
+    Build the absolute generation-status URL from a 202 response.
+
+    Prefers the backend-provided poll_url (relative or absolute); falls back to
+    /api/ai/generation-status/{generation_id}. Returns None if neither is usable.
+    """
+    generation_id = accepted.get("generation_id")
+    poll_path = accepted.get("poll_url") or (
+        f"/api/ai/generation-status/{generation_id}" if generation_id else None
+    )
+    if not poll_path:
+        return None
+    if poll_path.startswith("http://") or poll_path.startswith("https://"):
+        return poll_path
+    return f"{backend_url}/{poll_path.lstrip('/')}"
+
+
 async def generate_video(
     prompt: str,
     model: str,
@@ -359,7 +502,7 @@ async def generate_video(
 
     Token costs per second (source of truth: pricing.py VIDEO_TOKEN_RATES):
     - runway-aleph: 17 tokens/sec (5-10s)
-    - runway-4.5: 14 tokens/sec (5, 8, or 10s)
+    - runway-4.5: 13 tokens/sec (5, 8, or 10s) — ASYNC: backend returns 202, we poll
     - veo-3.1: 44 tokens/sec (8s only)
     - veo-3.1-flash: 17 tokens/sec (8s only)
     - veo-3.1-ultra: 65 tokens/sec (8s only)
@@ -526,20 +669,40 @@ async def generate_video(
     logger.debug("Payload: %s", json.dumps(payload, indent=2))
 
     try:
-        # 900s matches the chatbot-layer ceiling (it gives up at 15 min anyway);
-        # async polling is the long-term solution but requires backend changes
-        # outside this codebase. AsyncClient keeps the event loop free for
+        # 900s ceiling for SYNC providers that still return the finished video in
+        # the POST response. ASYNC providers (runway-4.5) answer 202 instantly and
+        # are then polled separately. AsyncClient keeps the event loop free for
         # other conversations while the backend generates.
         timeout = httpx.Timeout(900.0, connect=15.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(url, json=payload, headers=headers)
             logger.debug("Response status: %d", response.status_code)
             response.raise_for_status()
+
+            # Branch on the HTTP STATUS, not the provider: 202 = the backend
+            # accepted the job and we must poll for the result; 200 = the video
+            # is already in the response (legacy synchronous providers).
+            if response.status_code == 202:
+                accepted = response.json()
+                logger.debug("Backend accepted async generation (202): %s", accepted)
+                status_url = _build_status_url(backend_url, accepted)
+                if not status_url:
+                    logger.error("202 response missing poll_url/generation_id: %s", accepted)
+                    return format_generation_error(
+                        "video", CATEGORY_UNKNOWN, 202,
+                        "The generation was accepted but no status URL was provided.",
+                    )
+                logger.debug("Polling async generation status at %s", status_url)
+                return await _poll_generation_status(
+                    status_url, headers, accepted.get("media_type", "video"),
+                    model, conversation_uuid, session_manager,
+                )
+
             result = response.json()
 
         logger.debug("Backend response: %s", result)
 
-        video_url = result.get("video_url")
+        video_url = result.get("video_url") or result.get("result_url")
         if video_url:
             await session_manager.save_generated_file(conversation_uuid, video_url, "video")
             await session_manager.clear_reference_files(conversation_uuid)

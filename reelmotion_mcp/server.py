@@ -435,7 +435,7 @@ def generate_video(
 
     Token costs per second and valid durations:
     - runway-aleph: 17 tokens/sec (5-10s) - video-to-video editing
-    - runway-4.5: 14 tokens/sec (5, 8, or 10s) - high quality
+    - runway-4.5: 13 tokens/sec (5, 8, or 10s) - high quality (async: 202 + poll)
     - veo-3.1: 44 tokens/sec (8s only)
     - veo-3.1-flash: 17 tokens/sec (8s only)
     - veo-3.1-ultra: 65 tokens/sec (8s only) - maximum quality

@@ -146,7 +146,7 @@ class TestAffordableOptions:
 
         videos = {(v["model"], v["resolution"]): v for v in options["videos"]}
         assert videos[("runway-4.5", None)]["max_duration"] == 8
-        assert videos[("runway-4.5", None)]["cost"] == 112
+        assert videos[("runway-4.5", None)]["cost"] == 104
         assert videos[("seedance-2.0-fast", "480p")]["max_duration"] == 10
         # veo-3.1 (44 x 8 = 352) is unaffordable
         assert ("veo-3.1", None) not in videos
