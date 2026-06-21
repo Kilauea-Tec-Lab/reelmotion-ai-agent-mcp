@@ -117,7 +117,7 @@ class TestDetectJsonPrompt:
 # normalize_model_name
 # ---------------------------------------------------------------------------
 class TestNormalizeModelName:
-    @pytest.mark.parametrize("canonical", list(pricing.IMAGE_COSTS) + list(pricing.VIDEO_TOKEN_RATES) + list(pricing.SEEDANCE2_MODELS))
+    @pytest.mark.parametrize("canonical", list(pricing.IMAGE_COSTS) + list(pricing.VIDEO_TOKEN_RATES) + list(pricing.SEEDANCE2_MODELS) + list(pricing.KLING_MODELS))
     def test_every_pricing_key_resolves_to_itself(self, canonical):
         assert normalize_model_name(f"use {canonical} please") == canonical
 
@@ -129,8 +129,13 @@ class TestNormalizeModelName:
         ("seedance 2", "seedance-2.0"),
         ("runway aleph", "runway-aleph"),
         ("runway 4.5", "runway-4.5"),
-        ("kling pro", "kling-v3-omni-pro"),
-        ("kling std", "kling-v3-omni-std"),
+        ("sora 2", "sora-2"),
+        ("sora 2 pro", "sora-2-pro"),
+        ("kling v3 turbo", "kling-v3-turbo"),
+        ("kling turbo", "kling-v3-turbo"),
+        ("kling o3", "kling-o3"),
+        ("kling pro", "kling-v3"),
+        ("kling std", "kling-v3-turbo"),
         ("nano banana", "Nano Banana 2"),
         ("use GPT", "GPT"),
         ("seedream", "Seedream"),
@@ -291,13 +296,33 @@ class TestVideoWorkflow:
 
     def test_model_change_invalidates_incompatible_duration(self):
         state = self._state_with_prompt()
-        state = apply_user_message(state, "kling std")
+        state = apply_user_message(state, "kling v3 turbo")  # resolution-priced
+        assert state["step"] == "awaiting_resolution"
+        state = apply_user_message(state, "720p")
         state = apply_user_message(state, "7")  # valid for kling (3-15)
         assert state["params"]["duration"] == 7
         state = apply_user_message(state, "mejor usa runway aleph")
         assert state["params"]["model"] == "runway-aleph"
         assert state["params"]["duration"] is None  # 7 invalid for runway-aleph
+        assert state["params"]["resolution"] is None  # cleared (runway isn't resolution-priced)
         assert state["step"] == "awaiting_duration"
+
+    def test_kling_requires_resolution_then_duration(self):
+        state = self._state_with_prompt()
+        state = apply_user_message(state, "kling v3")
+        assert state["step"] == "awaiting_resolution"
+        state = apply_user_message(state, "4k")  # 4K valid for kling-v3 base route
+        assert state["params"]["resolution"] == "4k"
+        assert state["step"] == "awaiting_duration"
+        state = apply_user_message(state, "5")
+        assert state["params"]["duration"] == 5
+        assert state["step"] == "awaiting_confirmation"
+
+    def test_kling_turbo_4k_downgraded_to_1080p(self):
+        state = self._state_with_prompt()
+        state = apply_user_message(state, "kling v3 turbo")
+        state = apply_user_message(state, "4k")  # turbo has no 4K
+        assert state["params"]["resolution"] == "1080p"
 
     def test_jump_ahead_in_one_message(self):
         state = new_state(WORKFLOW_VIDEO_GEN)
@@ -477,6 +502,28 @@ class TestBuildActionArgs:
         state["params"].update({"model": "seedance-2.0-fast", "duration": 5, "resolution": "1080p"})
         _, args = build_action_args(state)
         assert args["resolution"] == "720p"  # normalized for the fast tier
+
+    def test_kling_resolution_keeps_4k_on_base_route(self):
+        state = new_state(WORKFLOW_VIDEO_GEN)
+        state["params"].update({
+            "prompt": "a frog jumping", "refine_resolved": True,
+            "model": "kling-v3", "duration": 5, "resolution": "4k",
+        })
+        state["step"] = compute_step(state)
+        _, args = build_action_args(state)
+        assert args["resolution"] == "4k"
+
+    def test_kling_o3_edit_sets_mode_and_caps_4k(self):
+        state = new_state(WORKFLOW_VIDEO_EDIT)
+        state["params"].update({
+            "prompt": "make it rain", "refine_resolved": True,
+            "model": "kling-o3", "duration": 6, "resolution": "4k",
+        })
+        state["step"] = compute_step(state)
+        fn, args = build_action_args(state)
+        assert fn == "generate_video"
+        assert args["mode"] == "edit"          # edit route hint for the cost estimate
+        assert args["resolution"] == "1080p"   # edit route has no 4K
 
     def test_image_args_reference_types(self):
         state = new_state(WORKFLOW_IMAGE)

@@ -8,11 +8,13 @@ from pricing import (
     VIDEO_TOKEN_RATES,
     affordable_options,
     build_insufficient_balance_message,
+    compute_kling_cost,
     compute_seedance2_cost,
     detect_language,
     estimate_generation_cost,
     is_insufficient_balance_message,
     is_spanish,
+    normalize_kling_quality,
     speech_cost,
 )
 from generation_errors import (
@@ -94,11 +96,45 @@ class TestEstimateGenerationCost:
         )
         assert cost == 44 * 8
 
-    def test_video_kling_std_ten_seconds(self):
+    def test_video_kling_v3_1080p_five_seconds(self):
         cost = estimate_generation_cost(
-            "generate_video", {"model": "kling-v3-omni-std", "duration": 10}
+            "generate_video",
+            {"model": "kling-v3", "duration": 5, "resolution": "1080p"},
         )
-        assert cost == 190
+        assert cost == 12 * 5  # base route, 1080p
+
+    def test_video_kling_turbo_720p_five_seconds(self):
+        cost = estimate_generation_cost(
+            "generate_video",
+            {"model": "kling-v3-turbo", "duration": 5, "resolution": "720p"},
+        )
+        assert cost == 12 * 5  # turbo route, 720p
+
+    def test_video_kling_v3_4k_only_on_base_route(self):
+        cost = estimate_generation_cost(
+            "generate_video",
+            {"model": "kling-v3", "duration": 3, "resolution": "4k"},
+        )
+        assert cost == 42 * 3
+
+    def test_video_kling_o3_edit_mode_uses_edit_rate(self):
+        cost = estimate_generation_cost(
+            "generate_video",
+            {"model": "kling-o3", "duration": 6, "resolution": "1080p", "mode": "edit"},
+        )
+        assert cost == 17 * 6
+
+    def test_video_kling_base_audio_surcharge(self):
+        cost = estimate_generation_cost(
+            "generate_video",
+            {"model": "kling-v3", "duration": 5, "resolution": "720p", "sound": "on"},
+        )
+        assert cost == 12 * 5  # 720p + audio = 12/sec
+
+    def test_video_kling_missing_duration_returns_none(self):
+        assert estimate_generation_cost(
+            "generate_video", {"model": "kling-v3", "resolution": "720p"}
+        ) is None
 
     def test_video_seedance_720p_five_seconds(self):
         cost = estimate_generation_cost(
@@ -157,6 +193,34 @@ class TestComputeSeedance2Cost:
 
     def test_duration_clamped_to_fifteen(self):
         assert compute_seedance2_cost("seedance-2.0", "480p", 99) == 15 * 15
+
+
+# ---------------------------------------------------------------------------
+# Kling pricing + quality clamping
+# ---------------------------------------------------------------------------
+class TestKlingPricing:
+    def test_base_route_matches_spec_example(self):
+        # spec: kling-v3 1080p, 5s, no audio = 5 × 12 = 60
+        assert compute_kling_cost("kling-v3", "base", "1080p", 5, False) == 60
+
+    def test_4k_clamped_off_non_base_routes(self):
+        # 4K requested for the edit route is clamped to 1080p (17/sec).
+        assert normalize_kling_quality("kling-o3", "edit", "4k") == "1080p"
+        assert compute_kling_cost("kling-o3", "edit", "4k", 4, False) == 17 * 4
+
+    def test_turbo_never_4k(self):
+        assert normalize_kling_quality("kling-v3-turbo", "turbo", "4k") == "1080p"
+
+    def test_invalid_resolution_defaults_720p(self):
+        assert normalize_kling_quality("kling-v3", "base", "480p") == "720p"
+
+    def test_reference_duration_capped_at_ten(self):
+        # 15s requested on the reference route is clamped to 10s (13/sec @720p).
+        assert compute_kling_cost("kling-o3", "reference", "720p", 15, False) == 13 * 10
+
+    def test_audio_ignored_off_base_route(self):
+        # sound has no effect (and no surcharge) on the edit route.
+        assert compute_kling_cost("kling-o3", "edit", "720p", 5, True) == 13 * 5
 
 
 # ---------------------------------------------------------------------------

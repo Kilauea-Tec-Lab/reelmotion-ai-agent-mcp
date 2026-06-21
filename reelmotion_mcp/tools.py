@@ -16,10 +16,18 @@ from pricing import (
     SEEDANCE2_TOKEN_RATES,
     SEEDANCE2_VALID_ASPECT_RATIOS,
     VIDEO_DURATION_RULES,
+    KLING_MODELS,
+    KLING_ROUTE_BASE,
+    KLING_ROUTE_EDIT,
+    KLING_ROUTE_MOTION,
+    KLING_ROUTE_REFERENCE,
+    KLING_ROUTE_TURBO,
     _normalize_image_model,
     normalize_seedance_resolution,
     normalize_seedance_duration,
+    normalize_kling_quality,
     compute_seedance2_cost,
+    compute_kling_cost,
     speech_cost,
 )
 from generation_errors import (
@@ -43,6 +51,17 @@ def is_blob_url(url: str) -> bool:
 def is_data_uri(url: str) -> bool:
     """Check if a URL is an inline data: URI (base64-encoded media)."""
     return isinstance(url, str) and url.startswith("data:")
+
+
+_VIDEO_EXTENSIONS = (".mp4", ".mov", ".webm", ".m4v", ".avi", ".mkv")
+
+
+def _looks_like_video_url(url: Optional[str]) -> bool:
+    """Best-effort: does this media URL point to a video (by file extension)?"""
+    if not isinstance(url, str) or not url:
+        return False
+    path = url.split("?", 1)[0].split("#", 1)[0].lower()
+    return path.endswith(_VIDEO_EXTENSIONS)
 
 
 def normalize_image_model(model: str) -> Optional[str]:
@@ -107,13 +126,23 @@ def clean_prompt_from_model_mentions(prompt: str) -> str:
         logger.debug("Prompt contains JSON (prompt_is_json=True); passing through verbatim")
         return prompt
 
+    # Shared model-name alternation (kept in sync with the current catalog).
+    _models = (
+        r"runway(?:[-\s]?(?:aleph|4\.?5))?|"
+        r"veo[-\s]?3\.?1(?:[-\s]?(?:flash|ultra))?|"
+        r"sora[-\s]?2(?:[-\s]?pro)?|"
+        r"seedream|midjourney|nano[-\s]?banana(?:\s?2)?|gpt|"
+        r"seedance[-\s]?2(?:\.0)?(?:[-\s]?fast)?|"
+        r"kling[-\s]?(?:v?3[-\s]?turbo|v?3|o3)"
+    )
     patterns = [
-        # English: "with veo 3.1", "using runway aleph", etc.
-        r"\s+(?:with|using|via|through|by)\s+(?:runway(?:[-\s]?(?:aleph|4\.?5))?|veo[-\s]?3\.?1(?:[-\s]?(?:flash|ultra))?|seedream|midjourney|nano[-\s]?banana(?:\s?2)?|gpt|luma[-\s]?labs?|seedance[-\s]?pro|kling[-\s]?(?:v?3[-\s]?omni[-\s]?(?:pro|std)|v1))\s*$",
-        # Spanish: "con veo 3.1", "usando runway aleph", etc.
-        r"\s+(?:con|usando|mediante|por)\s+(?:runway(?:[-\s]?(?:aleph|4\.?5))?|veo[-\s]?3\.?1(?:[-\s]?(?:flash|ultra))?|seedream|midjourney|nano[-\s]?banana(?:\s?2)?|gpt|luma[-\s]?labs?|seedance[-\s]?pro|kling[-\s]?(?:v?3[-\s]?omni[-\s]?(?:pro|std)|v1))\s*$",
+        # English: "with veo 3.1", "using kling v3", etc.
+        r"\s+(?:with|using|via|through|by)\s+(?:" + _models + r")\s*$",
+        # Spanish: "con veo 3.1", "usando kling o3", etc.
+        r"\s+(?:con|usando|mediante|por)\s+(?:" + _models + r")\s*$",
         # Bare model name at end without preposition
-        r"\s+(?:runway[-\s]?(?:aleph|4\.?5)|veo[-\s]?3\.?1[-\s]?(?:flash|ultra)|kling[-\s]?v?3[-\s]?omni[-\s]?(?:pro|std))\s*$",
+        r"\s+(?:runway[-\s]?(?:aleph|4\.?5)|veo[-\s]?3\.?1[-\s]?(?:flash|ultra)|"
+        r"sora[-\s]?2(?:[-\s]?pro)?|kling[-\s]?(?:v?3[-\s]?turbo|v?3|o3))\s*$",
     ]
 
     cleaned = prompt
@@ -387,6 +416,106 @@ def _build_seedance_media(
     return False
 
 
+def _build_kling_media(
+    model: str,
+    mode: Optional[str],
+    media_url: Optional[str],
+    reference_image: Optional[str],
+    reference_images: Optional[list],
+    reference_video: Optional[str],
+    reference_videos: Optional[list],
+    motion_video: Optional[str],
+    edit_video: Optional[str],
+    context_files: Optional[list],
+) -> Tuple[str, dict]:
+    """
+    Resolve the route and media fields for a Kling v3 / v3-turbo / o3 request,
+    following the Evolink routing rules:
+      - text->video: prompt only (no media)
+      - image->video: media_url = an image
+      - motion-control (kling-v3): motion_video = a guide VIDEO; appearance
+        images go in reference_images/media_url (NEVER the guide video in media_url)
+      - reference-to-video (kling-o3): reference_images for character/style consistency
+      - video-edit (kling-o3): edit_video = the source video
+
+    Explicit args win; session reference files are the fallback. A single
+    attached image is image-to-video (cheaper base route), NOT reference mode —
+    reference mode is only entered via an explicit mode/reference_images.
+    Returns (route, media_payload).
+    """
+    session_images, session_videos = [], []
+    for f in (context_files or []):
+        u = f.get("url", "")
+        if not u or is_blob_url(u):
+            continue
+        if f.get("type") == "image":
+            session_images.append(u)
+        elif f.get("type") == "video":
+            session_videos.append(u)
+
+    media_is_video = _looks_like_video_url(media_url)
+
+    # Explicit "consistency" reference images (reference route).
+    explicit_ref_images = [u for u in (reference_images or []) if u and not is_blob_url(u)]
+
+    # The single input frame used for image-to-video (base route).
+    i2v_candidates = []
+    if reference_image and not is_blob_url(reference_image):
+        i2v_candidates.append(reference_image)
+    if media_url and not media_is_video:
+        i2v_candidates.append(media_url)
+    i2v_candidates.extend(session_images)
+    i2v_image = i2v_candidates[0] if i2v_candidates else None
+
+    # The input video used for motion/edit routes.
+    video_candidates = []
+    if reference_video and not is_blob_url(reference_video):
+        video_candidates.append(reference_video)
+    video_candidates.extend([u for u in (reference_videos or []) if u and not is_blob_url(u)])
+    if media_url and media_is_video:
+        video_candidates.append(media_url)
+    video_candidates.extend(session_videos)
+    input_video = video_candidates[0] if video_candidates else None
+
+    mode = (mode or "").lower().strip() or None
+    payload: dict = {}
+
+    if model == "kling-v3-turbo":
+        # text/image-to-video only — a video input has no route here.
+        if i2v_image:
+            payload["media_url"] = i2v_image
+        return KLING_ROUTE_TURBO, payload
+
+    if model == "kling-o3":
+        edit_src = edit_video if (edit_video and not is_blob_url(edit_video)) else input_video
+        if mode == "edit" or (mode is None and edit_src):
+            if edit_src:
+                payload["edit_video"] = edit_src
+            return KLING_ROUTE_EDIT, payload
+        if mode == "reference" or explicit_ref_images:
+            if explicit_ref_images:
+                payload["reference_images"] = explicit_ref_images[:7]
+            elif i2v_image:
+                payload["media_url"] = i2v_image
+            return KLING_ROUTE_REFERENCE, payload
+        if i2v_image:
+            payload["media_url"] = i2v_image
+        return KLING_ROUTE_BASE, payload
+
+    # kling-v3
+    motion_src = motion_video if (motion_video and not is_blob_url(motion_video)) else input_video
+    if mode == "motion" or (mode is None and motion_src):
+        if motion_src:
+            payload["motion_video"] = motion_src
+            appearance = explicit_ref_images or ([i2v_image] if i2v_image else [])
+            if appearance:
+                payload["reference_images"] = appearance[:7]
+            return KLING_ROUTE_MOTION, payload
+    if i2v_image:
+        payload["media_url"] = i2v_image
+    return KLING_ROUTE_BASE, payload
+
+
 async def generate_video(
     prompt: str,
     model: str,
@@ -402,10 +531,17 @@ async def generate_video(
     reference_images: Optional[list] = None,
     reference_videos: Optional[list] = None,
     reference_audios: Optional[list] = None,
+    quality: Optional[str] = None,
+    sound: Optional[str] = None,
+    mode: Optional[str] = None,
+    keep_sound: bool = False,
+    motion_video: Optional[str] = None,
+    edit_video: Optional[str] = None,
 ) -> str:
     """
     Generate or edit a video using AI based on a text prompt.
     Supports text-to-video, image-to-video, and video-to-video editing.
+    Sends `provider` + params to the backend (/api/ai/mcp-video-generation).
 
     Token costs per second (source of truth: pricing.py VIDEO_TOKEN_RATES):
     - runway-aleph: 17 tokens/sec (5-10s)
@@ -415,8 +551,18 @@ async def generate_video(
     - veo-3.1: 44 tokens/sec (8s only)
     - veo-3.1-flash: 17 tokens/sec (8s only)
     - veo-3.1-ultra: 65 tokens/sec (8s only)
-    - kling-v3-omni-pro: 26 tokens/sec (3-15s)
-    - kling-v3-omni-std: 19 tokens/sec (3-15s)
+    - sora-2 / sora-2-pro: cost set by the backend (no agent-side quote)
+
+    Kling v3 / o3 (Evolink) — resolution + route + audio based pricing, 3-15s
+    (reference route 3-10s), tokens/sec:
+    - kling-v3 / kling-o3 text or image: 720p=9, 1080p=12, 4k=42 (+audio 720p=12, 1080p=14)
+    - kling-v3-turbo: 720p=12, 1080p=14 (max 1080p, no audio)
+    - kling-o3 reference / video-edit: 720p=13, 1080p=17 (max 1080p)
+    - kling-v3 motion-control: 720p=13, 1080p=17 (provisional)
+    Kling routing: motion_video -> motion (kling-v3); edit_video / a video media ->
+    video-edit (kling-o3); reference_images / mode='reference' -> reference (kling-o3);
+    otherwise text/image-to-video. `quality` (720p/1080p/4k, default 720p) and
+    `sound` ('on'/'off', base route only) are clamped by the backend.
 
     Seedance 2.0 (resolution-based pricing, 4-15s, default 5s):
     - seedance-2.0: 480p=15, 720p=32, 1080p=72 tokens/sec
@@ -425,6 +571,9 @@ async def generate_video(
       seedance-2.0-fast 480p=7/720p=16.
     Seedance-only params: resolution, generate_audio, seed, media_url + end_frame
     (image mode), reference_images/reference_videos/reference_audios (reference mode).
+
+    Kling-only params: quality, sound, mode ('motion'/'reference'/'edit'),
+    keep_sound, motion_video, edit_video.
     """
     logger.debug("Tool 'generate_video' called with prompt='%s', model='%s', duration=%d", prompt, model, duration)
 
@@ -436,14 +585,23 @@ async def generate_video(
 
     prompt = clean_prompt_from_model_mentions(prompt)
     is_seedance = model in SEEDANCE2_MODELS
-    # Seedance accepts an empty/"auto" duration (normalized to 5); other models
-    # expect an explicit integer.
-    duration = normalize_seedance_duration(duration) if is_seedance else int(duration)
+    is_kling = model in KLING_MODELS
+    # Seedance/Kling accept an empty/"auto" duration (normalized to a default);
+    # other models expect an explicit integer.
+    if is_seedance:
+        duration = normalize_seedance_duration(duration)
+    elif is_kling:
+        duration = int(duration) if str(duration).strip().isdigit() else 5
+    else:
+        duration = int(duration)
 
+    # Valid providers the backend accepts. The old kling-v1 / kling-v3-omni-*
+    # keys no longer exist (they return 400).
     allowed_models = [
-        "runway", "runway-aleph", "runway-4.5", "veo-3.1", "veo-3.1-flash", "veo-3.1-ultra",
-        "luma-labs", "seedance-pro", "kling-v1",
-        "kling-v3-omni-pro", "kling-v3-omni-std",
+        "runway-aleph", "runway-4.5",
+        "sora-2", "sora-2-pro",
+        "veo-3.1", "veo-3.1-flash", "veo-3.1-ultra",
+        "kling-v3", "kling-v3-turbo", "kling-o3",
         "seedance-2.0", "seedance-2.0-fast",
     ]
 
@@ -492,7 +650,7 @@ async def generate_video(
 
     payload = {
         "prompt": prompt,
-        "ai_model": model,
+        "provider": model,
         "video_duration": duration,
         "aspect_ratio": aspect_ratio,
     }
@@ -541,6 +699,42 @@ async def generate_video(
             "Seedance payload: model=%s, resolution=%s, duration=%ds, ref_videos=%s, cost=%d tokens",
             model, res, duration, used_ref_videos, cost,
         )
+    elif is_kling:
+        # Blob-URL guard: only error if blobs were the ONLY media available.
+        if context_files:
+            valid_context_files = [f for f in context_files if not is_blob_url(f.get("url", ""))]
+            blob_files = [f for f in context_files if is_blob_url(f.get("url", ""))]
+            if blob_files:
+                logger.warning("Filtered out %d blob: URLs from reference files", len(blob_files))
+            has_explicit = bool(
+                media_url or reference_image or reference_images or reference_video
+                or reference_videos or motion_video or edit_video
+            )
+            if not valid_context_files and blob_files and not has_explicit:
+                return (
+                    "Error: The reference file could not be processed because it uses a temporary "
+                    "browser URL (blob:). Please try uploading the file again or use a direct URL."
+                )
+
+        route, media_payload = _build_kling_media(
+            model, mode, media_url, reference_image, reference_images,
+            reference_video, reference_videos, motion_video, edit_video, context_files,
+        )
+        payload.update(media_payload)
+        # Resolution/quality — 4K only on the base (text/image) route; the
+        # backend trims further. `resolution` is the value the workflow collects.
+        q = normalize_kling_quality(model, route, quality or resolution)
+        payload["quality"] = q
+        # Audio is opt-in (default off) and only effective on the base route.
+        sound_on = (str(sound or "off").lower() == "on") and route == KLING_ROUTE_BASE
+        payload["sound"] = "on" if sound_on else "off"
+        if keep_sound and route in (KLING_ROUTE_MOTION, KLING_ROUTE_REFERENCE, KLING_ROUTE_EDIT):
+            payload["keep_sound"] = True
+        cost = compute_kling_cost(model, route, q, duration, sound_on)
+        logger.debug(
+            "Kling payload: model=%s route=%s quality=%s duration=%ds sound=%s cost=%d tokens",
+            model, route, q, duration, sound_on, cost,
+        )
     elif context_files:
         valid_context_files = [f for f in context_files if not is_blob_url(f.get("url", ""))]
         blob_files = [f for f in context_files if is_blob_url(f.get("url", ""))]
@@ -561,10 +755,6 @@ async def generate_video(
             if model == "runway-aleph":
                 payload["reference_video"] = video_file["url"]
                 logger.debug("Using reference video URL (runway-aleph): %s", video_file["url"])
-                processed_video = True
-            elif model in ["kling-v3-omni-std", "kling-v3-omni-pro"]:
-                payload["media_url"] = video_file["url"]
-                logger.debug("Using reference video URL (kling-v3): %s", video_file["url"])
                 processed_video = True
 
         if not processed_video and image_file:

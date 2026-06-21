@@ -406,7 +406,7 @@ class TestMergeStateIntoArgs:
 
         merged = bot._merge_state_into_args(
             "generate_video",
-            {"prompt": "a frog", "model": "kling-v3-omni-std", "duration": 8},
+            {"prompt": "a frog", "model": "kling-v3-turbo", "duration": 8},
             state,
         )
         assert merged["model"] == "veo-3.1"

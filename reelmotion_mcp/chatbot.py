@@ -194,7 +194,7 @@ class GeminiChatbot:
            - Mentions video models: Seedance 2.0, Veo 3.1, Runway Aleph, Runway 4.5, etc.
            - IMPORTANT: Start the VIDEO WORKFLOW, do NOT call the tool directly.
            - For video EDITING (video-to-video), the user MUST provide a reference video.
-             Supported models for video editing: Runway Aleph, Kling V3 Omni Std, Kling V3 Omni Pro.
+             Supported models for video editing: Runway Aleph, Kling O3 (video-edit).
         
         2. IMAGE GENERATION/EDITING INTENT:
            - "Generate image" = IMAGE workflow
@@ -361,23 +361,30 @@ class GeminiChatbot:
         - Based on THE_PROMPT, suggest a model and explain why briefly.
         - ⚠️ ALWAYS present the models as a FORMATTED LIST (one model per line with its cost and durations), never as inline text.
         - Show available models with costs AND valid durations:
+          → Kling V3 (resolution-based: 720p=9, 1080p=12, 4K=42 tokens/sec) - 3 to 15 sec - max quality, 4K, native audio, motion-control
+          → Kling V3 Turbo (resolution-based: 720p=12, 1080p=14 tokens/sec) - 3 to 15 sec - fast & cheap drafts (max 1080p, no audio)
+          → Kling O3 (resolution-based: 720p=9, 1080p=12, 4K=42 tokens/sec) - 3 to 15 sec - character/style consistency or edit an existing video
           → Seedance 2.0 Fast (resolution-based: 480p=12, 720p=26 tokens/sec) - 4 to 15 sec - fast & economical (max 720p)
           → Seedance 2.0 (resolution-based: 480p=15, 720p=32, 1080p=72 tokens/sec) - 4 to 15 sec - supports 1080p
           → Runway 4.5 (13 tokens/sec) - 5, 8 or 10 sec - high quality
           → Runway Aleph (17 tokens/sec) - 5 or 10 sec - versatile
           → Veo 3.1 Flash (17 tokens/sec) - 8 sec only - fast and good quality
-          → Kling V3 Omni Std (19 tokens/sec) - 3 to 15 sec - text/image-to-video
-          → Kling V3 Omni Pro (26 tokens/sec) - 3 to 15 sec - text/image-to-video, better quality
           → Veo 3.1 (44 tokens/sec) - 8 sec only - high quality
           → Veo 3.1 Ultra (65 tokens/sec) - 8 sec only - maximum Veo quality
+          → Sora 2 / Sora 2 Pro - cost shown by the backend
+        - Kling quick-pick heuristic: fast/cheap → Kling V3 Turbo; max quality / 4K / audio → Kling V3;
+          keep a character or style from reference images, or edit an existing video → Kling O3.
         - Say: "I suggest [model] because [reason]. Which model would you like to use?" (in user's language)
         - Wait for user to choose model.
 
-        STEP 3.5 - ASK FOR RESOLUTION (ONLY for Seedance 2.0 / Seedance 2.0 Fast):
-        - ⚠️ This step applies ONLY when the chosen model is Seedance 2.0 or Seedance 2.0 Fast. For ALL OTHER models, SKIP this step entirely.
-        - Seedance pricing depends on the resolution, so you MUST ask for it before quoting the cost.
+        STEP 3.5 - ASK FOR RESOLUTION (ONLY for Seedance and Kling V3/Turbo/O3):
+        - ⚠️ This step applies ONLY when the chosen model is Seedance 2.0 / Seedance 2.0 Fast OR Kling V3 / Kling V3 Turbo / Kling O3. For ALL OTHER models, SKIP this step entirely.
+        - Their pricing depends on the resolution, so you MUST ask for it before quoting the cost.
           → Seedance 2.0: offer 480p, 720p, or 1080p.
           → Seedance 2.0 Fast: offer ONLY 480p or 720p. If the user asks for 1080p, tell them the Fast tier does not support it and it will use 720p (or suggest switching to Seedance 2.0).
+          → Kling V3 / Kling O3 (text-to-video or image-to-video): offer 720p, 1080p, or 4K.
+          → Kling V3 Turbo: offer ONLY 720p or 1080p (no 4K).
+          → Kling O3 reference/video-edit and Kling V3 motion-control: offer ONLY 720p or 1080p (no 4K).
         - Ask: "Which resolution? Options: [valid resolutions for the chosen model]" (in user's language)
         - Wait for the user to choose. SAVE as THE_RESOLUTION.
 
@@ -387,7 +394,7 @@ class GeminiChatbot:
           → Veo 3.1 / Veo 3.1 Flash / Veo 3.1 Ultra: ONLY 8 seconds (auto-set, just inform)
           → Runway Aleph: 5 or 10 seconds
           → Runway 4.5: 5, 8 or 10 seconds
-          → Kling V3 Omni Pro / Std: 3 to 15 seconds
+          → Kling V3 / Kling V3 Turbo / Kling O3: 3 to 15 seconds (Kling O3 reference mode: 3 to 10 seconds)
         - If the model only allows ONE duration (e.g., Veo 3.1 = 8s), inform the user and auto-set it. Move to Step 5 in the SAME response.
         - Otherwise ask: "How many seconds? Options: [valid durations]" (in user's language)
         - Wait for the user to choose. VALIDATE the duration is valid for the model.
@@ -402,6 +409,13 @@ class GeminiChatbot:
             • Seedance 2.0: 480p = 9, 720p = 20, 1080p = 43 tokens/sec
             • Seedance 2.0 Fast: 480p = 7, 720p = 16 tokens/sec
           → Use the DISCOUNTED rate ONLY if a reference video is attached; otherwise use the NORMAL rate.
+        - 💎 KLING PRICING (resolution + route + audio based — tokens/sec):
+          → Kling V3 / Kling O3, text-to-video or image-to-video: 720p = 9, 1080p = 12, 4K = 42
+            (with audio add the surcharge: 720p = 12, 1080p = 14; audio only on this route)
+          → Kling V3 Turbo (text/image-to-video only): 720p = 12, 1080p = 14 (no 4K, no audio)
+          → Kling O3 reference mode / video-edit: 720p = 13, 1080p = 17 (no 4K, no audio)
+          → Kling V3 motion-control (guide video): 720p = 13, 1080p = 17 (no 4K, no audio)
+          → Audio defaults to OFF (cheaper); only quote the +audio rate if the user explicitly asked for audio.
         - Summarize what will be generated:
           → "I'm going to generate a video:"
           → "Prompt: [brief description of THE_PROMPT]"
@@ -439,17 +453,17 @@ class GeminiChatbot:
         STEP 2 - SHOW VIDEO EDITING MODELS ONLY:
         - ⚠️ ALWAYS present the models as a FORMATTED LIST (one model per line with its cost and durations), never as inline text.
         - Show ONLY the models that support video-to-video editing:
+          → **Kling O3** (resolution-based: 720p = 13, 1080p = 17 tokens/sec) - 3 to 15 sec - video-edit ⭐ Recommended
           → **Runway Aleph** (17 tokens/sec) - 5 or 10 sec - High quality editing
-          → **Kling V3 Omni Std** (19 tokens/sec) - 3 to 15 sec - Flexible duration ⭐ Recommended
-          → **Kling V3 Omni Pro** (26 tokens/sec) - 3 to 15 sec - Better quality
-        - ⛔ DO NOT show any other models (Veo, Runway 4.5, Seedance, etc.) - they do NOT support video-to-video.
-        - Suggest Kling V3 Omni Std as the most economical option.
+        - ⛔ DO NOT show any other models (Veo, Runway 4.5, Seedance, Sora, Kling V3/Turbo, etc.) - they do NOT support video-to-video editing here.
+        - Suggest Kling O3 as the recommended option for editing an existing video.
+        - For Kling O3 you MUST also ask for the resolution (720p or 1080p) before quoting the cost.
         - Ask: "Which model would you like to use?" (in user's language)
         - Wait for user to choose. SAVE as THE_MODEL.
-        
+
         STEP 3 - ASK FOR DURATION:
         - Based on THE_MODEL:
-          → Kling V3 Omni Std / Pro: 3 to 15 seconds
+          → Kling O3: 3 to 15 seconds
           → Runway Aleph: 5 or 10 seconds
         - Ask: "How many seconds? Options: [valid durations]" (in user's language)
         - Wait for user to choose. SAVE as THE_DURATION. VALIDATE it's valid for the model.
@@ -466,22 +480,28 @@ class GeminiChatbot:
         - ⛔ DO NOT call the tool until the user explicitly confirms.
         - Once confirmed, CALL generate_video immediately using:
           → prompt = THE_EDIT_PROMPT
-          → ai_model = the chosen model name (exact: 'kling-v3-omni-std', 'kling-v3-omni-pro', or 'runway-aleph')
-          → video_duration = THE_DURATION
-          → reference_video = the attached video URL
+          → model = the chosen model name (exact: 'kling-o3' or 'runway-aleph'). It is sent to the backend as `provider`.
+          → duration = THE_DURATION
+          → reference_video = the attached video URL (for kling-o3 this becomes the edit_video / video-edit route)
+          → resolution = THE_RESOLUTION (kling-o3 only: '720p' or '1080p')
         
         ═══════════════════════════════════════════════════
         
         ADDITIONAL VIDEO RULES (apply to BOTH workflows):
         1. ⚠️ PROMPT PARAMETER RULE: Same as image - NEVER use conversational replies as prompt.
         2. FORBIDDEN to modify the agreed-upon prompt without consent.
-        3. When calling the tool, use EXACT model names:
+        3. When calling the tool, use EXACT model names (sent to the backend as `provider`):
            - 'seedance-2.0', 'seedance-2.0-fast'
            - 'veo-3.1', 'veo-3.1-flash', 'veo-3.1-ultra'
            - 'runway-aleph', 'runway-4.5'
-           - 'kling-v3-omni-pro', 'kling-v3-omni-std'
+           - 'sora-2', 'sora-2-pro'
+           - 'kling-v3', 'kling-v3-turbo', 'kling-o3'
+           ⛔ The old 'kling-v1' / 'kling-v3-omni-std' / 'kling-v3-omni-pro' keys no longer exist — never send them.
            For Seedance, also pass resolution ('480p'/'720p'/'1080p'). Seedance auto-detects
            the mode: a reference video → reference mode (discounted), an image → image mode, prompt only → text mode.
+           For Kling, pass resolution ('720p'/'1080p'/'4k'; 4K only on kling-v3/kling-o3 text/image). Kling auto-detects
+           the route: a guide video → kling-v3 motion-control; editing an existing video → kling-o3 video-edit;
+           reference images for consistency → kling-o3 reference; an input image → image-to-video; prompt only → text-to-video.
         4. If there are attached images, use them as reference automatically (image-to-video).
         5. NEVER mention video URLs - they are sent automatically.
         6. IF THERE'S AN ERROR: Inform user. If they say "try again"/"retry", execute again without hesitation.

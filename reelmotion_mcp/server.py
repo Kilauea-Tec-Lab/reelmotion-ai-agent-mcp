@@ -439,6 +439,12 @@ def generate_video(
     reference_images: Optional[list] = None,
     reference_videos: Optional[list] = None,
     reference_audios: Optional[list] = None,
+    quality: Optional[str] = None,
+    sound: Optional[str] = None,
+    mode: Optional[str] = None,
+    keep_sound: bool = False,
+    motion_video: Optional[str] = None,
+    edit_video: Optional[str] = None,
 ) -> str:
     """
     Generate or edit a video using AI based on a text prompt.
@@ -450,7 +456,7 @@ def generate_video(
     - Image-to-video: Animate a reference image into a video.
     - Video-to-video (editing): Transform or edit an existing video using a text prompt + reference video.
       Examples: change style, add effects, modify movement, re-edit scenes.
-      Supported models for video-to-video: runway-aleph, kling-v3-omni-std, kling-v3-omni-pro.
+      Supported models for video-to-video: runway-aleph, kling-o3 (video-edit).
 
     Token costs per second and valid durations:
     - runway-aleph: 17 tokens/sec (5-10s) - video-to-video editing
@@ -458,8 +464,17 @@ def generate_video(
     - veo-3.1: 44 tokens/sec (8s only)
     - veo-3.1-flash: 17 tokens/sec (8s only)
     - veo-3.1-ultra: 65 tokens/sec (8s only) - maximum quality
-    - kling-v3-omni-pro: 26 tokens/sec (3-15s) - text/image-to-video
-    - kling-v3-omni-std: 19 tokens/sec (3-15s) - video-to-video editing
+    - sora-2 / sora-2-pro: cost set by the backend
+
+    Kling v3 / o3 (RESOLUTION + route + audio based, 3-15s; reference 3-10s):
+    - kling-v3: max quality, 4K, native audio, motion-control. text/image: 720p=9, 1080p=12,
+      4k=42 (+audio 720p=12, 1080p=14); motion-control: 720p=13, 1080p=17.
+    - kling-v3-turbo: fast/cheap drafts (text/image only, max 1080p, no audio): 720p=12, 1080p=14.
+    - kling-o3: character/style consistency (reference) or edit an existing video: 720p=13, 1080p=17;
+      plain text/image: 720p=9, 1080p=12, 4k=42.
+      Heuristic: edit a video -> kling-o3 + edit_video; keep a character/style from images ->
+      kling-o3 + reference_images; animate with a guide video -> kling-v3 + motion_video;
+      fast/cheap -> kling-v3-turbo; max quality/4K/audio -> kling-v3.
 
     Seedance 2.0 (RESOLUTION-based pricing, 4-15s duration, default 5s):
     - seedance-2.0: 480p=15, 720p=32, 1080p=72 tokens/sec (supports 1080p)
@@ -471,25 +486,33 @@ def generate_video(
 
     Args:
         prompt: Description of the video to generate or editing instructions (exact user text, NO modifications)
-        model: AI model to use. See token costs above.
+        model: Provider to use (see catalog above). Sent to the backend as `provider`.
         duration: Video duration in seconds. Valid durations depend on model (see above)
         aspect_ratio: '16:9', '9:16', '1:1', etc. Seedance also accepts auto/21:9/4:3/3:4. Defaults to '16:9'
         reference_image: URL of reference image (for image-to-video generation)
-        reference_video: URL of reference video (for video-to-video editing with runway-aleph, kling-v3)
-        resolution: '480p', '720p', or '1080p' (Seedance only; fast tier caps at 720p). Defaults to '720p'
+        reference_video: URL of reference video (for video-to-video editing with runway-aleph / kling-o3)
+        resolution: '480p'/'720p'/'1080p' (Seedance) or '720p'/'1080p'/'4k' (Kling). Defaults to '720p'
         generate_audio: Whether to generate audio (Seedance only). Defaults to True. Does not affect price.
         seed: Optional random seed for reproducibility (Seedance only)
-        media_url: Reference image URL for Seedance image mode (with optional end_frame)
+        media_url: Reference image (or video) URL — image mode (Seedance/Kling) or video-edit (Kling)
         end_frame: Optional last-frame image URL for Seedance image mode
-        reference_images: List of reference image URLs for Seedance reference mode (max 9)
-        reference_videos: List of reference video URLs for Seedance reference mode (max 3, triggers discount)
+        reference_images: Reference image URLs — Seedance reference mode (max 9) or Kling reference/consistency
+        reference_videos: Reference video URLs — Seedance reference mode (max 3, discount)
         reference_audios: List of reference audio URLs for Seedance reference mode (max 3)
+        quality: Kling resolution '720p'/'1080p'/'4k' (default 720p; 4K only on kling-v3/o3 text/image)
+        sound: Kling audio 'on'/'off' (default off; only effective on the text/image route of kling-v3/o3)
+        mode: Force a Kling route: 'motion' | 'reference' | 'edit'
+        keep_sound: Keep the original audio in Kling motion/reference/edit routes
+        motion_video: Guide video URL for kling-v3 motion-control
+        edit_video: Source video URL for kling-o3 video-edit
     """
     return generate_video_impl(
         prompt, model, duration, aspect_ratio, reference_image, reference_video,
         resolution=resolution, generate_audio=generate_audio, seed=seed,
         media_url=media_url, end_frame=end_frame, reference_images=reference_images,
         reference_videos=reference_videos, reference_audios=reference_audios,
+        quality=quality, sound=sound, mode=mode, keep_sound=keep_sound,
+        motion_video=motion_video, edit_video=edit_video,
     )
 
 @mcp.tool

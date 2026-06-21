@@ -438,8 +438,8 @@ _SKIP_LLM_PATTERNS = [
         r"genial|excelente|increible|incre[ií]ble|"
         r"hi|hello|hey|hola|buenas?|"
         r"gpt|nano\s*banana(?:\s*2)?|seedream|midjourney|"
-        r"veo(?:\s*3\.?1)?(?:\s*(?:flash|ultra))?|"
-        r"runway(?:\s*(?:aleph|4\.?5))?|kling(?:\s*v?3)?(?:\s*omni)?(?:\s*(?:pro|std))?|"
+        r"veo(?:\s*3\.?1)?(?:\s*(?:flash|ultra))?|sora(?:\s*2(?:\s*pro)?)?|"
+        r"runway(?:\s*(?:aleph|4\.?5))?|kling(?:[\s-]*(?:v?3(?:[\s-]*turbo)?|o3))?|"
         r"\d+\s*s(?:ec(?:onds?|undos?)?)?|\d+|"
         r"image|video|imagen|audio|speech|voz)"
         r"[\s.,!?¡¿]*$",

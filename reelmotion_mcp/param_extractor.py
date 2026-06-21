@@ -39,7 +39,7 @@ _RESPONSE_SCHEMA = {
         "prompt": {"type": "STRING"},
         "model": {"type": "STRING"},
         "duration": {"type": "INTEGER"},
-        "resolution": {"type": "STRING", "enum": ["480p", "720p", "1080p"]},
+        "resolution": {"type": "STRING", "enum": ["480p", "720p", "1080p", "4k"]},
         "voice_name": {"type": "STRING"},
     },
     "required": ["intent"],

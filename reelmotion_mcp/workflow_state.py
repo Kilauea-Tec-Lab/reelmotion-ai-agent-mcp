@@ -25,8 +25,17 @@ from pricing import (
     VIDEO_TOKEN_RATES,
     VIDEO_DURATION_RULES,
     SEEDANCE2_MODELS,
+    KLING_MODELS,
+    KLING_ROUTE_BASE,
+    KLING_ROUTE_EDIT,
+    KLING_ROUTE_TURBO,
     normalize_seedance_resolution,
+    normalize_kling_quality,
 )
+
+# Models that price/behave by RESOLUTION (an explicit resolution step is asked
+# before quoting cost): Seedance tiers + the Kling v3/o3 tiers.
+RESOLUTION_MODELS = tuple(SEEDANCE2_MODELS) + tuple(KLING_MODELS)
 
 STATE_VERSION = 1
 WORKFLOW_STATE_TTL = 7200  # 2h — outlives pending_action (300s), shorter than session (24h)
@@ -39,8 +48,10 @@ WORKFLOW_UNKNOWN = "unknown"
 
 VIDEO_WORKFLOWS = (WORKFLOW_VIDEO_GEN, WORKFLOW_VIDEO_EDIT)
 
-# Models allowed for video-to-video editing (the rest don't support it)
-VIDEO_EDIT_MODELS = ("runway-aleph", "kling-v3-omni-std", "kling-v3-omni-pro")
+# Models allowed for video-to-video editing (the rest don't support it).
+# kling-o3 covers both the "edit an existing video" and "reference-to-video"
+# routes; runway-aleph remains a high-quality editor.
+VIDEO_EDIT_MODELS = ("runway-aleph", "kling-o3")
 
 RACHEL_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"
 
@@ -251,7 +262,10 @@ def json_prompt_summary(json_prompt: str) -> Tuple[int, bool]:
 def _build_model_alias_table() -> Dict[str, str]:
     """alias (lowercase) -> canonical pricing.py key."""
     table: Dict[str, str] = {}
-    for canonical in list(IMAGE_COSTS) + list(VIDEO_TOKEN_RATES) + list(SEEDANCE2_MODELS):
+    for canonical in (
+        list(IMAGE_COSTS) + list(VIDEO_TOKEN_RATES)
+        + list(SEEDANCE2_MODELS) + list(KLING_MODELS)
+    ):
         table[canonical.lower()] = canonical
     table.update({
         "seedance 2.0 fast": "seedance-2.0-fast",
@@ -271,13 +285,27 @@ def _build_model_alias_table() -> Dict[str, str]:
         "runway aleph": "runway-aleph",
         "runway 4.5": "runway-4.5",
         "runway 4,5": "runway-4.5",
-        "kling v3 omni pro": "kling-v3-omni-pro",
-        "kling v3 omni std": "kling-v3-omni-std",
-        "kling omni pro": "kling-v3-omni-pro",
-        "kling omni std": "kling-v3-omni-std",
-        "kling pro": "kling-v3-omni-pro",
-        "kling std": "kling-v3-omni-std",
-        "kling standard": "kling-v3-omni-std",
+        "sora 2 pro": "sora-2-pro",
+        "sora-2 pro": "sora-2-pro",
+        "sora 2": "sora-2",
+        "sora2": "sora-2",
+        # Kling v3 / v3-turbo / o3 (Evolink). The old kling-v3-omni-*/kling-v1
+        # keys no longer exist on the backend (they 400) — these aliases map
+        # legacy phrasings onto the closest current tier.
+        "kling v3 turbo": "kling-v3-turbo",
+        "kling-v3 turbo": "kling-v3-turbo",
+        "kling v3-turbo": "kling-v3-turbo",
+        "kling turbo": "kling-v3-turbo",
+        "kling v3": "kling-v3",
+        "kling o3": "kling-o3",
+        "kling-o3": "kling-o3",
+        "kling pro": "kling-v3",
+        "kling std": "kling-v3-turbo",
+        "kling standard": "kling-v3-turbo",
+        "kling v3 omni pro": "kling-v3",
+        "kling v3 omni std": "kling-v3-turbo",
+        "kling omni pro": "kling-v3",
+        "kling omni std": "kling-v3-turbo",
         "nano banana 2": "Nano Banana 2",
         "nano banana": "Nano Banana 2",
         "nanobanana": "Nano Banana 2",
@@ -313,7 +341,7 @@ _DURATION_SUFFIX_RE = re.compile(
     r"\b(\d+)\s*(?:s|sec|secs|seconds?|seg|segs|segundos?)\b", re.IGNORECASE
 )
 _BARE_INT_RE = re.compile(r"^\s*(\d+)\s*[.,!?]*\s*$")
-_RESOLUTION_RE = re.compile(r"\b(480p|720p|1080p)\b", re.IGNORECASE)
+_RESOLUTION_RE = re.compile(r"\b(480p|720p|1080p|4k)\b", re.IGNORECASE)
 _VOICE_RE = re.compile(
     r"\b(" + "|".join(sorted(VOICE_NAME_TO_ID, key=len, reverse=True)) + r")\b",
     re.IGNORECASE,
@@ -487,7 +515,7 @@ def compute_step(state: dict) -> str:
         return "awaiting_model"
     if workflow_type in VIDEO_WORKFLOWS:
         model = params["model"]
-        if model in SEEDANCE2_MODELS and not params.get("resolution"):
+        if model in RESOLUTION_MODELS and not params.get("resolution"):
             return "awaiting_resolution"
         if not params.get("duration"):
             return "awaiting_duration"
@@ -558,7 +586,7 @@ def apply_user_message(state: dict, message: str, has_reference_video: bool = Fa
                 rules = VIDEO_DURATION_RULES.get(model)
                 if rules and params["duration"] not in rules:
                     params["duration"] = None  # previous duration invalid for new model
-            if model not in SEEDANCE2_MODELS:
+            if model not in RESOLUTION_MODELS:
                 params["resolution"] = None
 
     # --- Duration / resolution (video workflows) ----------------------------
@@ -573,6 +601,8 @@ def apply_user_message(state: dict, message: str, has_reference_video: bool = Fa
             model_for_res = params.get("model")
             if model_for_res in SEEDANCE2_MODELS:
                 params["resolution"] = normalize_seedance_resolution(model_for_res, resolution)
+            elif model_for_res in KLING_MODELS:
+                params["resolution"] = normalize_kling_quality(model_for_res, None, resolution)
             else:
                 params["resolution"] = resolution
 
@@ -702,7 +732,7 @@ def merge_extracted(state: Optional[dict], extracted: dict) -> dict:
         params["duration"] = duration
 
     resolution = (extracted.get("resolution") or "").lower()
-    if resolution in ("480p", "720p", "1080p") and not params.get("resolution"):
+    if resolution in ("480p", "720p", "1080p", "4k") and not params.get("resolution"):
         params["resolution"] = resolution
 
     voice = parse_voice(extracted.get("voice_name") or "")
@@ -742,7 +772,7 @@ def missing_fields(state: dict) -> List[str]:
     if workflow_type in VIDEO_WORKFLOWS:
         if not params.get("duration"):
             missing.append("duration")
-        if params.get("model") in SEEDANCE2_MODELS and not params.get("resolution"):
+        if params.get("model") in RESOLUTION_MODELS and not params.get("resolution"):
             missing.append("resolution")
     return missing
 
@@ -788,6 +818,17 @@ def build_action_args(state: dict, ref_urls: Optional[List[str]] = None) -> Opti
         }
         if model in SEEDANCE2_MODELS:
             args["resolution"] = normalize_seedance_resolution(model, params.get("resolution"))
+        elif model in KLING_MODELS:
+            route = (
+                KLING_ROUTE_EDIT
+                if (workflow_type == WORKFLOW_VIDEO_EDIT and model == "kling-o3")
+                else (KLING_ROUTE_TURBO if model == "kling-v3-turbo" else KLING_ROUTE_BASE)
+            )
+            args["resolution"] = normalize_kling_quality(model, route, params.get("resolution"))
+            # mode=edit makes the cost estimate use the edit rate; the tool also
+            # auto-detects the edit route from the attached reference video.
+            if workflow_type == WORKFLOW_VIDEO_EDIT and model == "kling-o3":
+                args["mode"] = "edit"
         # Reference files are attached by execute_pending_action from refs:{uuid}
         return "generate_video", args
 

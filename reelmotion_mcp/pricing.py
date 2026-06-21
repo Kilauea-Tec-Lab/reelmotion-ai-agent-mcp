@@ -33,14 +33,16 @@ QUANTITY_IMAGE_MODELS = ("GPT", "Nano Banana 2")
 # ---------------------------------------------------------------------------
 # Video pricing — flat tokens/second models
 # ---------------------------------------------------------------------------
+# NOTE: the kling-v3 / kling-v3-turbo / kling-o3 tiers are NOT here — their
+# rate depends on resolution + route + audio, so they live in KLING_TOKEN_RATES
+# below (mirrors how Seedance is handled). sora-2 / sora-2-pro have no published
+# rate yet, so estimate_generation_cost returns None for them (backend bills).
 VIDEO_TOKEN_RATES: Dict[str, int] = {
     "runway-aleph": 17,
     "runway-4.5": 13,
     "veo-3.1": 44,
     "veo-3.1-flash": 17,
     "veo-3.1-ultra": 65,
-    "kling-v3-omni-pro": 26,
-    "kling-v3-omni-std": 19,
 }
 
 # Valid durations (seconds) per video model.
@@ -53,9 +55,9 @@ VIDEO_DURATION_RULES: Dict[str, List[int]] = {
     "runway": [5, 10],
     "runway-aleph": [5, 10],
     "runway-4.5": [5, 8, 10],
-    "kling-v1": [5, 10],
-    "kling-v3-omni-pro": list(range(3, 16)),
-    "kling-v3-omni-std": list(range(3, 16)),
+    "kling-v3": list(range(3, 16)),
+    "kling-v3-turbo": list(range(3, 16)),
+    "kling-o3": list(range(3, 16)),
     "seedance-2.0": list(range(4, 16)),
     "seedance-2.0-fast": list(range(4, 16)),
 }
@@ -119,6 +121,139 @@ def compute_seedance2_cost(
     if per_sec is None:
         per_sec = SEEDANCE2_TOKEN_RATES["normal"].get(model, {}).get(res, 0)
     return per_sec * normalize_seedance_duration(duration)
+
+
+# ---------------------------------------------------------------------------
+# Kling v3 / o3 pricing & helpers (Evolink — /api/ai/mcp-video-generation)
+# ---------------------------------------------------------------------------
+# kling-v3 / kling-v3-turbo / kling-o3 price per SECOND, and the per-second rate
+# depends on the ROUTE (text/image vs reference/edit vs motion-control), the
+# RESOLUTION (720p/1080p/4k) and whether native AUDIO is on. tokens = rate ×
+# duration. The backend is the real biller (it trims quality/audio/duration and
+# reserves atomically); these tables mirror its rates so the agent can quote a
+# cost BEFORE generating.
+KLING_MODELS = ("kling-v3", "kling-v3-turbo", "kling-o3")
+
+# Routes (also used by tools.py to shape the request payload)
+KLING_ROUTE_BASE = "base"            # v3/o3 text-to-video or image-to-video
+KLING_ROUTE_TURBO = "turbo"          # kling-v3-turbo (text/image-to-video only)
+KLING_ROUTE_REFERENCE = "reference"  # kling-o3 reference-to-video (consistency)
+KLING_ROUTE_EDIT = "edit"            # kling-o3 video-edit
+KLING_ROUTE_MOTION = "motion"        # kling-v3 motion-control (guide video)
+
+# Per-second token rates, indexed by route then resolution.
+KLING_TOKEN_RATES = {
+    KLING_ROUTE_BASE: {"720p": 9, "1080p": 12, "4k": 42},
+    KLING_ROUTE_TURBO: {"720p": 12, "1080p": 14},
+    KLING_ROUTE_REFERENCE: {"720p": 13, "1080p": 17},
+    KLING_ROUTE_EDIT: {"720p": 13, "1080p": 17},
+    KLING_ROUTE_MOTION: {"720p": 13, "1080p": 17},
+}
+
+# Audio surcharge applies ONLY to the base (v3/o3 text/image) route, at
+# 720p/1080p. Audio is ignored (and not charged) on turbo/reference/edit/motion.
+KLING_AUDIO_RATES = {
+    KLING_ROUTE_BASE: {"720p": 12, "1080p": 14},
+}
+
+KLING_VALID_QUALITIES = ("720p", "1080p", "4k")
+KLING_DURATION_MIN = 3
+KLING_DURATION_MAX = 15
+KLING_REFERENCE_DURATION_MAX = 10  # reference route is capped at 10s
+
+# Cheapest reachable per-second rate per model (the base/turbo route), used by
+# the affordability helpers. Advanced routes (reference/edit/motion) cost more
+# and need extra media, so "what can I afford?" quotes the base route.
+KLING_BASE_RATES_BY_MODEL = {
+    "kling-v3": KLING_TOKEN_RATES[KLING_ROUTE_BASE],
+    "kling-o3": KLING_TOKEN_RATES[KLING_ROUTE_BASE],
+    "kling-v3-turbo": KLING_TOKEN_RATES[KLING_ROUTE_TURBO],
+}
+
+
+def default_kling_route(provider: str) -> str:
+    """The route a Kling provider falls into for plain text/image-to-video."""
+    return KLING_ROUTE_TURBO if provider == "kling-v3-turbo" else KLING_ROUTE_BASE
+
+
+def normalize_kling_quality(provider: str, route: Optional[str], quality: Optional[str]) -> str:
+    """
+    Clamp a requested quality to what the provider/route actually supports,
+    defaulting to 720p. 4K exists ONLY on the base (text/image) route of
+    kling-v3 / kling-o3; every other case caps at 1080p.
+    """
+    q = (quality or "720p").lower().strip()
+    if q not in KLING_VALID_QUALITIES:
+        q = "720p"
+    route = route or default_kling_route(provider)
+    if q == "4k" and (route != KLING_ROUTE_BASE or provider == "kling-v3-turbo"):
+        q = "1080p"
+    return q
+
+
+def normalize_kling_duration(duration, route: Optional[str] = None) -> int:
+    """Clamp a Kling duration to its valid range (3-15s, reference 3-10s; default 5)."""
+    if duration in (None, "", "auto"):
+        return 5
+    try:
+        dur = int(duration)
+    except (TypeError, ValueError):
+        return 5
+    hi = KLING_REFERENCE_DURATION_MAX if route == KLING_ROUTE_REFERENCE else KLING_DURATION_MAX
+    return max(KLING_DURATION_MIN, min(hi, dur))
+
+
+def kling_route_from_args(provider: str, args: Optional[dict]) -> str:
+    """
+    Derive the Kling route from a generation-args dict (used for cost estimation
+    and to decide which media field the payload should carry).
+    """
+    args = args or {}
+    mode = str(args.get("mode") or "").lower().strip()
+    if provider == "kling-v3-turbo":
+        return KLING_ROUTE_TURBO
+    has_ref_video = bool(args.get("reference_videos") or args.get("reference_video"))
+    if provider == "kling-o3":
+        if mode == "edit" or args.get("edit_video") or has_ref_video:
+            return KLING_ROUTE_EDIT
+        if mode == "reference" or args.get("reference_images"):
+            return KLING_ROUTE_REFERENCE
+        return KLING_ROUTE_BASE
+    # kling-v3
+    if mode == "motion" or args.get("motion_video") or has_ref_video:
+        return KLING_ROUTE_MOTION
+    return KLING_ROUTE_BASE
+
+
+def _kling_sound_on(args: dict, route: str) -> bool:
+    """
+    Audio only matters (and is only charged) on the base (v3/o3 text/image)
+    route, and is opt-in via sound="on" (default off — drafts skip the
+    surcharge). It is ignored on turbo/reference/edit/motion.
+    """
+    if route != KLING_ROUTE_BASE:
+        return False
+    return str(args.get("sound") or "off").lower() == "on"
+
+
+def compute_kling_cost(
+    provider: str,
+    route: Optional[str] = None,
+    quality: Optional[str] = None,
+    duration=None,
+    sound: bool = False,
+) -> int:
+    """Total token cost for a Kling generation = rate(route, resolution, audio) × duration."""
+    route = route or default_kling_route(provider)
+    q = normalize_kling_quality(provider, route, quality)
+    rate = None
+    if sound and route == KLING_ROUTE_BASE:
+        rate = KLING_AUDIO_RATES.get(KLING_ROUTE_BASE, {}).get(q)
+    if rate is None:
+        rate = KLING_TOKEN_RATES.get(route, {}).get(q)
+    if rate is None:
+        rate = KLING_TOKEN_RATES[KLING_ROUTE_BASE]["720p"]
+    return rate * normalize_kling_duration(duration, route)
 
 
 # ---------------------------------------------------------------------------
@@ -194,9 +329,18 @@ def estimate_generation_cost(function_name: str, args: dict) -> Optional[int]:
             return compute_seedance2_cost(
                 model, args.get("resolution"), duration, has_reference_videos=has_ref_videos
             )
+        if model in KLING_MODELS:
+            if duration is None:
+                return None
+            route = kling_route_from_args(model, args)
+            quality = args.get("quality") or args.get("resolution")
+            sound = _kling_sound_on(args, route)
+            return compute_kling_cost(model, route, quality, duration, sound)
         rate = VIDEO_TOKEN_RATES.get(model)
         if rate is None:
-            return None  # legacy/unknown model (runway, luma-labs, seedance-pro, kling-v1)
+            # legacy/unknown or unpriced model (runway, luma-labs, seedance-pro,
+            # sora-2, sora-2-pro) — backend remains the final biller.
+            return None
         try:
             return rate * int(duration)
         except (TypeError, ValueError):
@@ -244,6 +388,12 @@ def affordable_options(balance: int) -> Dict:
             if durations:
                 best = max(durations)
                 videos.append({"model": model, "resolution": res, "max_duration": best, "cost": rate * best})
+    for model, res_table in KLING_BASE_RATES_BY_MODEL.items():
+        for res, rate in res_table.items():
+            durations = [d for d in VIDEO_DURATION_RULES.get(model, []) if rate * d <= balance]
+            if durations:
+                best = max(durations)
+                videos.append({"model": model, "resolution": res, "max_duration": best, "cost": rate * best})
     # Most capable options first (longest duration, then cheapest)
     videos.sort(key=lambda v: (-v["max_duration"], v["cost"]))
 
@@ -272,6 +422,10 @@ def min_video_cost() -> int:
         if VIDEO_DURATION_RULES.get(model)
     ]
     for model, res_table in SEEDANCE2_TOKEN_RATES["normal"].items():
+        durations = VIDEO_DURATION_RULES.get(model)
+        if durations:
+            costs.extend(rate * min(durations) for rate in res_table.values())
+    for model, res_table in KLING_BASE_RATES_BY_MODEL.items():
         durations = VIDEO_DURATION_RULES.get(model)
         if durations:
             costs.extend(rate * min(durations) for rate in res_table.values())
