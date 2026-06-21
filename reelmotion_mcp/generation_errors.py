@@ -17,6 +17,12 @@ from typing import Optional
 
 GENERATION_ERROR_PREFIX = "GENERATION_ERROR"
 
+# Marker returned when the backend accepted a generation but couldn't finish it
+# within its synchronous window (HTTP 202). This is NOT an error: the video is
+# still being produced and the user is notified (push/realtime) when it's ready.
+# We do NOT poll — the agent just tells the user it's on the way.
+GENERATION_PROCESSING_PREFIX = "GENERATION_PROCESSING"
+
 _MAX_DETAIL_CHARS = 500
 
 # Known categories, mapped from HTTP status codes.
@@ -160,3 +166,48 @@ def fallback_error_message(category: str, lang: str = "en") -> str:
     """Friendly, code-generated explanation for a failure category."""
     messages = _FALLBACK_MESSAGES.get(category, _FALLBACK_MESSAGES[CATEGORY_UNKNOWN])
     return "⚠️ " + messages.get(lang, messages["en"])
+
+
+# ---------------------------------------------------------------------------
+# "Still processing" signal (HTTP 202) — not an error, not a finished result.
+# ---------------------------------------------------------------------------
+_PROCESSING_MESSAGES = {
+    "video": {
+        "es": "🎬 Tu video se está generando y puede tardar un poco más de lo normal. "
+              "Te llegará una notificación cuando esté listo; no necesitas hacer nada más.",
+        "en": "🎬 Your video is being generated and may take a little longer than usual. "
+              "You'll get a notification as soon as it's ready — no further action needed.",
+    },
+    "image": {
+        "es": "🎨 Tu imagen se está generando y puede tardar un poco más de lo normal. "
+              "Te llegará una notificación cuando esté lista; no necesitas hacer nada más.",
+        "en": "🎨 Your image is being generated and may take a little longer than usual. "
+              "You'll get a notification as soon as it's ready — no further action needed.",
+    },
+}
+
+_PROCESSING_TYPE_RE = re.compile(r"type=(?P<type>[\w-]+)")
+
+
+def format_generation_processing(gen_type: str = "video") -> str:
+    """Render the stable 'accepted, still processing' marker (HTTP 202)."""
+    return f"{GENERATION_PROCESSING_PREFIX} | type={gen_type}"
+
+
+def is_generation_processing(text: str) -> bool:
+    """True if `text` is the 'still processing' marker (HTTP 202 path)."""
+    return bool(text) and text.strip().startswith(GENERATION_PROCESSING_PREFIX)
+
+
+def generation_processing_type(text: str) -> str:
+    """Extract the gen_type from a GENERATION_PROCESSING marker (default 'video')."""
+    if not text:
+        return "video"
+    match = _PROCESSING_TYPE_RE.search(text)
+    return match.group("type") if match else "video"
+
+
+def processing_message(lang: str = "en", gen_type: str = "video") -> str:
+    """Friendly, localized 'your content is on the way' message (HTTP 202)."""
+    by_type = _PROCESSING_MESSAGES.get(gen_type) or _PROCESSING_MESSAGES["video"]
+    return by_type.get(lang) or by_type["en"]

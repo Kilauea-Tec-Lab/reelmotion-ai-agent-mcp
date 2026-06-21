@@ -52,14 +52,38 @@ class TestEstimateGenerationCost:
     def test_image_gpt_costs_six(self):
         assert estimate_generation_cost("generate_image", {"model": "GPT"}) == 6
 
-    def test_image_quantity_multiplies_cost(self):
+    def test_image_seedream_costs_four(self):
+        assert estimate_generation_cost("generate_image", {"model": "Seedream"}) == 4
+
+    def test_image_midjourney_costs_nine(self):
+        assert estimate_generation_cost("generate_image", {"model": "Midjourney"}) == 9
+
+    def test_image_quantity_multiplies_cost_for_supported_models(self):
         cost = estimate_generation_cost(
-            "generate_image", {"model": "Freepik", "quantity": 3}
+            "generate_image", {"model": "GPT", "quantity": 3}
         )
-        assert cost == 3
+        assert cost == 18
+
+    def test_image_quantity_ignored_for_seedream(self):
+        # Seedream always bills for one image per call regardless of quantity.
+        cost = estimate_generation_cost(
+            "generate_image", {"model": "Seedream", "quantity": 5}
+        )
+        assert cost == 4
+
+    def test_image_quantity_ignored_for_midjourney(self):
+        cost = estimate_generation_cost(
+            "generate_image", {"model": "Midjourney", "quantity": 4}
+        )
+        assert cost == 9
 
     def test_image_loose_model_name_is_normalized(self):
         assert estimate_generation_cost("generate_image", {"model": "nano-banana"}) == 7
+        assert estimate_generation_cost("generate_image", {"model": "seedream 4.0"}) == 4
+
+    def test_image_freepik_is_not_a_valid_model(self):
+        # Freepik was removed from the catalog — unknown model → no estimate.
+        assert estimate_generation_cost("generate_image", {"model": "Freepik"}) is None
 
     def test_image_unknown_model_returns_none(self):
         assert estimate_generation_cost("generate_image", {"model": "dall-e"}) is None
@@ -179,19 +203,19 @@ class TestLanguageAndMessage:
         assert "352" in msg
         assert "120" in msg
         assert "No tienes tokens suficientes" in msg
-        assert "Freepik" in msg
+        assert "Seedream" in msg
 
     def test_english_message_contains_cost_balance_and_alternative(self):
         msg = build_insufficient_balance_message(352, 120, "en", affordable_options(120))
         assert "352" in msg
         assert "120" in msg
         assert "don't have enough tokens" in msg
-        assert "Freepik" in msg
+        assert "Seedream" in msg
 
     def test_zero_balance_message_suggests_topup_only(self):
         msg = build_insufficient_balance_message(160, 0, "en", affordable_options(0))
         assert "top up" in msg.lower()
-        assert "Freepik" not in msg
+        assert "Seedream" not in msg
 
 
 # ---------------------------------------------------------------------------

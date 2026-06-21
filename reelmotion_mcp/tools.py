@@ -1,21 +1,22 @@
 import os
-import asyncio
-import time
 import httpx
 import json
 import logging
 import re
-from typing import Optional
+from typing import Optional, Tuple
 
 from request_context import get_api_token, get_conversation_uuid
 from session_manager import get_session_manager
 from logging_config import setup_logging
 from moderation import is_disallowed_content, get_refusal_message
 from pricing import (
+    IMAGE_COSTS,
+    QUANTITY_IMAGE_MODELS,
     SEEDANCE2_MODELS,
     SEEDANCE2_TOKEN_RATES,
     SEEDANCE2_VALID_ASPECT_RATIOS,
     VIDEO_DURATION_RULES,
+    _normalize_image_model,
     normalize_seedance_resolution,
     normalize_seedance_duration,
     compute_seedance2_cost,
@@ -26,6 +27,7 @@ from generation_errors import (
     CATEGORY_TIMEOUT,
     CATEGORY_UNKNOWN,
     format_generation_error,
+    format_generation_processing,
     parse_backend_error,
 )
 
@@ -36,6 +38,53 @@ logger = logging.getLogger(__name__)
 def is_blob_url(url: str) -> bool:
     """Check if a URL is a browser-only blob: URL that cannot be fetched server-side."""
     return isinstance(url, str) and url.startswith("blob:")
+
+
+def is_data_uri(url: str) -> bool:
+    """Check if a URL is an inline data: URI (base64-encoded media)."""
+    return isinstance(url, str) and url.startswith("data:")
+
+
+def normalize_image_model(model: str) -> Optional[str]:
+    """
+    Resolve a loose image model name to its canonical, case-sensitive backend
+    name, or None if it isn't a known image model. There is NO Freepik model.
+    Thin wrapper over pricing's normalizer (single source of truth).
+    """
+    return _normalize_image_model(model)
+
+
+def _extract_image_urls(result: dict) -> list:
+    """
+    Pull every generated image URL out of a backend response, tolerant of the
+    several shapes the endpoint returns:
+      - Seedream/Midjourney hybrid: {"status": "completed", "image_url": "..."}
+        (Midjourney also returns "all_result_urls": [4 variants]).
+      - GPT/Nano Banana: {"images": [{"url": ...}]} or {"data": [...]}.
+    The PRIMARY image (image_url) comes first; Midjourney variants are appended
+    after it so callers can show only the primary by default.
+    """
+    urls: list = []
+
+    def _add(value):
+        if isinstance(value, str) and value and value not in urls:
+            urls.append(value)
+        elif isinstance(value, dict):
+            _add(value.get("url"))
+
+    _add(result.get("image_url") or result.get("result_url") or result.get("url"))
+
+    images_data = result.get("images") or result.get("data")
+    if isinstance(images_data, list):
+        for img in images_data:
+            _add(img)
+    elif images_data is not None:
+        _add(images_data)
+
+    for variant in result.get("all_result_urls") or []:
+        _add(variant)
+
+    return urls
 
 
 def clean_prompt_from_model_mentions(prompt: str) -> str:
@@ -60,9 +109,9 @@ def clean_prompt_from_model_mentions(prompt: str) -> str:
 
     patterns = [
         # English: "with veo 3.1", "using runway aleph", etc.
-        r"\s+(?:with|using|via|through|by)\s+(?:runway(?:[-\s]?(?:aleph|4\.?5))?|veo[-\s]?3\.?1(?:[-\s]?(?:flash|ultra))?|nano[-\s]?banana|gpt|freepik|luma[-\s]?labs?|seedance[-\s]?pro|kling[-\s]?(?:v?3[-\s]?omni[-\s]?(?:pro|std)|v1))\s*$",
+        r"\s+(?:with|using|via|through|by)\s+(?:runway(?:[-\s]?(?:aleph|4\.?5))?|veo[-\s]?3\.?1(?:[-\s]?(?:flash|ultra))?|seedream|midjourney|nano[-\s]?banana(?:\s?2)?|gpt|luma[-\s]?labs?|seedance[-\s]?pro|kling[-\s]?(?:v?3[-\s]?omni[-\s]?(?:pro|std)|v1))\s*$",
         # Spanish: "con veo 3.1", "usando runway aleph", etc.
-        r"\s+(?:con|usando|mediante|por)\s+(?:runway(?:[-\s]?(?:aleph|4\.?5))?|veo[-\s]?3\.?1(?:[-\s]?(?:flash|ultra))?|nano[-\s]?banana|gpt|freepik|luma[-\s]?labs?|seedance[-\s]?pro|kling[-\s]?(?:v?3[-\s]?omni[-\s]?(?:pro|std)|v1))\s*$",
+        r"\s+(?:con|usando|mediante|por)\s+(?:runway(?:[-\s]?(?:aleph|4\.?5))?|veo[-\s]?3\.?1(?:[-\s]?(?:flash|ultra))?|seedream|midjourney|nano[-\s]?banana(?:\s?2)?|gpt|luma[-\s]?labs?|seedance[-\s]?pro|kling[-\s]?(?:v?3[-\s]?omni[-\s]?(?:pro|std)|v1))\s*$",
         # Bare model name at end without preposition
         r"\s+(?:runway[-\s]?(?:aleph|4\.?5)|veo[-\s]?3\.?1[-\s]?(?:flash|ultra)|kling[-\s]?v?3[-\s]?omni[-\s]?(?:pro|std))\s*$",
     ]
@@ -76,20 +125,75 @@ def clean_prompt_from_model_mentions(prompt: str) -> str:
     return cleaned if cleaned else prompt
 
 
+def _collect_image_reference_urls(
+    model: str,
+    context_files: Optional[list],
+    reference_image: Optional[str],
+    reference_images: Optional[list],
+) -> Tuple[list, bool]:
+    """
+    Resolve the reference image URLs to send, honoring the backend's per-model
+    rules. Session reference files are primary; explicit args are a fallback
+    used only when the session has none.
+
+    Returns (urls, only_blobs_dropped) where only_blobs_dropped is True when the
+    ONLY references available were unusable browser blob: URLs (caller surfaces
+    a friendly error in that case).
+    """
+    session_images = [
+        f.get("url") for f in (context_files or [])
+        if f.get("type") == "image" and f.get("url")
+    ]
+    explicit = list(reference_images or [])
+    if reference_image:
+        explicit.append(reference_image)
+
+    candidates = session_images or explicit
+    non_blob = [u for u in candidates if u and not is_blob_url(u)]
+    dropped_blobs = [u for u in candidates if is_blob_url(u)]
+    if dropped_blobs:
+        logger.warning(
+            "Filtered out %d blob: URLs that cannot be processed server-side",
+            len(dropped_blobs),
+        )
+
+    usable = list(non_blob)
+    # Midjourney img2img ignores inline data: URIs — only public URLs work.
+    if model == "Midjourney":
+        data_uris = [u for u in usable if is_data_uri(u)]
+        if data_uris:
+            logger.warning(
+                "Dropped %d data: URI reference(s) — Midjourney requires public URLs",
+                len(data_uris),
+            )
+        usable = [u for u in usable if not is_data_uri(u)]
+
+    # Surface the blob error only when blobs were the ONLY references available.
+    only_blobs = bool(dropped_blobs) and not non_blob
+    return usable, only_blobs
+
+
 async def generate_image(
     prompt: str,
-    model: str = "GPT",
+    model: str = "Seedream",
     image_type: int = 1,
     quantity: int = 1,
     reference_image: Optional[str] = None,
     reference_images: Optional[list] = None,
+    aspect_ratio: str = "16:9",
+    quality: str = "2K",
 ) -> str:
     """
     Generate or edit an image using the reelmotion backend.
     Supports text-to-image (type 1), image-to-image (type 2), and multi-image reference (type 3).
 
-    COST: Nano Banana 2 = 7 tokens, GPT = 6 tokens, Freepik = 1 token per image.
-    (Source of truth: pricing.py IMAGE_COSTS.)
+    COST: Seedream = 4, GPT = 6, Nano Banana 2 = 7, Midjourney = 9 tokens per image.
+    (Source of truth: pricing.py IMAGE_COSTS. There is NO Freepik model.)
+
+    Seedream and Midjourney deliver asynchronously (hybrid): the call may return
+    the finished image (200) or, for slow jobs, "still processing" (202) — in
+    which case the user is notified when it's ready and we never retry. A failed
+    job (422) is auto-refunded by the backend; insufficient balance is 402.
     """
     logger.debug("Tool 'generate_image' called with prompt='%s', model='%s'", prompt, model)
 
@@ -103,17 +207,10 @@ async def generate_image(
     prompt = clean_prompt_from_model_mentions(prompt)
 
     # Validate and normalise model name
-    allowed_models = ["Nano Banana 2", "GPT", "Freepik"]
-    if model not in allowed_models:
-        if "nano" in model.lower():
-            model = "Nano Banana 2"
-        elif "gpt" in model.lower():
-            model = "GPT"
-        elif "freepik" in model.lower():
-            model = "Freepik"
-        else:
-            return f"Error: Invalid model '{model}'. Allowed models are: {', '.join(allowed_models)}"
-
+    canonical = normalize_image_model(model)
+    if canonical is None:
+        return f"Error: Invalid model '{model}'. Allowed models are: {', '.join(IMAGE_COSTS)}"
+    model = canonical
     logger.debug("Normalised model to '%s'", model)
 
     backend_url = os.getenv("BACKEND_URL")
@@ -136,151 +233,102 @@ async def generate_image(
     url = f"{backend_url}{endpoint}"
     logger.debug("Calling URL: %s", url)
 
-    headers = {"Accept": "application/json"}
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
     if api_token:
         headers["Authorization"] = f"Bearer {api_token}"
 
-    if context_files:
-        image_files = [f for f in context_files if f.get("type") == "image"]
-        valid_image_files = [f for f in image_files if not is_blob_url(f.get("url", ""))]
-        blob_image_files = [f for f in image_files if is_blob_url(f.get("url", ""))]
+    ref_urls, only_blobs = _collect_image_reference_urls(
+        model, context_files, reference_image, reference_images
+    )
+    if only_blobs:
+        return (
+            "Error: The reference image could not be processed because it uses a temporary "
+            "browser URL (blob:). Please try uploading the image again or use a direct image URL."
+        )
 
-        if blob_image_files:
-            logger.warning(
-                "Filtered out %d blob: URLs that cannot be processed server-side",
-                len(blob_image_files),
-            )
+    payload = {
+        "prompt": prompt,
+        "model": model,
+        "aspect_ratio": aspect_ratio,
+    }
+    # `quality` (2K/3K) only applies to Seedream; ignored by other models.
+    if model == "Seedream":
+        payload["quality"] = quality
+    # `type`/`quantity` only apply to the models that honor multi-image; Seedream
+    # and Midjourney always generate exactly one image per call.
+    if model in QUANTITY_IMAGE_MODELS:
+        payload["type"] = image_type
+        payload["quantity"] = max(1, quantity)
 
-        if not valid_image_files and blob_image_files:
-            return (
-                "Error: The reference image could not be processed because it uses a temporary "
-                "browser URL (blob:). Please try uploading the image again or use a direct image URL."
-            )
+    if len(ref_urls) == 1:
+        payload["reference_image"] = ref_urls[0]
+    elif len(ref_urls) > 1:
+        payload["reference_images"] = ref_urls
 
-        image_files = valid_image_files
-        logger.debug("Sending request with %d valid image URLs", len(image_files))
-        headers["Content-Type"] = "application/json"
+    logger.debug("Sending image request with %d reference URL(s)", len(ref_urls))
 
-        payload = {
-            "prompt": prompt,
-            "model": model,
-            "type": image_type,
-            "quantity": quantity,
-        }
+    try:
+        timeout = httpx.Timeout(180.0, connect=10.0)
+        # AsyncClient: a sync client here would block the event loop for every
+        # other conversation while the backend generates.
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(url, json=payload, headers=headers)
+            logger.debug("Response status: %d", response.status_code)
 
-        if len(image_files) == 1:
-            payload["reference_image"] = image_files[0]["url"]
-        elif len(image_files) > 1:
-            payload["reference_images"] = [f["url"] for f in image_files]
+            # Branch on the HTTP STATUS, never the model name (mirrors video):
+            #   202 -> accepted but not finished in the sync window; the user is
+            #          notified when ready — we do NOT poll and do NOT retry.
+            #   200 -> the finished image(s) are in the response body.
+            #   else (402/422/401/5xx/...) -> raise for the typed handlers below.
+            if response.status_code == 202:
+                logger.debug("Backend returned 202: image will be delivered asynchronously")
+                return format_generation_processing("image")
 
-        try:
-            timeout = httpx.Timeout(180.0, connect=10.0)
-            # AsyncClient: a sync client here would block the event loop for
-            # every other conversation while the backend generates.
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.post(url, json=payload, headers=headers)
-                response.raise_for_status()
-                result = response.json()
+            response.raise_for_status()
+            result = response.json()
 
-            logger.debug("Backend response: %s", result)
+        logger.debug("Backend response: %s", result)
 
-            images_data = result.get("images") or result.get("data")
-            if images_data:
-                if isinstance(images_data, list):
-                    for img in images_data:
-                        if isinstance(img, dict) and "url" in img:
-                            await session_manager.save_generated_file(
-                                conversation_uuid, img["url"], "image"
-                            )
-                elif isinstance(images_data, dict) and "url" in images_data:
-                    await session_manager.save_generated_file(
-                        conversation_uuid, images_data["url"], "image"
-                    )
+        # Save only the PRIMARY image; Midjourney's extra variants
+        # (all_result_urls) are intentionally not shown unless asked for.
+        image_urls = _extract_image_urls(result)
+        if not image_urls:
+            return "Image generation initiated but URL not immediately available. Check status later."
 
-            await session_manager.clear_reference_files(conversation_uuid)
-            logger.debug("Reference files cleared after use")
+        await session_manager.save_generated_file(conversation_uuid, image_urls[0], "image")
+        await session_manager.clear_reference_files(conversation_uuid)
+        logger.debug("Reference files cleared after image generation")
+        return f"Images generated successfully with {model}."
 
-            return f"Images generated successfully with {model}."
-        except httpx.HTTPStatusError as e:
-            parsed = parse_backend_error(e.response.status_code, e.response.text)
-            logger.error(
-                "Error generating image (HTTP %d, with context images): %s",
-                parsed["status"], parsed["detail"],
-            )
-            return format_generation_error("image", parsed["category"], parsed["status"], parsed["detail"])
-        except httpx.TimeoutException:
-            logger.error("Error generating image (with context images): timeout after 180s")
-            return format_generation_error(
-                "image", CATEGORY_TIMEOUT, 0,
-                "The image service did not respond within 180 seconds.",
-            )
-        except httpx.HTTPError as e:
-            logger.error("Error generating image (network, with context images): %s", e)
-            return format_generation_error(
-                "image", CATEGORY_BACKEND_UNAVAILABLE, 0,
-                f"Could not reach the image service: {e}",
-            )
-        except Exception as e:
-            logger.error("Error generating image (with context images): %s", e)
-            return format_generation_error("image", CATEGORY_UNKNOWN, 0, str(e))
-
-    else:
-        # Text-only generation — no reference images
-        logger.debug("Sending JSON request (text-only, no images)")
-        headers["Content-Type"] = "application/json"
-
-        payload = {
-            "prompt": prompt,
-            "model": model,
-            "type": image_type,
-            "quantity": quantity,
-        }
-
-        try:
-            timeout = httpx.Timeout(180.0, connect=10.0)
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.post(url, json=payload, headers=headers)
-                response.raise_for_status()
-                result = response.json()
-
-            logger.debug("Backend response: %s", result)
-
-            images_data = result.get("images") or result.get("data")
-            if images_data:
-                if isinstance(images_data, list):
-                    for img in images_data:
-                        if isinstance(img, dict) and "url" in img:
-                            await session_manager.save_generated_file(
-                                conversation_uuid, img["url"], "image"
-                            )
-                elif isinstance(images_data, dict) and "url" in images_data:
-                    await session_manager.save_generated_file(
-                        conversation_uuid, images_data["url"], "image"
-                    )
-
-            return f"Images generated successfully with {model}."
-        except httpx.HTTPStatusError as e:
-            parsed = parse_backend_error(e.response.status_code, e.response.text)
-            logger.error(
-                "Error generating image (HTTP %d, text-only): %s",
-                parsed["status"], parsed["detail"],
-            )
-            return format_generation_error("image", parsed["category"], parsed["status"], parsed["detail"])
-        except httpx.TimeoutException:
-            logger.error("Error generating image (text-only): timeout after 180s")
-            return format_generation_error(
-                "image", CATEGORY_TIMEOUT, 0,
-                "The image service did not respond within 180 seconds.",
-            )
-        except httpx.HTTPError as e:
-            logger.error("Error generating image (network, text-only): %s", e)
-            return format_generation_error(
-                "image", CATEGORY_BACKEND_UNAVAILABLE, 0,
-                f"Could not reach the image service: {e}",
-            )
-        except Exception as e:
-            logger.error("Error generating image (text-only): %s", e)
-            return format_generation_error("image", CATEGORY_UNKNOWN, 0, str(e))
+    except httpx.HTTPStatusError as e:
+        parsed = parse_backend_error(e.response.status_code, e.response.text)
+        detail = parsed["detail"]
+        # A 422 means the provider failed AFTER accepting the job; the backend
+        # auto-refunds (refunded: true), so reassure the user they weren't charged.
+        if e.response.status_code == 422:
+            try:
+                body = e.response.json()
+                if isinstance(body, dict) and body.get("refunded"):
+                    detail += " Your tokens were automatically refunded, so you were not charged."
+            except (ValueError, TypeError):
+                pass
+        logger.error("Error generating image (HTTP %d): %s", parsed["status"], detail)
+        return format_generation_error("image", parsed["category"], parsed["status"], detail)
+    except httpx.TimeoutException:
+        logger.error("Error generating image: timeout after 180s")
+        return format_generation_error(
+            "image", CATEGORY_TIMEOUT, 0,
+            "The image service did not respond within 180 seconds.",
+        )
+    except httpx.HTTPError as e:
+        logger.error("Error generating image (network): %s", e)
+        return format_generation_error(
+            "image", CATEGORY_BACKEND_UNAVAILABLE, 0,
+            f"Could not reach the image service: {e}",
+        )
+    except Exception as e:
+        logger.error("Error generating image: %s", e)
+        return format_generation_error("image", CATEGORY_UNKNOWN, 0, str(e))
 
 
 # ---------------------------------------------------------------------------
@@ -339,147 +387,6 @@ def _build_seedance_media(
     return False
 
 
-# ---------------------------------------------------------------------------
-# Async video generation (202 + poll) helpers
-# ---------------------------------------------------------------------------
-# Some providers (currently runway-4.5) no longer return the finished video in
-# the POST response: the backend answers 202 with a generation_id + poll_url and
-# we poll a cheap DB-backed status endpoint until the job is done. We branch on
-# the HTTP STATUS, never the provider name, so any provider the backend migrates
-# to async later works without changes here.
-POLL_INITIAL_DELAY_S = 5.0     # wait before the first status check
-POLL_FAST_INTERVAL_S = 5.0     # poll cadence during the first minute
-POLL_FAST_WINDOW_S = 60.0      # how long the fast cadence lasts
-POLL_SLOW_INTERVAL_S = 12.0    # poll cadence after the first minute (10-15s)
-POLL_MAX_WAIT_S = 900.0        # give up after ~15 min (non-fatal: may finish later)
-POLL_STATUS_TIMEOUT_S = 30.0   # per-request timeout for a single status GET
-
-STATUS_COMPLETED = "completed"
-STATUS_FAILED = "failed"
-
-
-def classify_poll_result(result: Optional[dict]) -> dict:
-    """
-    Interpret a generation-status payload into a terminal/pending decision.
-
-    Pure (no I/O) so it can be unit-tested in isolation. Returns one of:
-      {"state": "completed", "result_url": str|None}
-      {"state": "failed", "error": str, "refunded": bool}
-      {"state": "pending"}   # queued/processing/unknown/empty -> keep polling
-    """
-    if not isinstance(result, dict):
-        return {"state": "pending"}
-
-    status = str(result.get("status") or "").lower()
-
-    if status == STATUS_COMPLETED:
-        return {"state": "completed", "result_url": result.get("result_url")}
-
-    if status == STATUS_FAILED:
-        return {
-            "state": "failed",
-            "error": str(result.get("error") or "The provider reported a failed generation."),
-            "refunded": bool(result.get("refunded")),
-        }
-
-    return {"state": "pending"}
-
-
-async def _poll_generation_status(
-    status_url: str,
-    headers: dict,
-    media_type: str,
-    model: str,
-    conversation_uuid: str,
-    session_manager,
-) -> str:
-    """
-    Poll the backend generation-status endpoint until the job reaches a terminal
-    state (completed/failed) or POLL_MAX_WAIT_S elapses.
-
-    On completion the result_url is saved to the session exactly like the
-    synchronous path, so the chatbot contract (a plain success/error string) is
-    unchanged. A timeout is NOT fatal — the job may still finish on the backend,
-    so we return a timeout-category message instead of a hard error.
-    """
-    gen_type = media_type or "video"
-    deadline = time.monotonic() + POLL_MAX_WAIT_S
-    timeout = httpx.Timeout(POLL_STATUS_TIMEOUT_S, connect=10.0)
-
-    await asyncio.sleep(POLL_INITIAL_DELAY_S)
-
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        while True:
-            result = None
-            try:
-                response = await client.get(status_url, headers=headers)
-                response.raise_for_status()
-                result = response.json()
-            except httpx.HTTPStatusError as e:
-                # Auth/permission errors won't recover — fail fast.
-                if e.response.status_code in (401, 403):
-                    parsed = parse_backend_error(e.response.status_code, e.response.text)
-                    logger.error("Polling auth error (HTTP %d): %s", parsed["status"], parsed["detail"])
-                    return format_generation_error(gen_type, parsed["category"], parsed["status"], parsed["detail"])
-                # Other HTTP errors (5xx, transient 404) — keep polling.
-                logger.warning("Transient polling HTTP error %d; will retry", e.response.status_code)
-            except httpx.HTTPError as e:
-                logger.warning("Transient polling network error; will retry: %s", e)
-
-            decision = classify_poll_result(result)
-            logger.debug("Poll decision=%s for %s", decision["state"], status_url)
-
-            if decision["state"] == STATUS_COMPLETED:
-                result_url = decision.get("result_url")
-                if result_url:
-                    await session_manager.save_generated_file(conversation_uuid, result_url, gen_type)
-                    await session_manager.clear_reference_files(conversation_uuid)
-                    logger.debug("Async generation completed; result saved")
-                    return f"Video generated successfully with {model}."
-                logger.warning("Completed status without result_url")
-                return format_generation_error(
-                    gen_type, CATEGORY_UNKNOWN, 0,
-                    "The generation completed but no result URL was returned.",
-                )
-
-            if decision["state"] == STATUS_FAILED:
-                detail = decision["error"]
-                if decision["refunded"]:
-                    detail += " Your tokens were automatically refunded."
-                logger.error("Async generation failed: %s (refunded=%s)", detail, decision["refunded"])
-                return format_generation_error(gen_type, CATEGORY_UNKNOWN, 0, detail)
-
-            if time.monotonic() >= deadline:
-                logger.warning("Async generation polling timed out after %.0fs", POLL_MAX_WAIT_S)
-                return format_generation_error(
-                    gen_type, CATEGORY_TIMEOUT, 0,
-                    "The video is taking longer than expected and is still processing. "
-                    "It may finish shortly — check your library in a few minutes.",
-                )
-
-            elapsed = POLL_MAX_WAIT_S - (deadline - time.monotonic())
-            interval = POLL_FAST_INTERVAL_S if elapsed < POLL_FAST_WINDOW_S else POLL_SLOW_INTERVAL_S
-            await asyncio.sleep(interval)
-
-
-def _build_status_url(backend_url: str, accepted: dict) -> Optional[str]:
-    """
-    Build the absolute generation-status URL from a 202 response.
-
-    Prefers the backend-provided poll_url (relative or absolute); falls back to
-    /api/ai/generation-status/{generation_id}. Returns None if neither is usable.
-    """
-    generation_id = accepted.get("generation_id")
-    poll_path = accepted.get("poll_url") or (
-        f"/api/ai/generation-status/{generation_id}" if generation_id else None
-    )
-    if not poll_path:
-        return None
-    if poll_path.startswith("http://") or poll_path.startswith("https://"):
-        return poll_path
-    return f"{backend_url}/{poll_path.lstrip('/')}"
-
-
 async def generate_video(
     prompt: str,
     model: str,
@@ -502,7 +409,9 @@ async def generate_video(
 
     Token costs per second (source of truth: pricing.py VIDEO_TOKEN_RATES):
     - runway-aleph: 17 tokens/sec (5-10s)
-    - runway-4.5: 13 tokens/sec (5, 8, or 10s) — ASYNC: backend returns 202, we poll
+    - runway-4.5: 13 tokens/sec (5, 8, or 10s) — hybrid: backend waits synchronously
+      (up to ~590s) and returns the finished video (200); only very long jobs spill
+      to 202 (still processing, async notification)
     - veo-3.1: 44 tokens/sec (8s only)
     - veo-3.1-flash: 17 tokens/sec (8s only)
     - veo-3.1-ultra: 65 tokens/sec (8s only)
@@ -669,39 +578,39 @@ async def generate_video(
     logger.debug("Payload: %s", json.dumps(payload, indent=2))
 
     try:
-        # 900s ceiling for SYNC providers that still return the finished video in
-        # the POST response. ASYNC providers (runway-4.5) answer 202 instantly and
-        # are then polled separately. AsyncClient keeps the event loop free for
-        # other conversations while the backend generates.
-        timeout = httpx.Timeout(900.0, connect=15.0)
+        # 900s read ceiling. The hybrid backend (runway-4.5) now holds the
+        # request SYNCHRONOUSLY for up to ~590s (≈10 min) and answers 200 with
+        # the finished video in the normal case; only very long generations spill
+        # past that window and come back 202 (still processing). The read ceiling
+        # MUST stay above that window (≥600s) so the agent never cuts off before
+        # the backend can return the video_url — otherwise a slow-but-successful
+        # generation surfaces as a connection error and the user never sees the
+        # video. The other providers are still fully synchronous and can also take
+        # minutes, so the high ceiling serves them too. AsyncClient keeps the
+        # event loop free for other conversations.
+        timeout = httpx.Timeout(900.0, connect=30.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(url, json=payload, headers=headers)
             logger.debug("Response status: %d", response.status_code)
-            response.raise_for_status()
 
-            # Branch on the HTTP STATUS, not the provider: 202 = the backend
-            # accepted the job and we must poll for the result; 200 = the video
-            # is already in the response (legacy synchronous providers).
+            # Branch on the HTTP STATUS, never the provider name, so any provider
+            # the backend migrates to the hybrid model later works here unchanged.
+            #   202 -> accepted but not finished in the sync window; the user is
+            #          notified (push/realtime) when it's ready — we do NOT poll.
+            #   200 -> the finished video is already in the response body.
+            #   else (402/422/401/5xx/...) -> raise and let the typed handlers
+            #          below classify and explain it.
             if response.status_code == 202:
-                accepted = response.json()
-                logger.debug("Backend accepted async generation (202): %s", accepted)
-                status_url = _build_status_url(backend_url, accepted)
-                if not status_url:
-                    logger.error("202 response missing poll_url/generation_id: %s", accepted)
-                    return format_generation_error(
-                        "video", CATEGORY_UNKNOWN, 202,
-                        "The generation was accepted but no status URL was provided.",
-                    )
-                logger.debug("Polling async generation status at %s", status_url)
-                return await _poll_generation_status(
-                    status_url, headers, accepted.get("media_type", "video"),
-                    model, conversation_uuid, session_manager,
-                )
+                logger.debug("Backend returned 202: video will be delivered asynchronously")
+                return format_generation_processing("video")
 
+            response.raise_for_status()
             result = response.json()
 
         logger.debug("Backend response: %s", result)
 
+        # Never assume video_url is present — in the hybrid model it only comes
+        # back on the synchronous (200) path.
         video_url = result.get("video_url") or result.get("result_url")
         if video_url:
             await session_manager.save_generated_file(conversation_uuid, video_url, "video")
@@ -713,8 +622,19 @@ async def generate_video(
 
     except httpx.HTTPStatusError as e:
         parsed = parse_backend_error(e.response.status_code, e.response.text)
-        logger.error("Error generating video (HTTP %d): %s", parsed["status"], parsed["detail"])
-        return format_generation_error("video", parsed["category"], parsed["status"], parsed["detail"])
+        detail = parsed["detail"]
+        # A 422 from the hybrid backend means the provider failed AFTER accepting
+        # the job; the backend auto-refunds (refunded: true), so reassure the user
+        # they were not charged.
+        if e.response.status_code == 422:
+            try:
+                body = e.response.json()
+                if isinstance(body, dict) and body.get("refunded"):
+                    detail += " Your tokens were automatically refunded, so you were not charged."
+            except (ValueError, TypeError):
+                pass
+        logger.error("Error generating video (HTTP %d): %s", parsed["status"], detail)
+        return format_generation_error("video", parsed["category"], parsed["status"], detail)
     except httpx.TimeoutException:
         logger.error("Error generating video: request timeout after 900s")
         return format_generation_error(

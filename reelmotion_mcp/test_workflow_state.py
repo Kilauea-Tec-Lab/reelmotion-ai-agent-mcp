@@ -133,7 +133,9 @@ class TestNormalizeModelName:
         ("kling std", "kling-v3-omni-std"),
         ("nano banana", "Nano Banana 2"),
         ("use GPT", "GPT"),
-        ("freepik", "Freepik"),
+        ("seedream", "Seedream"),
+        ("midjourney", "Midjourney"),
+        ("mid journey", "Midjourney"),
     ])
     def test_aliases(self, alias, expected):
         assert normalize_model_name(alias) == expected

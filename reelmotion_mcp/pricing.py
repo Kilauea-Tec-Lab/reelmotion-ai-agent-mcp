@@ -16,11 +16,19 @@ from typing import Dict, List, Optional
 # ---------------------------------------------------------------------------
 # Image pricing (tokens per image)
 # ---------------------------------------------------------------------------
+# Exact, case-sensitive model names as the backend (/api/ai/mcp-image-generation)
+# expects them. There is NO "Freepik" model — never offer or select it.
 IMAGE_COSTS: Dict[str, int] = {
-    "Nano Banana 2": 7,
+    "Seedream": 4,
     "GPT": 6,
-    "Freepik": 1,
+    "Nano Banana 2": 7,
+    "Midjourney": 9,
 }
+
+# Only these image models honor `type`/`quantity` (multi-image in one call).
+# Seedream and Midjourney always produce exactly ONE image per call — quantity
+# is ignored, so multiple images mean multiple calls (each billed separately).
+QUANTITY_IMAGE_MODELS = ("GPT", "Nano Banana 2")
 
 # ---------------------------------------------------------------------------
 # Video pricing — flat tokens/second models
@@ -142,12 +150,14 @@ def _normalize_image_model(model: str) -> Optional[str]:
     if model in IMAGE_COSTS:
         return model
     lowered = (model or "").lower()
-    if "nano" in lowered:
+    if "seedream" in lowered:
+        return "Seedream"
+    if "midjourney" in lowered or lowered.strip() == "mj":
+        return "Midjourney"
+    if "nano" in lowered or "banana" in lowered:
         return "Nano Banana 2"
     if "gpt" in lowered:
         return "GPT"
-    if "freepik" in lowered:
-        return "Freepik"
     return None
 
 
@@ -162,12 +172,17 @@ def estimate_generation_cost(function_name: str, args: dict) -> Optional[int]:
     args = args or {}
 
     if function_name == "generate_image":
-        model = _normalize_image_model(args.get("model", "GPT"))
+        model = _normalize_image_model(args.get("model", "Seedream"))
         if model is None:
             return None
-        try:
-            quantity = max(1, int(args.get("quantity", 1)))
-        except (TypeError, ValueError):
+        # Seedream/Midjourney always bill for exactly one image per call;
+        # quantity only multiplies the cost for the models that honor it.
+        if model in QUANTITY_IMAGE_MODELS:
+            try:
+                quantity = max(1, int(args.get("quantity", 1)))
+            except (TypeError, ValueError):
+                quantity = 1
+        else:
             quantity = 1
         return IMAGE_COSTS[model] * quantity
 

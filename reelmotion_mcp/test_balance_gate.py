@@ -10,6 +10,7 @@ import pytest
 
 import chatbot as chatbot_module
 from chatbot import GeminiChatbot
+from generation_errors import format_generation_processing
 from pricing import affordable_options
 from request_context import (
     clear_insufficient_block,
@@ -124,6 +125,41 @@ class TestExecutePendingActionBalanceGate:
         explain.assert_awaited_once()
         assert tool_result is None  # never sets just_generated for failures
         assert response == "⚠️ friendly"
+
+    def test_processing_202_returns_localized_message(self, bot):
+        # The hybrid backend answered 202: the generation was accepted but isn't
+        # finished. The user gets a friendly "on the way" message (Spanish here,
+        # since VIDEO_ACTION's cost_message is Spanish) — not an error.
+        bot.session_manager.get_pending_action = AsyncMock(return_value=dict(VIDEO_ACTION))
+        bot.session_manager.claim_pending_action = AsyncMock(return_value=dict(VIDEO_ACTION))
+        set_token_balance(500)
+
+        marker = format_generation_processing("video")
+        with patch.object(chatbot_module, "generate_video", new=AsyncMock(return_value=marker)) as tool:
+            tool_result, response = asyncio.run(bot.execute_pending_action())
+
+        tool.assert_awaited_once()
+        assert tool_result == marker
+        assert "notificación" in response  # localized to es
+        assert "⚠️" not in response  # not framed as an error
+
+
+class TestContextualMessageRendering:
+    @pytest.fixture
+    def bot(self):
+        return GeminiChatbot(conversation_uuid="test-render")
+
+    def test_processing_marker_renders_spanish(self, bot):
+        msg = bot._generate_contextual_success_message(
+            format_generation_processing("video"), tool_was_called=True, lang="es"
+        )
+        assert "notificación" in msg
+
+    def test_processing_marker_renders_english(self, bot):
+        msg = bot._generate_contextual_success_message(
+            format_generation_processing("video"), tool_was_called=True, lang="en"
+        )
+        assert "notification" in msg
 
 
 class TestSavePendingOrBlock:

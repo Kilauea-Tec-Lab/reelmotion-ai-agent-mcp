@@ -282,7 +282,9 @@ def _build_model_alias_table() -> Dict[str, str]:
         "nano banana": "Nano Banana 2",
         "nanobanana": "Nano Banana 2",
         "gpt": "GPT",
-        "freepik": "Freepik",
+        "seedream": "Seedream",
+        "midjourney": "Midjourney",
+        "mid journey": "Midjourney",
     })
     return table
 

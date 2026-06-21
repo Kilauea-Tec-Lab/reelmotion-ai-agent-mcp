@@ -5,7 +5,7 @@ AI-powered agent for image and video generation using Google Gemini and multiple
 ## Features
 
 - 🤖 **Gemini-powered chatbot** with multi-language support (English/Spanish auto-detection)
-- 🖼️ **Image generation** (Nano Banana, GPT models)
+- 🖼️ **Image generation** (Seedream, GPT, Nano Banana 2, Midjourney)
 - 🎬 **Video generation** (Runway Aleph, Veo 3.1, Seedance 2.0, and more)
 - 💾 **Redis-based session management** for concurrent conversations
 - 🔄 **Reference file persistence** (images/videos via URL)
@@ -132,8 +132,10 @@ GET /health
 
 ### Image Generation
 
-- **Nano Banana** - Fast generation (10 tokens/image)
-- **GPT** - High-quality images (10 tokens/image)
+- **Seedream** - Realism / photographic fidelity, cinematic, reference images (4 tokens/image) — recommended default
+- **GPT** - Readable text in image, strict instruction following (6 tokens/image)
+- **Nano Banana 2** - Quick edits / multi-reference composition (7 tokens/image)
+- **Midjourney** - Artistic style, illustration, creative concepts (9 tokens/image)
 
 ### Video Generation
 

@@ -30,6 +30,9 @@ from generation_errors import (
     GENERATION_ERROR_PREFIX,
     parse_generation_error,
     fallback_error_message,
+    is_generation_processing,
+    generation_processing_type,
+    processing_message,
 )
 from logging_config import setup_logging
 from moderation import (
@@ -86,7 +89,7 @@ def needs_clarification(message: str, has_ref_files: bool) -> tuple[bool, str]:
         return False, ""  # Clear: wants to generate VIDEO
     
     # === CLEAR INTENT: IMAGE MODEL MENTIONED ===
-    image_model_keywords = ['gpt', 'nano', 'banana', 'freepik']
+    image_model_keywords = ['gpt', 'nano', 'banana', 'seedream', 'midjourney']
     if any(model in msg_lower for model in image_model_keywords):
         return False, ""  # Clear: wants to generate IMAGE
     
@@ -157,7 +160,7 @@ class GeminiChatbot:
         - AMBIGUOUS MESSAGES: Short replies like "no", "ok", "yes", "gpt", "veo 3.1", "5s", model names, or single words that exist in multiple languages are NOT a language switch. KEEP the last clearly detected language (default: English).
         - LANGUAGE SWITCH: Only change language if the user writes a CLEAR sentence in a different language or explicitly requests it.
         - This applies to ALL messages: questions, confirmations, cost info, errors, EVERYTHING.
-        - Keep technical terms and model names in their original form (e.g., "Nano Banana 2", "GPT", "Freepik").
+        - Keep technical terms and model names in their original form (e.g., "Seedream", "GPT", "Nano Banana 2", "Midjourney").
         - IMPORTANT: All instructions below are written in English for clarity, but you MUST always respond to the user in THEIR language (default: English).
 
         🧭 WORKFLOW STATE CONTEXT (AUTHORITATIVE):
@@ -197,7 +200,7 @@ class GeminiChatbot:
            - "Generate image" = IMAGE workflow
            - "Create an image" = IMAGE workflow
            - "Edit image" + reference image = IMAGE-TO-IMAGE workflow
-           - Mentions image models: GPT, Nano Banana 2, Freepik
+           - Mentions image models: Seedream, Midjourney, GPT, Nano Banana 2
            - IMPORTANT: Start the IMAGE WORKFLOW, do NOT call the tool directly.
            - For image EDITING (image-to-image), the user MUST provide a reference image.
              The tool uses type 2 (single ref) or type 3 (multiple refs).
@@ -229,7 +232,7 @@ class GeminiChatbot:
            - DO NOT try to generate everything at once.
            - For each asset in the plan, YOU MUST USE THE EXISTING TOOLS ('generate_image', 'generate_video') EXACTLY AS DEFINED BELOW.
            - You must still complete ALL workflow steps for EACH individual asset.
-           - Example: "Okay, let's start with Scene 1. We need an image of the hero. Which model do you want to use: Nano Banana 2, GPT, or Freepik?"
+           - Example: "Okay, let's start with Scene 1. We need an image of the hero. Which model do you want to use: Seedream, GPT, Nano Banana 2, or Midjourney?"
         
         ⛔ ABSOLUTE PROHIBITION - FALSE COMPLETION MESSAGES:
         - NEVER say "Done!", "Ready!", "Your video is ready", "Your image is ready",
@@ -270,22 +273,29 @@ class GeminiChatbot:
           keys (camera, lighting, style, audio) and, only if the user wants changes, show the improved
           version as a COMPLETE ```json block after the ✨ marker. Never alter their values silently.
 
-        STEP 3 - ASK FOR THE MODEL (WITH SUGGESTION):
-        - Based on THE_PROMPT, suggest a model and explain why.
-        - ⚠️ ALWAYS present the models as a FORMATTED LIST (one model per line), never as inline text.
-        - Available models:
-          → GPT (6 tokens): Best for detailed, realistic, complex images. Recommended for most cases.
-          → Nano Banana 2 (7 tokens): Great for artistic, stylized, creative images.
-          → Freepik (1 token): Good for clean, commercial-style images.
-        - Ask: "I suggest using [model] because [reason]. Which model would you like to use?" (in user's language)
-        - Wait for the user to choose.
-        - Token costs per image: Nano Banana 2 = 7 tokens, GPT = 6 tokens, Freepik = 1 token.
-        
+        STEP 3 - CHOOSE THE MODEL (PICK BY INTENT, WITH SUGGESTION):
+        - Based on THE_PROMPT, choose the BEST model for the user's intent and explain why briefly.
+          Do NOT ask unnecessary questions — pick by intent:
+          → realism / photographic fidelity / cinematic scenes / has reference images → Seedream
+          → artistic style / illustration / creative concept ("Midjourney look") → Midjourney
+          → editing an existing image / composing several references → Nano Banana 2
+          → readable text inside the image / strict instruction following → GPT
+        - ⚠️ ALWAYS present the models as a FORMATTED LIST (one model per line) so the user can override your pick.
+        - Available models (exact names, case-sensitive):
+          → Seedream (4 tokens): realism, photographic fidelity, cinematic scenes, reference images. ⭐ Best quality/price — recommended default.
+          → GPT (6 tokens): readable text inside the image, strict instruction following.
+          → Nano Banana 2 (7 tokens): quick edits of an existing image, multi-reference composition.
+          → Midjourney (9 tokens): artistic style, illustration, creative concepts.
+        - ⛔ There is NO "Freepik" model — never offer or select it.
+        - Ask: "I suggest [model] because [reason]. Which model would you like to use?" (in user's language)
+        - Wait for the user to choose (or accept your suggestion).
+        - Token costs per image: Seedream = 4, GPT = 6, Nano Banana 2 = 7, Midjourney = 9 tokens.
+
         STEP 4 - CONFIRM COST AND EXECUTE:
         - Summarize what will be generated:
           → "I'm going to generate: [brief description of THE_PROMPT]"
           → "Model: [chosen model]"
-          → "Cost: [X] tokens" (Nano Banana 2=7, GPT=6, Freepik=1)
+          → "Cost: [X] tokens" (Seedream=4, GPT=6, Nano Banana 2=7, Midjourney=9)
           → "Do you confirm?" (in user's language)
         - ⛔ DO NOT call the tool until the user explicitly confirms in this step.
         - Once confirmed, CALL generate_image immediately using THE_PROMPT (the descriptive text, NOT the confirmation message).
@@ -299,10 +309,15 @@ class GeminiChatbot:
         3. IMAGE-TO-IMAGE EDITING: If user wants to EDIT an image, they MUST attach the reference image.
            → The prompt should describe the EDITING instructions (e.g., "change background to sunset", "make it look like a painting").
            → Pass reference images in 'reference_images' and set image_type to 2 (single ref) or 3 (multiple refs).
+           → Editing/composing references works best with Nano Banana 2 (or Seedream); for Midjourney img2img the reference MUST be a public URL.
         4. If there are attached images, always pass them in 'reference_images'.
-        5. Available models are: 'Nano Banana 2' (7 tokens), 'GPT' (6 tokens), and 'Freepik' (1 token).
-        6. NEVER mention URLs in your responses - images are sent automatically to the user.
-        7. IF THERE'S AN ERROR: Inform the user. If user says "try again"/"retry", execute the tool again without hesitation.
+        5. Available models are: 'Seedream' (4 tokens), 'GPT' (6 tokens), 'Nano Banana 2' (7 tokens), 'Midjourney' (9 tokens). There is NO 'Freepik' model.
+        6. ONE IMAGE PER CALL for Seedream and Midjourney — 'type'/'quantity' are ignored for them (always 1 image). Only GPT and Nano Banana 2 honor 'quantity' and multi-image 'type'. If the user wants several images with Seedream/Midjourney, generate them with separate calls (each is billed again).
+        7. ASPECT RATIO: pass 'aspect_ratio' to match the destination — '16:9' (default, horizontal scenes), '9:16' (vertical/mobile/portraits), '1:1' (square). 'quality' ('2K'/'3K') only affects Seedream and does NOT change the cost.
+        8. ASYNC DELIVERY: Seedream and Midjourney may take longer than the sync window. If the tool reports the image is "still processing", tell the user it's being generated and they'll be notified when ready — do NOT retry (the tokens were already charged). On a "failed" result the backend auto-refunds; only retry if the user asks.
+        9. NEVER invent reference image URLs — use only the ones the user provides.
+        10. NEVER mention URLs in your responses - images are sent automatically to the user.
+        11. IF THERE'S AN ERROR: Inform the user. If user says "try again"/"retry", execute the tool again without hesitation.
         
         ═══════════════════════════════════════════════════
         CRITICAL RULES FOR 'generate_video' TOOL - MANDATORY WORKFLOW
@@ -848,8 +863,8 @@ class GeminiChatbot:
             "in (infer it from USER TEXT).\n\n"
             f"USER TEXT:\n{self._lang_sample[:500]}\n\n"
             f"MESSAGE:\n{english}\n\n"
-            "Rules: keep ALL numbers, token counts, model names (e.g. Freepik, "
-            "GPT, Nano Banana 2, veo-3.1) and the ⚠️ emoji EXACTLY as written; "
+            "Rules: keep ALL numbers, token counts, model names (e.g. Seedream, "
+            "GPT, Nano Banana 2, Midjourney, veo-3.1) and the ⚠️ emoji EXACTLY as written; "
             "keep the same bullet/line structure; do not add or remove "
             "information; output ONLY the rewritten message, nothing else."
         )
@@ -967,8 +982,13 @@ class GeminiChatbot:
                 # tool_result=None so callers never set the just_generated flag
                 return None, friendly
 
-            # Generate success message - tool WAS actually called here
-            response_text = self._generate_contextual_success_message(tool_result, tool_was_called=True)
+            # Generate success message - tool WAS actually called here. Pass the
+            # conversation language so the "still processing" (202) message is
+            # localized, not left in default English.
+            lang = self._lang_for(action.get("cost_message", ""))
+            response_text = self._generate_contextual_success_message(
+                tool_result, tool_was_called=True, lang=lang
+            )
             if not response_text:
                 # Fallback if message generation returns None (shouldn't happen for pending actions)
                 response_text = tool_result if tool_result else "⚠️ Could not determine the operation result."
@@ -2041,6 +2061,11 @@ Keep it brief and helpful."""
             return None
 
         tool_result_lower = tool_result.lower()
+
+        # Accepted-but-still-processing (HTTP 202): not an error and not a
+        # finished result — tell the user it's on the way and they'll be notified.
+        if is_generation_processing(tool_result):
+            return processing_message(lang, generation_processing_type(tool_result))
 
         # Structured generator error: return the friendly per-category message
         # instead of dumping the technical string on the user.

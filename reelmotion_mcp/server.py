@@ -376,33 +376,52 @@ def reelbot_chat_context() -> list[Message]:
 
 @mcp.tool
 def generate_image(
-    prompt: str, 
-    model: str = "GPT", 
-    image_type: int = 1, 
-    quantity: int = 1, 
-    reference_image: Optional[str] = None, 
-    reference_images: Optional[list[str]] = None
+    prompt: str,
+    model: str = "Seedream",
+    image_type: int = 1,
+    quantity: int = 1,
+    reference_image: Optional[str] = None,
+    reference_images: Optional[list[str]] = None,
+    aspect_ratio: str = "16:9",
+    quality: str = "2K",
 ) -> str:
     """
     Generate or edit an image using the reelmotion backend.
     This tool supports both text-to-image generation AND image-to-image editing/transformation.
-    COST: Nano Banana 2 = 7 tokens, GPT = 6 tokens, Freepik = 1 token per image.
-    
+    COST: Seedream = 4, GPT = 6, Nano Banana 2 = 7, Midjourney = 9 tokens per image.
+    There is NO 'Freepik' model.
+
+    Model selection (pick by intent):
+    - Seedream: realism, photographic fidelity, cinematic scenes, reference images (recommended default).
+    - Midjourney: artistic style, illustration, creative concepts.
+    - Nano Banana 2: quick edits of an existing image, multi-reference composition.
+    - GPT: readable text inside the image, strict instruction following.
+
     Use cases:
     - Text-to-image: Generate a new image from a text description (type 1).
     - Image-to-image (editing): Transform or edit an existing image using a text prompt + reference image (type 2).
       Examples: change style, add elements, modify colors, remove objects, apply effects.
     - Multi-image reference: Generate using multiple reference images (type 3).
-    
+
+    Delivery: Seedream and Midjourney are asynchronous (hybrid). The call returns the
+    finished image (200) or, for slow jobs, a "still processing" marker (202) — the user
+    is notified when it's ready; never retry a processing job. They always produce ONE
+    image per call ('type'/'quantity' are ignored). A failed job (422) is auto-refunded.
+
     Args:
-        prompt: The description of the image to generate, or editing instructions for image-to-image.
-        model: The model to use. MUST be one of: 'Nano Banana 2', 'GPT', 'Freepik'. Defaults to 'GPT'.
-        image_type: 1 (text only), 2 (text + reference image for editing), 3 (text + multiple reference images). Defaults to 1.
-        quantity: Number of images to generate. Defaults to 1.
-        reference_image: URL of reference image (for type 2 - image editing/transformation).
-        reference_images: List of URLs of reference images (for type 3 - multi-image reference).
+        prompt: The description of the image to generate (rich, visual, in English), or editing instructions.
+        model: One of: 'Seedream', 'GPT', 'Nano Banana 2', 'Midjourney'. Defaults to 'Seedream'.
+        image_type: 1 (text only), 2 (text + reference image), 3 (text + multiple references). Only GPT and Nano Banana 2 honor it.
+        quantity: Number of images (GPT / Nano Banana 2 only; Seedream/Midjourney always 1). Defaults to 1.
+        reference_image: URL of a reference image (image editing/transformation).
+        reference_images: List of reference image URLs (multi-image reference).
+        aspect_ratio: '16:9' (default), '9:16', '1:1', etc. Choose to match the destination.
+        quality: '2K' or '3K' — Seedream only; ignored by other models and does not change the cost.
     """
-    return generate_image_impl(prompt, model, image_type, quantity, reference_image, reference_images)
+    return generate_image_impl(
+        prompt, model, image_type, quantity, reference_image, reference_images,
+        aspect_ratio=aspect_ratio, quality=quality,
+    )
 
 @mcp.tool
 def generate_video(
@@ -435,7 +454,7 @@ def generate_video(
 
     Token costs per second and valid durations:
     - runway-aleph: 17 tokens/sec (5-10s) - video-to-video editing
-    - runway-4.5: 13 tokens/sec (5, 8, or 10s) - high quality (async: 202 + poll)
+    - runway-4.5: 13 tokens/sec (5, 8, or 10s) - high quality (hybrid: 200 sync or 202 processing)
     - veo-3.1: 44 tokens/sec (8s only)
     - veo-3.1-flash: 17 tokens/sec (8s only)
     - veo-3.1-ultra: 65 tokens/sec (8s only) - maximum quality

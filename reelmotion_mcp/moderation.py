@@ -437,7 +437,7 @@ _SKIP_LLM_PATTERNS = [
         r"perfect[oa]?|amazing|cool|nice|great|awesome|love\s+it|"
         r"genial|excelente|increible|incre[ií]ble|"
         r"hi|hello|hey|hola|buenas?|"
-        r"gpt|nano\s*banana(?:\s*2)?|freepik|"
+        r"gpt|nano\s*banana(?:\s*2)?|seedream|midjourney|"
         r"veo(?:\s*3\.?1)?(?:\s*(?:flash|ultra))?|"
         r"runway(?:\s*(?:aleph|4\.?5))?|kling(?:\s*v?3)?(?:\s*omni)?(?:\s*(?:pro|std))?|"
         r"\d+\s*s(?:ec(?:onds?|undos?)?)?|\d+|"

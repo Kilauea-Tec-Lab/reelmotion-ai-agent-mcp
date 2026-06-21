@@ -44,3 +44,10 @@ desktop.ini
 start.bat
 start_http.bat
 start_all.bat
+
+# Claude Code local config
+.claude/
+
+# Accidental artifacts (pip redirect files, cygwin crash dumps)
+=*
+*.stackdump
