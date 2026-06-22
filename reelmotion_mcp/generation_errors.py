@@ -211,3 +211,31 @@ def processing_message(lang: str = "en", gen_type: str = "video") -> str:
     """Friendly, localized 'your content is on the way' message (HTTP 202)."""
     by_type = _PROCESSING_MESSAGES.get(gen_type) or _PROCESSING_MESSAGES["video"]
     return by_type.get(lang) or by_type["en"]
+
+
+# ---------------------------------------------------------------------------
+# Synchronous success (HTTP 200) — localized, used when the result is returned
+# to the user WITHOUT a further Gemini pass (confirmed pending actions, and
+# fallbacks where the chat model is unavailable). The asset URL is delivered
+# separately by the backend; this is just the friendly acknowledgment.
+# ---------------------------------------------------------------------------
+_SUCCESS_MESSAGES = {
+    "video": {
+        "es": "✅ ¡Tu video se generó correctamente!",
+        "en": "✅ Your video was generated successfully!",
+    },
+    "image": {
+        "es": "✅ ¡Tu imagen se generó correctamente!",
+        "en": "✅ Your image was generated successfully!",
+    },
+    "audio": {
+        "es": "✅ ¡Tu audio se generó correctamente!",
+        "en": "✅ Your audio was generated successfully!",
+    },
+}
+
+
+def success_message(lang: str = "en", gen_type: str = "image") -> str:
+    """Friendly, localized 'your content is ready' message (HTTP 200 success)."""
+    by_type = _SUCCESS_MESSAGES.get(gen_type) or _SUCCESS_MESSAGES["image"]
+    return by_type.get(lang) or by_type["en"]

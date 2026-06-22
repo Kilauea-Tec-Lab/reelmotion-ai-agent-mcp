@@ -161,6 +161,27 @@ class TestContextualMessageRendering:
         )
         assert "notification" in msg
 
+    def test_success_renders_in_conversation_language_not_raw_signal(self, bot):
+        # tools.py returns an English internal signal; the user-facing message
+        # must follow the conversation language, not leak that signal verbatim.
+        raw = "Video generated successfully with veo-3.1."
+        es = bot._generate_contextual_success_message(raw, tool_was_called=True, lang="es")
+        en = bot._generate_contextual_success_message(raw, tool_was_called=True, lang="en")
+        assert es == "✅ ¡Tu video se generó correctamente!"
+        assert en == "✅ Your video was generated successfully!"
+        assert "veo-3.1" not in es  # raw signal never leaked
+
+    def test_success_detects_image_and_audio_types(self, bot):
+        img = bot._generate_contextual_success_message(
+            "Images generated successfully with Seedream.", tool_was_called=True, lang="es"
+        )
+        audio = bot._generate_contextual_success_message(
+            "Audio generated successfully (1234 bytes). Link generated automatically.",
+            tool_was_called=True, lang="es",
+        )
+        assert "imagen" in img.lower()
+        assert "audio" in audio.lower()
+
 
 class TestSavePendingOrBlock:
     CONFIRMATION_EN = "Cost: 352 tokens (44 tokens/sec × 8 sec). Do you confirm?"
@@ -360,6 +381,41 @@ class TestBuildLanguageSample:
     def test_skips_empty_messages(self, bot):
         sample = bot._build_language_sample("hola", [{"role": "user", "content": "  "}])
         assert sample == "hola"
+
+
+class TestClarificationLocalization:
+    """
+    Ambiguity clarification prompts bypass Gemini, so they must render in the
+    resolved conversation language — not a hardcoded one. Regression for the bot
+    replying in Spanish during an English conversation.
+    """
+
+    def test_generic_clarification_follows_english_conversation(self, bot):
+        bot._conv_lang = "en"
+        assert bot._clarification_text("generic") == (
+            "What exactly would you like to create? An image or a video?"
+        )
+
+    def test_generic_clarification_follows_spanish_conversation(self, bot):
+        bot._conv_lang = "es"
+        assert bot._clarification_text("generic").startswith("¿Qué quieres crear")
+
+    def test_ref_file_clarification_follows_conversation_language(self, bot):
+        bot._conv_lang = "en"
+        assert bot._clarification_text("ref_file").startswith("What would you like to do")
+
+    def test_unknown_key_falls_back_to_generic_english(self, bot):
+        bot._conv_lang = None  # outside an active turn → heuristic default = en
+        assert bot._clarification_text("nope") == (
+            "What exactly would you like to create? An image or a video?"
+        )
+
+    def test_needs_clarification_returns_language_neutral_key(self):
+        # The module function must NOT bake in a language — it returns a key.
+        assert chatbot_module.needs_clarification("make it", False) == (True, "generic")
+        assert chatbot_module.needs_clarification("crea", False) == (True, "generic")
+        assert chatbot_module.needs_clarification("this", True) == (True, "ref_file")
+        assert chatbot_module.needs_clarification("make a video", False) == (False, "")
 
 
 class TestLocalizeBalanceBlock:

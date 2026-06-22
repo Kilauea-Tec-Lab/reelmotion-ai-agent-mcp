@@ -33,6 +33,7 @@ from generation_errors import (
     is_generation_processing,
     generation_processing_type,
     processing_message,
+    success_message,
 )
 from logging_config import setup_logging
 from moderation import (
@@ -76,10 +77,45 @@ GENERATION_TOOL_NAMES = ("generate_image", "generate_video", "generate_speech")
 # with a code-generated cost confirmation ourselves.
 MAX_CONFIRMATION_INTERCEPTIONS = 2
 
+# Clarification prompts for ambiguous requests, keyed by intent then language.
+# These are code-generated and returned to the user WITHOUT passing through
+# Gemini, so they must be localized to the conversation language explicitly —
+# the model never sees them and cannot adapt their language. Only 'en'/'es' are
+# needed because the resolved conversation language is always one of those
+# (other languages fall back to English, matching the system prompt default).
+CLARIFICATION_PROMPTS = {
+    "generic": {
+        "en": "What exactly would you like to create? An image or a video?",
+        "es": "¿Qué quieres crear exactamente? ¿Una imagen o un video?",
+    },
+    "ref_file": {
+        "en": (
+            "What would you like to do with this image? Generate a video from it "
+            "or create a new, similar image?"
+        ),
+        "es": (
+            "¿Qué quieres hacer con esta imagen? ¿Generar un video a partir de ella "
+            "o crear una nueva imagen similar?"
+        ),
+    },
+}
+
+# Friendly acknowledgment for a post-generation reaction ("perfect!", "genial"),
+# used ONLY as a fallback when Gemini is unavailable (timeout/error). Localized
+# so a non-English conversation never falls back to an English-only reply.
+REACTION_ACK = {
+    "en": "Glad you liked it! Let me know if you need anything else. 😊",
+    "es": "¡Me alegra que te haya gustado! Dime si necesitas algo más. 😊",
+}
+
 def needs_clarification(message: str, has_ref_files: bool) -> tuple[bool, str]:
     """
     Check if a message is ambiguous and needs clarification.
-    Returns (needs_clarification, suggested_question)
+
+    Returns (needs_clarification, clarification_key) where clarification_key
+    identifies WHICH question to ask (a key into CLARIFICATION_PROMPTS). The
+    caller localizes it to the conversation language, because these prompts
+    bypass Gemini and would otherwise leak a hardcoded language to the user.
     """
     msg_lower = message.lower().strip()
     
@@ -114,14 +150,14 @@ def needs_clarification(message: str, has_ref_files: bool) -> tuple[bool, str]:
     if len(msg_lower) < 10 and not has_ref_files:
         # Generic creation requests without context
         if any(word in msg_lower for word in ['crea', 'genera', 'haz', 'make', 'create', 'generate']):
-            return True, "¿Qué quieres crear exactamente? ¿Una imagen o un video?"
+            return True, "generic"
     
     # === AMBIGUOUS: Has reference file but VERY unclear what to do ===
     if has_ref_files and len(msg_lower) < 5:
         # Only very vague single words without context
         vague_words = ['eso', 'esto', 'that', 'this', 'aquí', 'here']
         if msg_lower in vague_words:
-            return True, "¿Qué quieres hacer con esta imagen? ¿Generar un video a partir de ella o crear una nueva imagen similar?"
+            return True, "ref_file"
     
     return False, ""
 
@@ -814,6 +850,17 @@ class GeminiChatbot:
             return self._conv_lang
         return "es" if is_spanish(fallback_text) else "en"
 
+    def _clarification_text(self, key: str) -> str:
+        """
+        Localize an ambiguity clarification prompt to the conversation language.
+
+        `key` is one of CLARIFICATION_PROMPTS' keys (returned by
+        needs_clarification). Falls back to English for an unknown key or a
+        language we don't have a hand-written prompt for.
+        """
+        table = CLARIFICATION_PROMPTS.get(key, CLARIFICATION_PROMPTS["generic"])
+        return table.get(self._lang_for(), table["en"])
+
     async def _resolve_conversation_language(
         self, current_message: str, history: Optional[list] = None
     ) -> str:
@@ -1010,8 +1057,9 @@ class GeminiChatbot:
                 tool_result, tool_was_called=True, lang=lang
             )
             if not response_text:
-                # Fallback if message generation returns None (shouldn't happen for pending actions)
-                response_text = tool_result if tool_result else "⚠️ Could not determine the operation result."
+                # Fallback if message generation returns None (shouldn't happen
+                # for pending actions). Localized — never a raw English signal.
+                response_text = fallback_error_message("unknown", lang)
             return tool_result, response_text
 
         except Exception as e:
@@ -1305,9 +1353,9 @@ IMPORTANT: A tool was JUST executed successfully. The workflow is COMPLETE.
                                     response_text = part.text
                                     break
                         if not response_text:
-                            response_text = "Glad you liked it! Let me know if you need anything else. 😊"
+                            response_text = REACTION_ACK.get(self._lang_for(), REACTION_ACK["en"])
                     except Exception:
-                        response_text = "Glad you liked it! Let me know if you need anything else. 😊"
+                        response_text = REACTION_ACK.get(self._lang_for(), REACTION_ACK["en"])
                     
                     await self.session_manager.add_message(
                         self.conversation_uuid,
@@ -1427,8 +1475,9 @@ IMPORTANT: A tool was JUST executed successfully. The workflow is COMPLETE.
             
             # === CHECK FOR AMBIGUITY BEFORE PROCESSING ===
             ref_files = await self.get_reference_files()
-            needs_clarif, question = needs_clarification(message, bool(ref_files))
+            needs_clarif, clarif_key = needs_clarification(message, bool(ref_files))
             if needs_clarif:
+                question = self._clarification_text(clarif_key)
                 logger.debug(f"Ambiguous request detected, asking for clarification")
                 if state is not None:
                     await self.session_manager.save_workflow_state(self.conversation_uuid, state)
@@ -2055,7 +2104,10 @@ Keep it brief and helpful."""
             return response_text
             
         except Exception as e:
-            error_msg = f"Error communicating with Gemini: {str(e)}"
+            # Log the technical detail server-side; show the user a localized,
+            # generic failure message (never a raw exception in a fixed language).
+            logger.error("send_message failed: %s", e, exc_info=True)
+            error_msg = fallback_error_message("unknown", self._lang_for(message))
             # Guardar error en historial
             await self.session_manager.add_message(
                 self.conversation_uuid,
@@ -2093,22 +2145,34 @@ Keep it brief and helpful."""
             parsed = parse_generation_error(tool_result) or {"category": "unknown"}
             return fallback_error_message(parsed["category"], lang)
 
-        # Check if the tool result indicates an actual error
+        # Check if the tool result indicates an actual error. Return the
+        # localized generic failure message (raw technical detail is logged
+        # server-side) instead of an English-only prefix + raw dump.
         if tool_result_lower.startswith("error"):
-            return f"⚠️ There was a problem processing your request: {tool_result}"
+            logger.warning("Unstructured tool error surfaced to user: %s", tool_result[:300])
+            return fallback_error_message("unknown", lang)
         
         # Only return success if the tool result confirms success
         is_success = any(word in tool_result_lower for word in [
             'exitosamente', 'successfully', 'generado', 'generated', 'generada'
         ])
-        
+
         if not is_success:
             # Tool returned but result is unclear - return the raw result
             return tool_result
-            
-        # Success detected - return raw result so LLM can generate localized message
-        # DO NOT return hardcoded English strings like "Your image is ready!"
-        return tool_result
+
+        # Success detected. This function is only reached on terminal paths
+        # (confirmed pending actions, or when the chat model is unavailable), so
+        # its return value is shown DIRECTLY to the user — never re-localized by
+        # the LLM. Return a message in the conversation language instead of the
+        # internal English success signal from tools.py.
+        if 'video' in tool_result_lower:
+            gen_type = 'video'
+        elif 'audio' in tool_result_lower:
+            gen_type = 'audio'
+        else:
+            gen_type = 'image'
+        return success_message(lang, gen_type)
 
 
 # TTL-based LRU cache: max 200 concurrent sessions, evict after 30 minutes of inactivity.
