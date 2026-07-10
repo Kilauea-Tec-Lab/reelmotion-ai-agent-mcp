@@ -285,10 +285,6 @@ def _build_model_alias_table() -> Dict[str, str]:
         "runway aleph": "runway-aleph",
         "runway 4.5": "runway-4.5",
         "runway 4,5": "runway-4.5",
-        "sora 2 pro": "sora-2-pro",
-        "sora-2 pro": "sora-2-pro",
-        "sora 2": "sora-2",
-        "sora2": "sora-2",
         # Kling v3 / v3-turbo / o3 (Evolink). The old kling-v3-omni-*/kling-v1
         # keys no longer exist on the backend (they 400) — these aliases map
         # legacy phrasings onto the closest current tier.

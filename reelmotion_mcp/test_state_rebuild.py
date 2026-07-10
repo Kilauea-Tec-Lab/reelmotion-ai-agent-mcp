@@ -82,7 +82,10 @@ def make_bot():
     def _make(workflow_state=None, history=None):
         bot = GeminiChatbot(conversation_uuid="test-rebuild")
         bot.session_manager = FakeSessionManager(workflow_state, history)
-        bot.chat_session = MagicMock()  # skip start_chat
+        bot.chat_session = MagicMock()
+        # send_message rebuilds the session from Redis each turn; keep the
+        # injected mock session instead.
+        bot.start_chat = AsyncMock()
         return bot
 
     yield _make
@@ -339,6 +342,53 @@ class TestConfirmationGate:
         tool.assert_awaited_once()
         assert response == "Your video is ready!"
         bot.session_manager.set_just_generated.assert_awaited_once()
+
+    def test_free_form_confirmation_after_cost_message_executes(self, make_bot):
+        """A yes-phrasing the CONFIRMATION_PATTERNS regex doesn't know must not
+        re-ask for confirmation when the cost was already quoted (the endless
+        confirmation loop bug)."""
+        history = [
+            {"role": "user", "content": "una rana saltando, veo 3.1"},
+            {"role": "assistant", "content": COST_MESSAGE},
+        ]
+        bot = make_bot(history=history)
+        set_token_balance(None)
+        bot.chat_session.send_message_async = AsyncMock(
+            side_effect=[
+                _fc_response("generate_video", VIDEO_FC_ARGS),
+                _text_response("Your video is ready!"),
+            ]
+        )
+
+        with MODERATION_OK, EXTRACTOR_EMPTY, patch.object(
+            chatbot_module, "generate_video", new=AsyncMock(return_value="ok video")
+        ) as tool:
+            response = run(bot.send_message("yes please, go ahead and generate it"))
+
+        tool.assert_awaited_once()
+        assert response == "Your video is ready!"
+
+    def test_decline_after_cost_message_is_intercepted(self, make_bot):
+        history = [
+            {"role": "user", "content": "una rana saltando, veo 3.1"},
+            {"role": "assistant", "content": COST_MESSAGE},
+        ]
+        bot = make_bot(history=history)
+        set_token_balance(None)
+        confirmation_text = "El video costará 352 tokens. ¿Confirmas?"
+        bot.chat_session.send_message_async = AsyncMock(
+            side_effect=[
+                _fc_response("generate_video", VIDEO_FC_ARGS),
+                _text_response(confirmation_text),
+            ]
+        )
+
+        with MODERATION_OK, EXTRACTOR_EMPTY, patch.object(
+            chatbot_module, "generate_video", new=AsyncMock()
+        ) as tool:
+            run(bot.send_message("no, espera, mejor cambia la duración"))
+
+        tool.assert_not_awaited()
 
     def test_unconfirmed_call_with_insufficient_balance_blocks(self, make_bot):
         bot = make_bot()

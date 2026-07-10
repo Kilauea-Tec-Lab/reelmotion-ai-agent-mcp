@@ -35,8 +35,7 @@ QUANTITY_IMAGE_MODELS = ("GPT", "Nano Banana 2")
 # ---------------------------------------------------------------------------
 # NOTE: the kling-v3 / kling-v3-turbo / kling-o3 tiers are NOT here — their
 # rate depends on resolution + route + audio, so they live in KLING_TOKEN_RATES
-# below (mirrors how Seedance is handled). sora-2 / sora-2-pro have no published
-# rate yet, so estimate_generation_cost returns None for them (backend bills).
+# below (mirrors how Seedance is handled).
 VIDEO_TOKEN_RATES: Dict[str, int] = {
     "runway-aleph": 17,
     "runway-4.5": 13,
@@ -338,8 +337,8 @@ def estimate_generation_cost(function_name: str, args: dict) -> Optional[int]:
             return compute_kling_cost(model, route, quality, duration, sound)
         rate = VIDEO_TOKEN_RATES.get(model)
         if rate is None:
-            # legacy/unknown or unpriced model (runway, luma-labs, seedance-pro,
-            # sora-2, sora-2-pro) — backend remains the final biller.
+            # legacy/unknown or unpriced model (runway, luma-labs,
+            # seedance-pro) — backend remains the final biller.
             return None
         try:
             return rate * int(duration)

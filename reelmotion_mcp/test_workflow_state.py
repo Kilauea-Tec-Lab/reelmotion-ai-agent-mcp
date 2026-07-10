@@ -129,8 +129,6 @@ class TestNormalizeModelName:
         ("seedance 2", "seedance-2.0"),
         ("runway aleph", "runway-aleph"),
         ("runway 4.5", "runway-4.5"),
-        ("sora 2", "sora-2"),
-        ("sora 2 pro", "sora-2-pro"),
         ("kling v3 turbo", "kling-v3-turbo"),
         ("kling turbo", "kling-v3-turbo"),
         ("kling o3", "kling-o3"),

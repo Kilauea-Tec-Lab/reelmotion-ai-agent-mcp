@@ -130,7 +130,6 @@ def clean_prompt_from_model_mentions(prompt: str) -> str:
     _models = (
         r"runway(?:[-\s]?(?:aleph|4\.?5))?|"
         r"veo[-\s]?3\.?1(?:[-\s]?(?:flash|ultra))?|"
-        r"sora[-\s]?2(?:[-\s]?pro)?|"
         r"seedream|midjourney|nano[-\s]?banana(?:\s?2)?|gpt|"
         r"seedance[-\s]?2(?:\.0)?(?:[-\s]?fast)?|"
         r"kling[-\s]?(?:v?3[-\s]?turbo|v?3|o3)"
@@ -142,7 +141,7 @@ def clean_prompt_from_model_mentions(prompt: str) -> str:
         r"\s+(?:con|usando|mediante|por)\s+(?:" + _models + r")\s*$",
         # Bare model name at end without preposition
         r"\s+(?:runway[-\s]?(?:aleph|4\.?5)|veo[-\s]?3\.?1[-\s]?(?:flash|ultra)|"
-        r"sora[-\s]?2(?:[-\s]?pro)?|kling[-\s]?(?:v?3[-\s]?turbo|v?3|o3))\s*$",
+        r"kling[-\s]?(?:v?3[-\s]?turbo|v?3|o3))\s*$",
     ]
 
     cleaned = prompt
@@ -551,7 +550,6 @@ async def generate_video(
     - veo-3.1: 44 tokens/sec (8s only)
     - veo-3.1-flash: 17 tokens/sec (8s only)
     - veo-3.1-ultra: 65 tokens/sec (8s only)
-    - sora-2 / sora-2-pro: cost set by the backend (no agent-side quote)
 
     Kling v3 / o3 (Evolink) — resolution + route + audio based pricing, 3-15s
     (reference route 3-10s), tokens/sec:
@@ -599,7 +597,6 @@ async def generate_video(
     # keys no longer exist (they return 400).
     allowed_models = [
         "runway-aleph", "runway-4.5",
-        "sora-2", "sora-2-pro",
         "veo-3.1", "veo-3.1-flash", "veo-3.1-ultra",
         "kling-v3", "kling-v3-turbo", "kling-o3",
         "seedance-2.0", "seedance-2.0-fast",

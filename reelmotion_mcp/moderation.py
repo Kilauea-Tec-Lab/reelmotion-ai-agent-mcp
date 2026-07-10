@@ -287,7 +287,7 @@ REFUSAL_MESSAGES = {
         "Reelmotion does not generate sexual or explicit, hateful, graphically violent, "
         "self-harm, child-endangering, or illegal content.\n\n"
         "Please describe a different scene I can generate.\n\n"
-        "If you've seen content in the app you'd like to report, tap the flag icon "
+        "If you've seen content in the platform you'd like to report, tap the flag icon "
         "on any message to send it to our moderation team."
     ),
     "es": (
@@ -295,7 +295,7 @@ REFUSAL_MESSAGES = {
         "Reelmotion no genera contenido sexual o explícito, de odio, con violencia gráfica, "
         "autolesiones, que ponga en peligro a menores, o ilegal.\n\n"
         "Por favor describe otra escena que pueda generar.\n\n"
-        "Si has visto contenido en la app que quieras denunciar, toca el ícono de bandera "
+        "Si has visto contenido en la plataforma que quieras denunciar, toca el ícono de bandera "
         "en cualquier mensaje para enviarlo a nuestro equipo de moderación."
     ),
 }
@@ -438,7 +438,7 @@ _SKIP_LLM_PATTERNS = [
         r"genial|excelente|increible|incre[ií]ble|"
         r"hi|hello|hey|hola|buenas?|"
         r"gpt|nano\s*banana(?:\s*2)?|seedream|midjourney|"
-        r"veo(?:\s*3\.?1)?(?:\s*(?:flash|ultra))?|sora(?:\s*2(?:\s*pro)?)?|"
+        r"veo(?:\s*3\.?1)?(?:\s*(?:flash|ultra))?|"
         r"runway(?:\s*(?:aleph|4\.?5))?|kling(?:[\s-]*(?:v?3(?:[\s-]*turbo)?|o3))?|"
         r"\d+\s*s(?:ec(?:onds?|undos?)?)?|\d+|"
         r"image|video|imagen|audio|speech|voz)"

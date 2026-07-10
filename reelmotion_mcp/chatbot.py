@@ -69,6 +69,18 @@ COST_CONFIRMATION_PATTERN = re.compile(
     re.IGNORECASE
 )
 
+# Replies that reject or postpone a quoted cost. When the last assistant
+# message asked for cost confirmation, any reply WITHOUT one of these words is
+# treated as acceptance if Gemini responds with a tool call — re-asking on
+# every phrasing the CONFIRMATION_PATTERNS regex doesn't know caused endless
+# confirmation loops.
+COST_DECLINE_PATTERN = re.compile(
+    r"\b(?:no|nope|nah|not\s+yet|cancel\w*|cancela\w*|stop|wait|espera|"
+    r"a[uú]n\s+no|todav[ií]a\s+no|mejor\s+no|cambi\w+|change|otro|otra|"
+    r"different|instead)\b",
+    re.IGNORECASE,
+)
+
 # Tools that spend the user's tokens — they may ONLY run after the user
 # explicitly confirmed a cost message (enforced in code, not just the prompt).
 GENERATION_TOOL_NAMES = ("generate_image", "generate_video", "generate_speech")
@@ -407,7 +419,6 @@ class GeminiChatbot:
           → Veo 3.1 Flash (17 tokens/sec) - 8 sec only - fast and good quality
           → Veo 3.1 (44 tokens/sec) - 8 sec only - high quality
           → Veo 3.1 Ultra (65 tokens/sec) - 8 sec only - maximum Veo quality
-          → Sora 2 / Sora 2 Pro - cost shown by the backend
         - Kling quick-pick heuristic: fast/cheap → Kling V3 Turbo; max quality / 4K / audio → Kling V3;
           keep a character or style from reference images, or edit an existing video → Kling O3.
         - Say: "I suggest [model] because [reason]. Which model would you like to use?" (in user's language)
@@ -491,7 +502,7 @@ class GeminiChatbot:
         - Show ONLY the models that support video-to-video editing:
           → **Kling O3** (resolution-based: 720p = 13, 1080p = 17 tokens/sec) - 3 to 15 sec - video-edit ⭐ Recommended
           → **Runway Aleph** (17 tokens/sec) - 5 or 10 sec - High quality editing
-        - ⛔ DO NOT show any other models (Veo, Runway 4.5, Seedance, Sora, Kling V3/Turbo, etc.) - they do NOT support video-to-video editing here.
+        - ⛔ DO NOT show any other models (Veo, Runway 4.5, Seedance, Kling V3/Turbo, etc.) - they do NOT support video-to-video editing here.
         - Suggest Kling O3 as the recommended option for editing an existing video.
         - For Kling O3 you MUST also ask for the resolution (720p or 1080p) before quoting the cost.
         - Ask: "Which model would you like to use?" (in user's language)
@@ -530,7 +541,6 @@ class GeminiChatbot:
            - 'seedance-2.0', 'seedance-2.0-fast'
            - 'veo-3.1', 'veo-3.1-flash', 'veo-3.1-ultra'
            - 'runway-aleph', 'runway-4.5'
-           - 'sora-2', 'sora-2-pro'
            - 'kling-v3', 'kling-v3-turbo', 'kling-o3'
            ⛔ The old 'kling-v1' / 'kling-v3-omni-std' / 'kling-v3-omni-pro' keys no longer exist — never send them.
            For Seedance, also pass resolution ('480p'/'720p'/'1080p'). Seedance auto-detects
@@ -1151,19 +1161,26 @@ class GeminiChatbot:
 
     async def _user_confirmed_cost_this_turn(self, message: str) -> bool:
         """
-        True ONLY when the user's current message is a confirmation AND the
-        last assistant message was a cost confirmation question. This is the
-        single condition under which a generation tool call from Gemini may
-        execute directly — everything else must go through a pending action.
+        True when a generation tool call from Gemini may execute directly this
+        turn: the last assistant message was a cost confirmation question and
+        the user's reply accepts it. Exact confirmations ("yes", "dale") always
+        pass; for free-form replies ("yes please, go ahead and generate it") we
+        trust Gemini's own reading — it only calls the tool when it took the
+        reply as a yes — unless the reply declines or postpones. Requiring an
+        exact regex match here made every unrecognized phrasing re-ask for
+        confirmation, looping forever.
         """
-        if not is_confirmation(message):
-            return False
         session = await self.session_manager.get_session(self.conversation_uuid)
         history = session.get("messages", []) if session else []
-        for msg in reversed(history):
-            if msg.get("role") == "assistant":
-                return bool(COST_CONFIRMATION_PATTERN.search(msg.get("content", "")))
-        return False
+        last_assistant = next(
+            (m.get("content", "") for m in reversed(history) if m.get("role") == "assistant"),
+            "",
+        )
+        if not COST_CONFIRMATION_PATTERN.search(last_assistant):
+            return False
+        if is_confirmation(message):
+            return True
+        return not COST_DECLINE_PATTERN.search(message or "")
 
     def _build_cost_confirmation_text(
         self, func_name: str, func_args: dict, cost: Optional[int], lang: str
@@ -1171,6 +1188,9 @@ class GeminiChatbot:
         """Code-generated cost confirmation message (fallback when Gemini won't write one)."""
         model = func_args.get("model")
         duration = func_args.get("duration")
+        # Gemini's proto args deliver numbers as floats ("6.0 seconds")
+        if isinstance(duration, float) and duration.is_integer():
+            duration = int(duration)
         resolution = func_args.get("resolution")
         if lang == "es":
             lines = ["Antes de generar necesito que confirmes el costo:"]
@@ -1281,8 +1301,14 @@ class GeminiChatbot:
                 await self.session_manager.clear_workflow_state(self.conversation_uuid)
                 return refusal
 
-            if not self.chat_session:
-                await self.start_chat()
+            # Rebuild the chat session from Redis EVERY turn. Direct replies
+            # (fast-path generations, balance blocks, forced confirmations,
+            # clarifications) are saved to Redis but never enter the live
+            # session — reusing it across turns lets Gemini's private history
+            # diverge from what the user actually saw (e.g. denying that a
+            # video was generated). The SDK resends the full history per call
+            # anyway, so rebuilding costs nothing extra.
+            await self.start_chat()
 
             # === CONVERSATION LANGUAGE (single source of truth for this turn) ===
             # Every code-generated message (cost confirmation, balance block,

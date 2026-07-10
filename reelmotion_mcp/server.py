@@ -464,7 +464,6 @@ def generate_video(
     - veo-3.1: 44 tokens/sec (8s only)
     - veo-3.1-flash: 17 tokens/sec (8s only)
     - veo-3.1-ultra: 65 tokens/sec (8s only) - maximum quality
-    - sora-2 / sora-2-pro: cost set by the backend
 
     Kling v3 / o3 (RESOLUTION + route + audio based, 3-15s; reference 3-10s):
     - kling-v3: max quality, 4K, native audio, motion-control. text/image: 720p=9, 1080p=12,
