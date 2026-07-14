@@ -78,7 +78,8 @@ class TestExecutePendingActionBalanceGate:
         set_token_balance(None)
 
         success = "Video generated successfully with veo-3.1."
-        with patch.object(chatbot_module, "generate_video", new=AsyncMock(return_value=success)) as tool:
+        with patch.object(chatbot_module, "generate_video", new=AsyncMock(return_value=success)) as tool, \
+             patch.object(bot, "_friendly_success_message", new=AsyncMock(return_value="✅ done")):
             tool_result, response = asyncio.run(bot.execute_pending_action())
 
         tool.assert_awaited_once()
@@ -91,7 +92,8 @@ class TestExecutePendingActionBalanceGate:
         set_token_balance(500)
 
         success = "Video generated successfully with veo-3.1."
-        with patch.object(chatbot_module, "generate_video", new=AsyncMock(return_value=success)) as tool:
+        with patch.object(chatbot_module, "generate_video", new=AsyncMock(return_value=success)) as tool, \
+             patch.object(bot, "_friendly_success_message", new=AsyncMock(return_value="✅ done")):
             tool_result, response = asyncio.run(bot.execute_pending_action())
 
         tool.assert_awaited_once()

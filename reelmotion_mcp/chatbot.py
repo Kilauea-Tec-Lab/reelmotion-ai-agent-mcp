@@ -28,12 +28,15 @@ from pricing import (
 )
 from generation_errors import (
     GENERATION_ERROR_PREFIX,
+    SUPPORT_EMAIL,
     parse_generation_error,
     fallback_error_message,
     is_generation_processing,
+    is_generation_success,
     generation_processing_type,
     processing_message,
     success_message,
+    success_gen_type,
 )
 from logging_config import setup_logging
 from moderation import (
@@ -1059,13 +1062,17 @@ class GeminiChatbot:
                 # tool_result=None so callers never set the just_generated flag
                 return None, friendly
 
-            # Generate success message - tool WAS actually called here. Pass the
-            # conversation language so the "still processing" (202) message is
-            # localized, not left in default English.
+            # Build the acknowledgment. The fast path never re-enters the chat
+            # model, so a finished result gets a warm, LLM-written success line
+            # (with a code fallback); a 202/edge result keeps its deterministic
+            # code-generated message.
             lang = self._lang_for(action.get("cost_message", ""))
-            response_text = self._generate_contextual_success_message(
-                tool_result, tool_was_called=True, lang=lang
-            )
+            if is_generation_success(tool_result):
+                response_text = await self._friendly_success_message(tool_result, lang)
+            else:
+                response_text = self._generate_contextual_success_message(
+                    tool_result, tool_was_called=True, lang=lang
+                )
             if not response_text:
                 # Fallback if message generation returns None (shouldn't happen
                 # for pending actions). Localized — never a raw English signal.
@@ -1103,9 +1110,10 @@ class GeminiChatbot:
             f"Explain to the end user, in {language_name}, in 2-3 friendly sentences, "
             "why it failed and what they can do (rephrase the prompt, try again later, "
             "or top up tokens — whichever fits the error). "
-            "NEVER tell them to contact support: there is no support channel. When the "
-            "cause is not a low balance, reassure them that failed generations are "
-            "refunded automatically so they were not charged. "
+            "When the cause is not a low balance, reassure them that failed generations "
+            "are refunded automatically so they were not charged. If the failure is not "
+            "self-service (auth or an unexpected error) and persists, they can email "
+            f"{SUPPORT_EMAIL}. Do not invent any other support channel. "
             "Do NOT include JSON, HTTP codes, stack traces, or technical jargon. "
             "Do NOT invent causes beyond what the error says. Do NOT blame the user."
         )
@@ -1121,6 +1129,50 @@ class GeminiChatbot:
         except Exception as e:
             logger.debug("LLM error explanation failed, using fallback: %s", e)
         return fallback
+
+    async def _friendly_success_message(self, tool_result: str, lang: str) -> str:
+        """
+        Warm, LLM-written 'your content is ready' line for the confirmed fast
+        path (which executes the tool WITHOUT re-entering the chat session, so
+        the model never gets to write the acknowledgment itself).
+
+        Mirrors _explain_generation_error: one-shot Gemini call with an 8s
+        timeout and a deterministic, localized code fallback, so a slow or
+        unavailable model never leaves the user without a confirmation. For
+        editable media it appends the <<ACTION:editor>> marker that server.py
+        turns into the "Go to the editor" button.
+        """
+        gen_type = success_gen_type(tool_result)
+        editable = gen_type in ("video", "image")
+        language_name = "Spanish" if lang == "es" else "English"
+        prompt = (
+            f"A user's {gen_type} was just generated successfully in our app. "
+            f"Reply in {language_name} with ONE short, warm sentence confirming "
+            "it is ready. Do NOT include any URL, file name, token count, model "
+            "name, or technical detail. Do NOT ask them to wait — it is already done."
+        )
+        if editable:
+            prompt += (
+                " Then invite them to keep editing it, and append the exact marker "
+                "<<ACTION:editor>> at the very end. Never explain or mention the marker."
+            )
+        try:
+            model = genai.GenerativeModel(
+                model_name=os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+            )
+            response = await asyncio.wait_for(
+                model.generate_content_async(prompt), timeout=8.0
+            )
+            if response.text and response.text.strip():
+                return response.text.strip()
+        except Exception as e:
+            logger.debug("LLM success message failed, using fallback: %s", e)
+
+        # Deterministic fallback: localized success line (+ editor action).
+        text = success_message(lang, gen_type)
+        if editable:
+            text += "\n<<ACTION:editor>>"
+        return text
 
     async def _save_pending_or_block(
         self, function_name: str, action_args: dict, confirmation_text: str

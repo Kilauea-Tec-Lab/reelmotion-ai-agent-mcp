@@ -19,10 +19,13 @@ from pricing import (
 )
 from generation_errors import (
     GENERATION_ERROR_PREFIX,
+    SUPPORT_EMAIL,
     fallback_error_message,
     format_generation_error,
+    is_generation_success,
     parse_backend_error,
     parse_generation_error,
+    success_gen_type,
 )
 
 
@@ -406,3 +409,45 @@ class TestGenerationErrorFormat:
 
     def test_unknown_category_falls_back_to_unknown(self):
         assert fallback_error_message("weird", "en") == fallback_error_message("unknown", "en")
+
+    def test_support_email_present_in_self_service_failures(self):
+        # auth/unknown may need a human — surface the real support channel.
+        for category in ("auth", "unknown"):
+            for lang in ("es", "en"):
+                assert SUPPORT_EMAIL in fallback_error_message(category, lang)
+
+    def test_support_email_absent_from_self_service_categories(self):
+        # A low balance or a bad prompt is self-service — don't send them to support.
+        for category in ("insufficient_tokens", "provider_validation"):
+            for lang in ("es", "en"):
+                assert SUPPORT_EMAIL not in fallback_error_message(category, lang)
+
+
+# ---------------------------------------------------------------------------
+# is_generation_success / success_gen_type — classify the fast-path tool result
+# ---------------------------------------------------------------------------
+class TestSuccessClassification:
+    @pytest.mark.parametrize("text", [
+        "Video generated successfully with kling-v3.",
+        "Images generated successfully with Seedream.",
+        "Audio generated successfully (1234 bytes). Link generated automatically.",
+        "Imagen generada exitosamente.",
+    ])
+    def test_success_signals(self, text):
+        assert is_generation_success(text) is True
+
+    @pytest.mark.parametrize("text", [
+        "",
+        "GENERATION_ERROR | category=provider_validation | status=422 | detail=bad",
+        "Error executing generate_video: boom",
+        "GENERATION_PROCESSING | type=video",
+        "Video generation initiated but URL not immediately available. Check status later.",
+    ])
+    def test_non_success_signals(self, text):
+        assert is_generation_success(text) is False
+
+    def test_gen_type_classification(self):
+        assert success_gen_type("Video generated successfully with kling-v3.") == "video"
+        assert success_gen_type("Audio generated successfully (12 bytes).") == "audio"
+        assert success_gen_type("Images generated successfully with GPT.") == "image"
+        assert success_gen_type("something else") == "image"

@@ -17,6 +17,9 @@ from typing import Optional
 
 GENERATION_ERROR_PREFIX = "GENERATION_ERROR"
 
+# Real support channel surfaced to users when a failure isn't self-service.
+SUPPORT_EMAIL = "support@reelmotion.ai"
+
 # Marker returned when the backend accepted a generation but couldn't finish it
 # within its synchronous window (HTTP 202). This is NOT an error: the video is
 # still being produced and the user is notified (push/realtime) when it's ready.
@@ -119,9 +122,11 @@ def parse_generation_error(text: str) -> Optional[dict]:
 _FALLBACK_MESSAGES = {
     CATEGORY_AUTH: {
         "es": "Hubo un problema de autenticación con el servicio de generación. "
-              "Cierra y abre sesión de nuevo, y vuelve a intentarlo. No se descontaron tokens.",
+              "Cierra y abre sesión de nuevo, y vuelve a intentarlo. No se descontaron tokens. "
+              f"Si continúa, escríbenos a {SUPPORT_EMAIL}.",
         "en": "There was an authentication problem with the generation service. "
-              "Sign out and back in, then try again. No tokens were charged.",
+              "Sign out and back in, then try again. No tokens were charged. "
+              f"If it continues, email us at {SUPPORT_EMAIL}.",
     },
     CATEGORY_INSUFFICIENT_TOKENS: {
         "es": "El servicio rechazó la generación porque tu saldo de tokens no es suficiente. "
@@ -156,10 +161,12 @@ _FALLBACK_MESSAGES = {
     CATEGORY_UNKNOWN: {
         "es": "Ocurrió un problema inesperado al generar tu contenido. "
               "Inténtalo de nuevo en un momento. Si una generación falla, tus tokens "
-              "se reembolsan automáticamente, así que nunca pagas por algo que no recibiste.",
+              "se reembolsan automáticamente, así que nunca pagas por algo que no recibiste. "
+              f"Si el problema persiste, escríbenos a {SUPPORT_EMAIL}.",
         "en": "An unexpected problem occurred while generating your content. "
               "Try again in a moment. If a generation ever fails, your tokens are "
-              "refunded automatically, so you're never charged for something you didn't receive.",
+              "refunded automatically, so you're never charged for something you didn't receive. "
+              f"If the problem persists, email us at {SUPPORT_EMAIL}.",
     },
 }
 
@@ -241,3 +248,28 @@ def success_message(lang: str = "en", gen_type: str = "image") -> str:
     """Friendly, localized 'your content is ready' message (HTTP 200 success)."""
     by_type = _SUCCESS_MESSAGES.get(gen_type) or _SUCCESS_MESSAGES["image"]
     return by_type.get(lang) or by_type["en"]
+
+
+_SUCCESS_SIGNAL_WORDS = ("exitosamente", "successfully", "generado", "generated", "generada")
+
+
+def is_generation_success(text: str) -> bool:
+    """True when a tool result is a finished-successfully signal (not 202/error)."""
+    if not text:
+        return False
+    low = text.lower()
+    if low.startswith(GENERATION_ERROR_PREFIX.lower()) or low.startswith("error"):
+        return False
+    if is_generation_processing(text):
+        return False
+    return any(word in low for word in _SUCCESS_SIGNAL_WORDS)
+
+
+def success_gen_type(text: str) -> str:
+    """Classify a success signal into 'video' | 'audio' | 'image'."""
+    low = (text or "").lower()
+    if "video" in low:
+        return "video"
+    if "audio" in low:
+        return "audio"
+    return "image"
