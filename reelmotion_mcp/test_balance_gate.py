@@ -489,3 +489,54 @@ class TestLocalizeBalanceBlock:
             )
         assert "No tienes tokens suficientes" in block
         model_cls.assert_not_called()
+
+
+class TestReplyConfirmsCost:
+    """Intent-based confirmation: obvious yeses are instant, free-form replies
+    at the confirmation step defer to the LLM, and non-confirmations never do."""
+
+    def _confirms(self, bot, message, pending=None, state=None, llm=False):
+        with patch.object(bot, "_llm_confirms_intent", new=AsyncMock(return_value=llm)) as llm_mock:
+            result = asyncio.run(
+                bot._reply_confirms_cost(message, pending, state, has_ref_video=False)
+            )
+        return result, llm_mock
+
+    def test_obvious_yes_confirms_without_llm(self, bot):
+        for msg in ("yes", "dale", "ok", "yes confirm", "si dale"):
+            confirmed, llm = self._confirms(bot, msg, pending=dict(VIDEO_ACTION))
+            assert confirmed is True
+            llm.assert_not_awaited()  # instant regex, no model call
+
+    def test_not_at_confirmation_returns_false_without_llm(self, bot):
+        # No pending action and no ready state → not a confirmation point.
+        confirmed, llm = self._confirms(bot, "sounds interesting", pending=None, state=None)
+        assert confirmed is False
+        llm.assert_not_awaited()
+
+    def test_decline_at_confirmation_returns_false_without_llm(self, bot):
+        confirmed, llm = self._confirms(bot, "no, wait", pending=dict(VIDEO_ACTION))
+        assert confirmed is False
+        llm.assert_not_awaited()
+
+    def test_new_request_at_confirmation_returns_false_without_llm(self, bot):
+        # A fresh generation request is a new intent, not a bare confirmation.
+        confirmed, llm = self._confirms(
+            bot, "hazme un video de un perro", pending=dict(VIDEO_ACTION)
+        )
+        assert confirmed is False
+        llm.assert_not_awaited()
+
+    def test_freeform_reply_defers_to_llm_yes(self, bot):
+        confirmed, llm = self._confirms(
+            bot, "me encanta, hazlo ya", pending=dict(VIDEO_ACTION), llm=True
+        )
+        assert confirmed is True
+        llm.assert_awaited_once()
+
+    def test_freeform_reply_defers_to_llm_no(self, bot):
+        confirmed, llm = self._confirms(
+            bot, "how much is that in dollars?", pending=dict(VIDEO_ACTION), llm=False
+        )
+        assert confirmed is False
+        llm.assert_awaited_once()

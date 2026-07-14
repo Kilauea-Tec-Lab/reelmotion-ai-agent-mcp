@@ -54,6 +54,7 @@ from workflow_state import (
     is_confirmation,
     is_reaction,
     is_ready_for_confirmation,
+    is_refine_decline,
     merge_extracted,
     new_state,
     state_context_note,
@@ -1237,6 +1238,69 @@ class GeminiChatbot:
             return True
         return not COST_DECLINE_PATTERN.search(message or "")
 
+    async def _reply_confirms_cost(
+        self, message: str, pending_action: Optional[dict], state: Optional[dict],
+        has_ref_video: bool,
+    ) -> bool:
+        """
+        Does this reply mean "yes, generate what you quoted" — by INTENT, not by
+        matching an exact word list?
+
+        Obvious yeses ("yes", "dale", "yes confirm") resolve instantly with the
+        cheap regex. Only when we're actually at a confirmation point (a pending
+        action exists, or the collected state is ready for it) and the reply is
+        free-form do we ask a one-shot LLM to read the intent — so phrasings the
+        word list never anticipated ("me encanta, hazlo ya", "go for it") still
+        confirm, while declines, questions and new/changed requests do not.
+        """
+        # 1) Obvious confirmation → instant, no LLM.
+        if is_confirmation(message):
+            return True
+        # 2) Only reason about intent when a cost is actually awaiting a yes.
+        at_confirmation = pending_action is not None or is_ready_for_confirmation(state)
+        if not at_confirmation:
+            return False
+        # 3) Cheap deterministic NO: an explicit decline/postpone, or a message
+        #    that starts/changes a request (that's a new intent, not a bare yes).
+        if is_refine_decline(message) or COST_DECLINE_PATTERN.search(message or ""):
+            return False
+        if detect_workflow_intent(message, has_ref_video):
+            return False
+        # 4) Free-form reply at the confirmation step → let the LLM read intent.
+        cost_message = (pending_action or {}).get("cost_message", "")
+        return await self._llm_confirms_intent(message, cost_message)
+
+    async def _llm_confirms_intent(self, message: str, cost_message: str) -> bool:
+        """
+        One-shot Gemini classifier: does the user's reply affirm proceeding with
+        the quoted generation? Conservative — any failure/timeout returns False,
+        so a misread or a slow model never executes a generation; the message
+        just falls through to the normal Gemini flow instead.
+        """
+        prompt = (
+            "An assistant asked a user to confirm the cost of generating media.\n"
+            f'Assistant asked: "{(cost_message or "").strip()[:600]}"\n'
+            f'User replied: "{(message or "").strip()[:400]}"\n\n'
+            "Does the user's reply mean YES — go ahead and generate it now? "
+            "Answer with exactly one word: YES if they are agreeing to proceed, "
+            "or NO if they decline, hesitate, ask a question, or change/restate "
+            "the request. When unsure, answer NO."
+        )
+        try:
+            model = genai.GenerativeModel(
+                model_name=os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+            )
+            response = await asyncio.wait_for(
+                model.generate_content_async(prompt), timeout=6.0
+            )
+            verdict = (response.text or "").strip().upper()
+            confirmed = verdict.startswith("YES")
+            logger.debug("Confirmation intent for %r → %s", message[:60], confirmed)
+            return confirmed
+        except Exception as e:
+            logger.debug("LLM confirmation intent failed, treating as not-confirmed: %s", e)
+            return False
+
     def _build_cost_confirmation_text(
         self, func_name: str, func_args: dict, cost: Optional[int], lang: str
     ) -> str:
@@ -1463,9 +1527,13 @@ IMPORTANT: A tool was JUST executed successfully. The workflow is COMPLETE.
                     state.get("workflow_type"), state.get("step"),
                 )
 
-            # === FAST PATH: Check for confirmation with pending action ===
-            if is_confirmation(message):
-                pending_action = await self.get_pending_action()
+            # === FAST PATH: user confirming the quoted cost (by INTENT) ===
+            # Not just an exact word list: obvious yeses resolve instantly, and
+            # free-form replies at the confirmation step are read for intent by a
+            # one-shot LLM, so "me encanta, hazlo ya" confirms while a decline,
+            # question or changed request does not.
+            pending_action = await self.get_pending_action()
+            if await self._reply_confirms_cost(message, pending_action, state, has_ref_video):
                 if pending_action:
                     logger.debug(f"User confirmed! Executing pending action directly.")
                     # Save user message
