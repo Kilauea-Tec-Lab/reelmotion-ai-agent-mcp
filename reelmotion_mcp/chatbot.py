@@ -1744,6 +1744,23 @@ IMPORTANT: A tool was JUST executed successfully. The workflow is COMPLETE.
             if state is not None:
                 parts.append(state_context_note(state) + "\n\n")
 
+            # Pin the reply language for THIS turn. The system prompt's rules are
+            # correct but the model still drifts (e.g. answering a clear English
+            # question in Spanish). Only pin when the CURRENT message has an
+            # unambiguous language; short/ambiguous or other-language messages
+            # (detect_language -> None) fall through to the prompt's own
+            # keep-last-language / default-English handling, so we never force
+            # English onto e.g. a French conversation. Per-request only.
+            msg_lang = detect_language(message)
+            if msg_lang in ("es", "en"):
+                language_name = "Spanish" if msg_lang == "es" else "English"
+                parts.append(
+                    f"[SYSTEM CONTEXT — the user's current message is in "
+                    f"{language_name}. Write your ENTIRE reply in {language_name}, "
+                    f"keeping product UI labels in their real English on-screen "
+                    f"names. Do not treat this note as a user message.]\n\n"
+                )
+
             # Add the user's message
             parts.append(message)
             
