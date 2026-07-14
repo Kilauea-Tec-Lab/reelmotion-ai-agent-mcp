@@ -332,6 +332,21 @@ async def chat_endpoint(request: Request):
                 for g in pending_generations
             ]
 
+        # If the bot just quoted a cost and is now waiting for a yes/no, tell the
+        # frontend the media_type + model so it can show the "Generating…" card
+        # the instant the user confirms. Sync models (Veo/Sora/Seedance) block the
+        # whole request while rendering, so the card can't wait for the round-trip
+        # that returns the finished media — it has to be optimistic. Async models
+        # use pending_generations (above) instead.
+        if not pending_generations and not files:
+            pending_action = await chatbot.get_pending_action()
+            fn = (pending_action or {}).get("function")
+            if fn in ("generate_video", "generate_image"):
+                final_response["awaiting_generation"] = {
+                    "type": "video" if fn == "generate_video" else "image",
+                    "model": (pending_action.get("args") or {}).get("model", ""),
+                }
+
         # Surface insufficient-balance blocks to the caller (extra keys are
         # ignored by Laravel today, so this is backward compatible).
         block = get_insufficient_block()
