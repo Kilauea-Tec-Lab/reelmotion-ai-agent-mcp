@@ -544,12 +544,12 @@ def build_insufficient_balance_message(
             lines.append("")
             lines.append(
                 "¿Quieres ajustar el modelo, la duración o la resolución? "
-                "También puedes recargar tokens (+10% extra en recargas)."
+                "También puedes recargar tokens (100 tokens por dólar, mínimo $6 = 600 tokens)."
             )
         else:
             lines.append(
                 "Tu saldo no alcanza para ninguna generación por ahora. "
-                "Puedes recargar tokens para continuar (+10% extra en recargas)."
+                "Puedes recargar tokens para continuar (100 tokens por dólar, mínimo $6 = 600 tokens)."
             )
         return "\n".join(lines)
 
@@ -575,11 +575,11 @@ def build_insufficient_balance_message(
         lines.append("")
         lines.append(
             "Would you like to adjust the model, duration, or resolution? "
-            "You can also top up tokens (+10% bonus on top-ups)."
+            "You can also top up tokens (100 tokens per US dollar, minimum $6 = 600 tokens)."
         )
     else:
         lines.append(
             "Your balance isn't enough for any generation right now. "
-            "You can top up tokens to continue (+10% bonus on top-ups)."
+            "You can top up tokens to continue (100 tokens per US dollar, minimum $6 = 600 tokens)."
         )
     return "\n".join(lines)
