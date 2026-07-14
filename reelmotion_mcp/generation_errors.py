@@ -182,25 +182,33 @@ def fallback_error_message(category: str, lang: str = "en") -> str:
 # ---------------------------------------------------------------------------
 _PROCESSING_MESSAGES = {
     "video": {
-        "es": "🎬 Tu video se está generando y puede tardar un poco más de lo normal. "
-              "Te llegará una notificación cuando esté listo; no necesitas hacer nada más.",
-        "en": "🎬 Your video is being generated and may take a little longer than usual. "
-              "You'll get a notification as soon as it's ready — no further action needed.",
+        "es": "🎬 Tu video se está generando y aparecerá aquí mismo en el chat en cuanto esté listo. "
+              "Puede tardar un poco según el modelo; no necesitas hacer nada más.",
+        "en": "🎬 Your video is being generated and will appear right here in the chat as soon as it's ready. "
+              "It may take a little while depending on the model — no further action needed.",
     },
     "image": {
-        "es": "🎨 Tu imagen se está generando y puede tardar un poco más de lo normal. "
-              "Te llegará una notificación cuando esté lista; no necesitas hacer nada más.",
-        "en": "🎨 Your image is being generated and may take a little longer than usual. "
-              "You'll get a notification as soon as it's ready — no further action needed.",
+        "es": "🎨 Tu imagen se está generando y aparecerá aquí mismo en el chat en cuanto esté lista. "
+              "Puede tardar un poco según el modelo; no necesitas hacer nada más.",
+        "en": "🎨 Your image is being generated and will appear right here in the chat as soon as it's ready. "
+              "It may take a little while depending on the model — no further action needed.",
     },
 }
 
 _PROCESSING_TYPE_RE = re.compile(r"type=(?P<type>[\w-]+)")
+_PROCESSING_ID_RE = re.compile(r"generation_id=(?P<id>[\w-]+)")
 
 
-def format_generation_processing(gen_type: str = "video") -> str:
-    """Render the stable 'accepted, still processing' marker (HTTP 202)."""
-    return f"{GENERATION_PROCESSING_PREFIX} | type={gen_type}"
+def format_generation_processing(gen_type: str = "video", generation_id: Optional[str] = None) -> str:
+    """Render the stable 'accepted, still processing' marker (HTTP 202).
+
+    When the backend returns a generation_id, it is appended so the chat can link
+    the in-flight generation to a "Generating…" card and swap in the result later.
+    """
+    marker = f"{GENERATION_PROCESSING_PREFIX} | type={gen_type}"
+    if generation_id:
+        marker += f" | generation_id={generation_id}"
+    return marker
 
 
 def is_generation_processing(text: str) -> bool:
@@ -214,6 +222,14 @@ def generation_processing_type(text: str) -> str:
         return "video"
     match = _PROCESSING_TYPE_RE.search(text)
     return match.group("type") if match else "video"
+
+
+def generation_processing_id(text: str) -> Optional[str]:
+    """Extract the generation_id from a GENERATION_PROCESSING marker, if present."""
+    if not text:
+        return None
+    match = _PROCESSING_ID_RE.search(text)
+    return match.group("id") if match else None
 
 
 def processing_message(lang: str = "en", gen_type: str = "video") -> str:

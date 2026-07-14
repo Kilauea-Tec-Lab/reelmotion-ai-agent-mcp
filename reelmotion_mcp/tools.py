@@ -5,7 +5,7 @@ import logging
 import re
 from typing import Optional, Tuple
 
-from request_context import get_api_token, get_conversation_uuid
+from request_context import get_api_token, get_conversation_uuid, get_chat_id
 from session_manager import get_session_manager
 from logging_config import setup_logging
 from moderation import is_disallowed_content, get_refusal_message
@@ -279,6 +279,11 @@ async def generate_image(
         "model": model,
         "aspect_ratio": aspect_ratio,
     }
+    # Originating chat so the backend can attach an async (202) result back into
+    # the conversation and the frontend can render a "Generating…" card.
+    chat_id = get_chat_id() or conversation_uuid
+    if chat_id:
+        payload["chat_id"] = chat_id
     # `quality` (2K/3K) only applies to Seedream; ignored by other models.
     if model == "Seedream":
         payload["quality"] = quality
@@ -310,7 +315,16 @@ async def generate_image(
             #   else (402/422/401/5xx/...) -> raise for the typed handlers below.
             if response.status_code == 202:
                 logger.debug("Backend returned 202: image will be delivered asynchronously")
-                return format_generation_processing("image")
+                gen_id = None
+                try:
+                    body = response.json()
+                    if isinstance(body, dict):
+                        gen_id = body.get("generation_id")
+                except (ValueError, TypeError):
+                    pass
+                if gen_id:
+                    await session_manager.save_pending_generation(conversation_uuid, gen_id, "image")
+                return format_generation_processing("image", gen_id)
 
             response.raise_for_status()
             result = response.json()
@@ -651,6 +665,11 @@ async def generate_video(
         "video_duration": duration,
         "aspect_ratio": aspect_ratio,
     }
+    # Originating chat so the backend can attach an async (202) result back into
+    # the conversation and the frontend can render a "Generating…" card.
+    chat_id = get_chat_id() or conversation_uuid
+    if chat_id:
+        payload["chat_id"] = chat_id
 
     if is_seedance:
         # Resolution-based tier; the "fast" sub-tier has no 1080p.
@@ -765,16 +784,12 @@ async def generate_video(
     logger.debug("Payload: %s", json.dumps(payload, indent=2))
 
     try:
-        # 900s read ceiling. The hybrid backend (runway-4.5) now holds the
-        # request SYNCHRONOUSLY for up to ~590s (≈10 min) and answers 200 with
-        # the finished video in the normal case; only very long generations spill
-        # past that window and come back 202 (still processing). The read ceiling
-        # MUST stay above that window (≥600s) so the agent never cuts off before
-        # the backend can return the video_url — otherwise a slow-but-successful
-        # generation surfaces as a connection error and the user never sees the
-        # video. The other providers are still fully synchronous and can also take
-        # minutes, so the high ceiling serves them too. AsyncClient keeps the
-        # event loop free for other conversations.
+        # 900s read ceiling. The job-backed providers (runway-4.5, kling) now answer
+        # 202 almost immediately and are tracked via the in-chat card, but the other
+        # providers (sora/veo/seedance) are still fully synchronous and can take
+        # several minutes, so the ceiling MUST stay high (≥600s) or a slow-but-
+        # successful generation surfaces as a connection error and the user never
+        # sees the video. AsyncClient keeps the event loop free for other conversations.
         timeout = httpx.Timeout(900.0, connect=30.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(url, json=payload, headers=headers)
@@ -789,7 +804,16 @@ async def generate_video(
             #          below classify and explain it.
             if response.status_code == 202:
                 logger.debug("Backend returned 202: video will be delivered asynchronously")
-                return format_generation_processing("video")
+                gen_id = None
+                try:
+                    body = response.json()
+                    if isinstance(body, dict):
+                        gen_id = body.get("generation_id")
+                except (ValueError, TypeError):
+                    pass
+                if gen_id:
+                    await session_manager.save_pending_generation(conversation_uuid, gen_id, "video")
+                return format_generation_processing("video", gen_id)
 
             response.raise_for_status()
             result = response.json()

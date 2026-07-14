@@ -42,6 +42,9 @@ class SessionManager:
     def _get_refs_key(self, conversation_uuid: str) -> str:
         return f"refs:{conversation_uuid}"
 
+    def _get_pending_generations_key(self, conversation_uuid: str) -> str:
+        return f"pending_generations:{conversation_uuid}"
+
     def _get_pending_action_key(self, conversation_uuid: str) -> str:
         return f"pending_action:{conversation_uuid}"
 
@@ -146,6 +149,33 @@ class SessionManager:
         """Delete already-sent files (cleanup)."""
         files_key = self._get_files_key(conversation_uuid)
         await self.redis_client.delete(files_key)
+
+    async def save_pending_generation(
+        self, conversation_uuid: str, generation_id: str, gen_type: str
+    ):
+        """Record an async generation (HTTP 202) started in this turn so the chat
+        response can hand the id to the frontend and render a "Generating…" card."""
+        key = self._get_pending_generations_key(conversation_uuid)
+        entry = {
+            "generation_id": generation_id,
+            "type": gen_type,
+            "created_at": datetime.now().isoformat(),
+        }
+        await self.redis_client.lpush(key, json.dumps(entry))
+        await self.redis_client.expire(key, self.FILE_TTL)
+        logger.debug("Saved pending generation id='%s' type='%s' for UUID='%s'",
+                     generation_id, gen_type, conversation_uuid)
+
+    async def get_pending_generations(self, conversation_uuid: str) -> List[Dict]:
+        """Get async generations started this turn (drained into the chat response)."""
+        key = self._get_pending_generations_key(conversation_uuid)
+        entries = await self.redis_client.lrange(key, 0, -1)
+        return [json.loads(e) for e in entries]
+
+    async def clear_pending_generations(self, conversation_uuid: str):
+        """Delete the pending-generations list after draining it."""
+        key = self._get_pending_generations_key(conversation_uuid)
+        await self.redis_client.delete(key)
 
     async def save_reference_files(self, conversation_uuid: str, files_data: List[Dict]):
         """Save reference file URLs (persist for the session)."""
@@ -299,9 +329,10 @@ class SessionManager:
         refs_key = self._get_refs_key(conversation_uuid)
         pending_key = self._get_pending_action_key(conversation_uuid)
         workflow_key = self._get_workflow_state_key(conversation_uuid)
+        pending_gens_key = self._get_pending_generations_key(conversation_uuid)
 
         await self.redis_client.delete(
-            session_key, files_key, refs_key, pending_key, workflow_key
+            session_key, files_key, refs_key, pending_key, workflow_key, pending_gens_key
         )
 
 

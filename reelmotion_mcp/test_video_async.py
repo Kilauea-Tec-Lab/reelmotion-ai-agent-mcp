@@ -17,6 +17,8 @@ import tools
 from generation_errors import (
     GENERATION_PROCESSING_PREFIX,
     format_generation_processing,
+    generation_processing_id,
+    generation_processing_type,
     is_generation_processing,
     parse_generation_error,
     processing_message,
@@ -32,6 +34,15 @@ class TestProcessingHelpers:
         assert marker.startswith(GENERATION_PROCESSING_PREFIX)
         assert is_generation_processing(marker) is True
 
+    def test_marker_carries_optional_generation_id(self):
+        # Without an id the marker still parses; with one, the id is extractable
+        # and the type is unaffected (regex is order-independent).
+        assert generation_processing_id(format_generation_processing("video")) is None
+        marker = format_generation_processing("video", "gen-123")
+        assert is_generation_processing(marker) is True
+        assert generation_processing_type(marker) == "video"
+        assert generation_processing_id(marker) == "gen-123"
+
     def test_is_processing_rejects_errors_and_success(self):
         assert is_generation_processing("GENERATION_ERROR | type=video | ...") is False
         assert is_generation_processing("Video generated successfully with runway-4.5.") is False
@@ -41,8 +52,9 @@ class TestProcessingHelpers:
     def test_processing_message_is_localized(self):
         es = processing_message("es")
         en = processing_message("en")
-        assert "notificación" in es
-        assert "notification" in en
+        assert "aparecerá" in es
+        assert "appear" in en
+        assert "chat" in es.lower()
         assert es != en
 
     def test_processing_message_defaults_to_english(self):
@@ -121,7 +133,7 @@ class TestGenerateVideoHybrid:
         sm.save_generated_file.assert_awaited_once_with("conv-1", "https://gcs/v.mp4", "video")
         sm.clear_reference_files.assert_awaited_once_with("conv-1")
 
-    def test_202_returns_processing_marker_without_saving(self):
+    def test_202_returns_processing_marker_with_generation_id(self):
         body = {
             "success": True,
             "status": "processing",
@@ -131,9 +143,24 @@ class TestGenerateVideoHybrid:
         }
         result, sm, _ = _run_generate_video(_FakeResponse(body, 202))
         assert is_generation_processing(result)
-        # 202 is NOT a finished result — nothing is saved to the library.
+        assert generation_processing_id(result) == "uuid"
+        # The id is stashed for the chat card, but no finished file is saved.
+        sm.save_pending_generation.assert_awaited_once_with("conv-1", "uuid", "video")
         sm.save_generated_file.assert_not_awaited()
         sm.clear_reference_files.assert_not_awaited()
+
+    def test_202_without_generation_id_still_processes(self):
+        body = {"success": True, "status": "processing"}
+        result, sm, _ = _run_generate_video(_FakeResponse(body, 202))
+        assert is_generation_processing(result)
+        assert generation_processing_id(result) is None
+        sm.save_pending_generation.assert_not_awaited()
+
+    def test_payload_includes_chat_id(self):
+        body = {"success": True, "status": "processing", "generation_id": "uuid"}
+        _, _, client = _run_generate_video(_FakeResponse(body, 202))
+        # get_chat_id() is unset in tests, so it falls back to the conversation uuid.
+        assert client.last_json["chat_id"] == "conv-1"
 
     def test_422_failed_surfaces_error_and_refund(self):
         body = {

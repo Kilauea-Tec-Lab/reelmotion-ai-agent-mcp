@@ -142,7 +142,7 @@ class TestExecutePendingActionBalanceGate:
 
         tool.assert_awaited_once()
         assert tool_result == marker
-        assert "notificación" in response  # localized to es
+        assert "aparecerá" in response  # localized to es
         assert "⚠️" not in response  # not framed as an error
 
 
@@ -155,13 +155,13 @@ class TestContextualMessageRendering:
         msg = bot._generate_contextual_success_message(
             format_generation_processing("video"), tool_was_called=True, lang="es"
         )
-        assert "notificación" in msg
+        assert "aparecerá" in msg
 
     def test_processing_marker_renders_english(self, bot):
         msg = bot._generate_contextual_success_message(
             format_generation_processing("video"), tool_was_called=True, lang="en"
         )
-        assert "notification" in msg
+        assert "appear" in msg
 
     def test_success_renders_in_conversation_language_not_raw_signal(self, bot):
         # tools.py returns an English internal signal; the user-facing message

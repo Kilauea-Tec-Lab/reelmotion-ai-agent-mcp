@@ -314,11 +314,23 @@ async def chat_endpoint(request: Request):
         # Limpiar archivos después de enviarlos
         session_manager = get_session_manager()
         await session_manager.clear_sent_files(conversation_uuid)
-        
+
+        # Async generations started this turn (HTTP 202): hand their ids to Laravel
+        # so it can link them to the chat message and the frontend can render a
+        # "Generating…" card until the result lands.
+        pending_generations = await session_manager.get_pending_generations(conversation_uuid)
+        await session_manager.clear_pending_generations(conversation_uuid)
+
         final_response = {
             "response": response,
             "files": files
         }
+
+        if pending_generations:
+            final_response["pending_generations"] = [
+                {"generation_id": g["generation_id"], "type": g["type"]}
+                for g in pending_generations
+            ]
 
         # Surface insufficient-balance blocks to the caller (extra keys are
         # ignored by Laravel today, so this is backward compatible).

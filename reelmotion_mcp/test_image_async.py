@@ -18,6 +18,7 @@ import pytest
 import tools
 from tools import normalize_image_model, _extract_image_urls
 from generation_errors import (
+    generation_processing_id,
     generation_processing_type,
     is_generation_processing,
     parse_generation_error,
@@ -91,7 +92,7 @@ class TestImageProcessingMessage:
     def test_image_message_localized(self):
         es = processing_message("es", "image")
         assert "imagen" in es.lower()
-        assert "notificación" in es
+        assert "chat" in es.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -180,13 +181,28 @@ class TestGenerateImageHybrid:
         result, sm, _ = _run_generate_image(_FakeResponse(body, 200), model="GPT")
         sm.save_generated_file.assert_awaited_once_with("conv-1", "https://gcs/a.png", "image")
 
-    def test_202_returns_processing_marker_without_saving(self):
+    def test_202_returns_processing_marker_with_generation_id(self):
         body = {"success": True, "status": "processing", "generation_id": "uuid"}
         result, sm, _ = _run_generate_image(_FakeResponse(body, 202))
         assert is_generation_processing(result)
         assert generation_processing_type(result) == "image"
+        assert generation_processing_id(result) == "uuid"
+        sm.save_pending_generation.assert_awaited_once_with("conv-1", "uuid", "image")
         sm.save_generated_file.assert_not_awaited()
         sm.clear_reference_files.assert_not_awaited()
+
+    def test_202_without_generation_id_still_processes(self):
+        body = {"success": True, "status": "processing"}
+        result, sm, _ = _run_generate_image(_FakeResponse(body, 202))
+        assert is_generation_processing(result)
+        assert generation_processing_id(result) is None
+        sm.save_pending_generation.assert_not_awaited()
+
+    def test_payload_includes_chat_id(self):
+        body = {"image_url": "https://gcs/a.png"}
+        _, _, sink = _run_generate_image(_FakeResponse(body, 200))
+        # get_chat_id() is unset in tests, so it falls back to the conversation uuid.
+        assert sink["payload"]["chat_id"] == "conv-1"
 
     def test_422_failed_surfaces_error_and_refund(self):
         body = {
