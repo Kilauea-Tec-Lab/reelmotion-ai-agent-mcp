@@ -119,9 +119,9 @@ def parse_generation_error(text: str) -> Optional[dict]:
 _FALLBACK_MESSAGES = {
     CATEGORY_AUTH: {
         "es": "Hubo un problema de autenticación con el servicio de generación. "
-              "Intenta cerrar y abrir sesión de nuevo; si persiste, contacta a soporte.",
+              "Cierra y abre sesión de nuevo, y vuelve a intentarlo. No se descontaron tokens.",
         "en": "There was an authentication problem with the generation service. "
-              "Try signing out and back in; if it persists, contact support.",
+              "Sign out and back in, then try again. No tokens were charged.",
     },
     CATEGORY_INSUFFICIENT_TOKENS: {
         "es": "El servicio rechazó la generación porque tu saldo de tokens no es suficiente. "
@@ -155,9 +155,11 @@ _FALLBACK_MESSAGES = {
     },
     CATEGORY_UNKNOWN: {
         "es": "Ocurrió un problema inesperado al generar tu contenido. "
-              "Inténtalo de nuevo; si persiste, contacta a soporte.",
+              "Inténtalo de nuevo en un momento. Si una generación falla, tus tokens "
+              "se reembolsan automáticamente, así que nunca pagas por algo que no recibiste.",
         "en": "An unexpected problem occurred while generating your content. "
-              "Try again; if it persists, contact support.",
+              "Try again in a moment. If a generation ever fails, your tokens are "
+              "refunded automatically, so you're never charged for something you didn't receive.",
     },
 }
 

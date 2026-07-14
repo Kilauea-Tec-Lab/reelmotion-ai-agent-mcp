@@ -1102,7 +1102,10 @@ class GeminiChatbot:
             f"{error_text[:600]}\n\n"
             f"Explain to the end user, in {language_name}, in 2-3 friendly sentences, "
             "why it failed and what they can do (rephrase the prompt, try again later, "
-            "top up tokens, or contact support — whichever fits the error). "
+            "or top up tokens — whichever fits the error). "
+            "NEVER tell them to contact support: there is no support channel. When the "
+            "cause is not a low balance, reassure them that failed generations are "
+            "refunded automatically so they were not charged. "
             "Do NOT include JSON, HTTP codes, stack traces, or technical jargon. "
             "Do NOT invent causes beyond what the error says. Do NOT blame the user."
         )

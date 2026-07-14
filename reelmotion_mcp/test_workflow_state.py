@@ -21,6 +21,7 @@ from workflow_state import (
     compute_step,
     detect_json_prompt,
     detect_workflow_intent,
+    is_confirmation,
     is_ready_for_confirmation,
     json_prompt_summary,
     merge_extracted,
@@ -175,6 +176,27 @@ class TestParsers:
     def test_parse_resolution(self):
         assert parse_resolution("720p please") == "720p"
         assert parse_resolution("nothing here") is None
+
+    def test_parse_resolution_4k_case_insensitive(self):
+        assert parse_resolution("4K") == "4k"
+
+    def test_parse_resolution_bare_ignored_by_default(self):
+        # Off the resolution step a stray "1080" must NOT be read as a resolution.
+        assert parse_resolution("1080") is None
+        assert parse_resolution("720") is None
+
+    def test_parse_resolution_bare_parsed_when_allowed(self):
+        # The customer typed "1080" (no "p") at the resolution step — must work.
+        assert parse_resolution("1080", allow_bare=True) == "1080p"
+        assert parse_resolution("720", allow_bare=True) == "720p"
+        assert parse_resolution("480", allow_bare=True) == "480p"
+
+    def test_parse_resolution_bare_within_sentence(self):
+        assert parse_resolution("kling v3- 1080 5 seconds", allow_bare=True) == "1080p"
+
+    def test_parse_resolution_unrelated_number_is_not_a_resolution(self):
+        assert parse_resolution("3", allow_bare=True) is None
+        assert parse_resolution("9000", allow_bare=True) is None
 
     def test_parse_voice(self):
         name, voice_id = parse_voice("lets go with Rachel")
@@ -579,3 +601,54 @@ class TestStateContextNote:
         assert "VERBATIM" in note
         assert "ready for cost confirmation" in note
         assert "VIDEO prompt" in note  # video-key hint
+
+
+# ---------------------------------------------------------------------------
+# Regression: the Kling v3 confirmation loop reported by a Pro customer.
+#   Bug 1 — "1080" (no "p") never parsed → stuck on awaiting_resolution.
+#   Bug 2 — "yes confirm" didn't match is_confirmation → fast path skipped.
+# ---------------------------------------------------------------------------
+class TestKlingV3ConfirmationLoop:
+    def test_is_confirmation_multi_word(self):
+        # Two confirmation words in one message must still count as a yes.
+        assert is_confirmation("yes confirm") is True
+        assert is_confirmation("ok yes") is True
+        assert is_confirmation("si dale confirmo") is True
+        assert is_confirmation("yes, confirm") is True
+
+    def test_is_confirmation_single_word_still_works(self):
+        for msg in ("yes", "ok", "sure", "dale", "sí", "confirm", "👍"):
+            assert is_confirmation(msg) is True
+
+    def test_is_confirmation_rejects_non_confirmations(self):
+        for msg in ("hey", "no", "not yet", "yes no", "what?"):
+            assert is_confirmation(msg) is False
+
+    def test_bare_1080_reaches_confirmation(self):
+        # Full customer flow, resolution answered as bare "1080".
+        state = new_state(WORKFLOW_VIDEO_GEN)
+        state = apply_user_message(state, "un soldado realista de 1910 en la trinchera")
+        state = apply_user_message(state, "no")          # decline refine
+        state = apply_user_message(state, "kling v3")     # model
+        assert state["step"] == "awaiting_resolution"
+        state = apply_user_message(state, "1080")         # bare resolution — the bug
+        assert state["params"]["resolution"] == "1080p"
+        assert state["step"] == "awaiting_duration"
+        state = apply_user_message(state, "3")            # duration
+        assert state["params"]["duration"] == 3
+        assert state["step"] == "awaiting_confirmation"
+        assert is_ready_for_confirmation(state)
+
+    def test_resolution_and_duration_in_one_message(self):
+        # Real transcript: model already chosen, the bot asked for the resolution,
+        # and the user re-stated everything: "kling v3- 1080 5 seconds".
+        state = new_state(WORKFLOW_VIDEO_GEN)
+        state = apply_user_message(state, "a chinese man expressing his love in a park")
+        state = apply_user_message(state, "no")
+        state = apply_user_message(state, "kling v3")     # → awaiting_resolution
+        assert state["step"] == "awaiting_resolution"
+        state = apply_user_message(state, "kling v3- 1080 5 seconds")
+        assert state["params"]["model"] == "kling-v3"
+        assert state["params"]["resolution"] == "1080p"
+        assert state["params"]["duration"] == 5
+        assert state["step"] == "awaiting_confirmation"

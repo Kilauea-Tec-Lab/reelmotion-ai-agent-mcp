@@ -91,7 +91,11 @@ VOICE_NAME_TO_ID = {
 # avoid a circular import)
 # ---------------------------------------------------------------------------
 CONFIRMATION_PATTERNS = re.compile(
-    r'^(?:'
+    # Repeatable group so multi-word confirmations ("yes confirm", "ok yes",
+    # "si dale confirmo") match, not just a single word. Each alternative below
+    # is still an exact confirmation token; a non-confirmation word ("yes no")
+    # breaks the chain and fails to reach `$`.
+    r'^(?:(?:'
     r'ok dale|si dale|yes\s+please|si\s+por\s+favor|sí\s+por\s+favor|'
     r'go ahead|lets go|let\'s go|do it|'
     r'me parece bien|suena bien|sounds good|that works|'
@@ -104,7 +108,7 @@ CONFIRMATION_PATTERNS = re.compile(
     r'correcto|exacto|va|venga|vamos|hecho|'
     r'acepto|apruebo|aprobado|anda|órale|sale|'
     r'y|s|1|👍|✅'
-    r')[\s.,!?]*$',
+    r')[\s.,!?]*)+$',
     re.IGNORECASE
 )
 
@@ -338,6 +342,10 @@ _DURATION_SUFFIX_RE = re.compile(
 )
 _BARE_INT_RE = re.compile(r"^\s*(\d+)\s*[.,!?]*\s*$")
 _RESOLUTION_RE = re.compile(r"\b(480p|720p|1080p|4k)\b", re.IGNORECASE)
+# Bare pixel heights ("1080" instead of "1080p") are only read as a resolution
+# in the awaiting_resolution step — users routinely drop the "p" there. Not read
+# elsewhere so a stray number never gets mistaken for a resolution.
+_BARE_RESOLUTION_RE = re.compile(r"\b(480|720|1080)\b")
 _VOICE_RE = re.compile(
     r"\b(" + "|".join(sorted(VOICE_NAME_TO_ID, key=len, reverse=True)) + r")\b",
     re.IGNORECASE,
@@ -366,9 +374,15 @@ def parse_duration(text: str, model: Optional[str] = None, allow_bare: bool = Tr
     return duration
 
 
-def parse_resolution(text: str) -> Optional[str]:
+def parse_resolution(text: str, allow_bare: bool = False) -> Optional[str]:
     match = _RESOLUTION_RE.search(text or "")
-    return match.group(1).lower() if match else None
+    if match:
+        return match.group(1).lower()
+    if allow_bare:
+        bare = _BARE_RESOLUTION_RE.search(text or "")
+        if bare:
+            return bare.group(1) + "p"
+    return None
 
 
 def parse_voice(text: str) -> Optional[Tuple[str, str]]:
@@ -592,7 +606,9 @@ def apply_user_message(state: dict, message: str, has_reference_video: bool = Fa
         )
         if duration is not None:
             params["duration"] = duration
-        resolution = parse_resolution(scan_text)
+        resolution = parse_resolution(
+            scan_text, allow_bare=(step == "awaiting_resolution")
+        )
         if resolution is not None:
             model_for_res = params.get("model")
             if model_for_res in SEEDANCE2_MODELS:
