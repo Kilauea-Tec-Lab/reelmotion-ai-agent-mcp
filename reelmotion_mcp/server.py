@@ -50,6 +50,7 @@ if LOW_BALANCE_THRESHOLD <= 0:
 # Frontend action hints returned in the /api/chat response ("actions" key).
 ACTION_EDITOR = "editor"          # show a "go to editor" button
 ACTION_TOKENS_SALE = "tokens_sale"  # show a "buy tokens" button
+ACTION_HOW_TO_USE = "how_to_use"  # show a "how to use" button (platform guide)
 
 # The bot can surface an action conversationally by emitting a hidden marker
 # like <<ACTION:editor>> or <<ACTION:tokens_sale>> anywhere in its reply
@@ -58,7 +59,7 @@ ACTION_TOKENS_SALE = "tokens_sale"  # show a "buy tokens" button
 # The optional leading horizontal space is absorbed so removing an in-sentence
 # marker ("see <<ACTION:editor>> here") doesn't leave a double space behind.
 ACTION_MARKER_PATTERN = re.compile(
-    r"[ \t]?<<\s*ACTION\s*:\s*(editor|tokens_sale)\s*>>", re.IGNORECASE
+    r"[ \t]?<<\s*ACTION\s*:\s*(editor|tokens_sale|how_to_use)\s*>>", re.IGNORECASE
 )
 
 
@@ -116,6 +117,37 @@ TOKEN_BUY_VERBS = (
     "comprar", "compro", "compra", "buy", "purchase", "get more",
     "conseguir", "obtener", "necesito", "dame", "give me", "quiero mas",
 )
+# Subscription/plan intent also surfaces the tokens_sale button (the frontend
+# renders it as Subscribe + Buy tokens). Phrases are subscription-specific so
+# "my plan is to make a video" does NOT trigger it.
+SUBSCRIPTION_PHRASES = (
+    # English
+    "subscribe", "subscription", "which plan", "what plan", "change plan",
+    "change my plan", "upgrade plan", "upgrade my plan", "plan price",
+    "plan prices", "pricing plan",
+    # Spanish (accent-folded)
+    "suscri",  # stem: suscribir(me), suscripcion
+    "que planes", "cual plan", "cuales planes", "cambiar de plan",
+    "cambiar mi plan", "mejorar mi plan", "precio del plan",
+    "precios de los planes",
+)
+# Confusion / "how does this work" intent → offer the How-to-use guide button.
+# First-person anchored so a generation prompt like "a confused cat" doesn't
+# trigger it.
+CONFUSED_PHRASES = (
+    # English
+    "i am confused", "i'm confused", "im confused", "so confused",
+    "i don't understand", "i dont understand", "i do not understand",
+    "how does this work", "how does this platform work", "how do i use",
+    "how to use", "i'm lost", "i am lost", "im lost",
+    "what can you do", "what can i do here", "help me understand",
+    # Spanish (accent-folded)
+    "estoy confundido", "estoy confundida", "no entiendo", "no le entiendo",
+    "como funciona esto", "como funciona la plataforma", "como se usa",
+    "como uso esto", "como uso la plataforma", "estoy perdido",
+    "estoy perdida", "que puedes hacer", "que puedo hacer aqui",
+    "ayudame a entender", "no se como usar", "no se como funciona",
+)
 
 
 def _fold(text: str) -> str:
@@ -127,6 +159,8 @@ def _fold(text: str) -> str:
 def _wants_to_buy_tokens(folded: str) -> bool:
     if any(phrase in folded for phrase in TOKENS_STANDALONE_PHRASES):
         return True
+    if any(phrase in folded for phrase in SUBSCRIPTION_PHRASES):
+        return True
     has_token_word = any(word in folded for word in TOKEN_WORDS)
     has_buy_verb = any(verb in folded for verb in TOKEN_BUY_VERBS)
     return has_token_word and has_buy_verb
@@ -136,8 +170,9 @@ def detect_user_requested_actions(message: str) -> list:
     """
     Action hints derived directly from what the USER asked for, independent of
     the bot's reply or balance — e.g. "¿dónde edito el video?" → editor,
-    "quiero comprar más tokens" → tokens_sale. Returns an ordered, de-duplicated
-    list (editor before tokens_sale).
+    "quiero comprar más tokens" / "how do I subscribe?" → tokens_sale,
+    "I am confused" → how_to_use. Returns an ordered, de-duplicated list
+    (editor, tokens_sale, how_to_use).
     """
     folded = _fold(message)
     actions = []
@@ -145,6 +180,8 @@ def detect_user_requested_actions(message: str) -> list:
         actions.append(ACTION_EDITOR)
     if _wants_to_buy_tokens(folded):
         actions.append(ACTION_TOKENS_SALE)
+    if any(phrase in folded for phrase in CONFUSED_PHRASES):
+        actions.append(ACTION_HOW_TO_USE)
     return actions
 
 
@@ -159,6 +196,8 @@ def compute_response_actions(
     - "tokens_sale" when a generation was blocked for insufficient balance,
       the balance is too low to generate any video, OR the bot proactively
       suggested topping up because the user is running low.
+    - "how_to_use" when the bot detected the user is confused/lost and
+      suggested the platform guide.
     """
     marker_actions = marker_actions or []
     actions = []
@@ -170,6 +209,8 @@ def compute_response_actions(
         or ACTION_TOKENS_SALE in marker_actions
     ):
         actions.append(ACTION_TOKENS_SALE)
+    if ACTION_HOW_TO_USE in marker_actions:
+        actions.append(ACTION_HOW_TO_USE)
     return actions
 
 # Initialize FastMCP server with CORS middleware

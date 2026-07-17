@@ -7,6 +7,7 @@ import pytest
 import server
 from server import (
     ACTION_EDITOR,
+    ACTION_HOW_TO_USE,
     ACTION_TOKENS_SALE,
     LOW_BALANCE_THRESHOLD,
     compute_response_actions,
@@ -62,6 +63,15 @@ def test_duplicate_markers_are_deduped():
         "<<ACTION:editor>> text <<ACTION:editor>>"
     )
     assert actions == [ACTION_EDITOR]
+
+
+def test_how_to_use_marker_is_extracted_and_stripped():
+    clean, actions = extract_action_markers(
+        "No worries! Here's a quick overview.\n<<ACTION:how_to_use>>"
+    )
+    assert actions == [ACTION_HOW_TO_USE]
+    assert "how_to_use" not in clean
+    assert clean == "No worries! Here's a quick overview."
 
 
 def test_empty_or_none_text_is_safe():
@@ -130,6 +140,13 @@ def test_tokens_sale_marker_adds_it_even_with_healthy_balance():
     assert actions == [ACTION_TOKENS_SALE]
 
 
+def test_how_to_use_marker_passes_through():
+    actions = compute_response_actions(
+        [], None, HEALTHY_BALANCE, marker_actions=[ACTION_HOW_TO_USE]
+    )
+    assert actions == [ACTION_HOW_TO_USE]
+
+
 def test_both_sources_combine_and_keep_order():
     # files -> editor (mechanical), marker -> tokens_sale (conversational)
     actions = compute_response_actions(
@@ -193,13 +210,47 @@ def test_request_detection_handles_both_in_one_message():
 
 
 @pytest.mark.parametrize("message", [
+    "how do I subscribe to a plan?",
+    "I want to subscribe",
+    "what's included in the subscription?",
+    "which plan should I get?",
+    "can I upgrade my plan?",
+    "quiero suscribirme",
+    "¿cómo funciona la suscripción?",
+    "¿qué planes tienen?",
+    "quiero cambiar de plan",
+])
+def test_subscription_phrases_yield_tokens_sale(message):
+    assert detect_user_requested_actions(message) == [ACTION_TOKENS_SALE]
+
+
+@pytest.mark.parametrize("message", [
+    "i am confused",
+    "I'm confused, what do I do now?",
+    "im lost",
+    "I don't understand this",
+    "how does this work?",
+    "how to use this platform?",
+    "what can you do?",
+    "estoy confundido",
+    "no entiendo qué hacer",
+    "¿cómo funciona esto?",
+    "¿cómo se usa la plataforma?",
+    "estoy perdida",
+])
+def test_confused_phrases_yield_how_to_use(message):
+    assert detect_user_requested_actions(message) == [ACTION_HOW_TO_USE]
+
+
+@pytest.mark.parametrize("message", [
     "genera una imagen realista de un pug en el mundial",
-    "hola, ¿qué puedes hacer?",
     "usa veo 3.1",
     "ok",
     "describe esta imagen",
     "quiero generar con mis tokens",  # USE tokens, not buy — must NOT fire
     "¿cuántos tokens cuesta?",        # asking cost, not buying
+    "mi plan es hacer un video de mi perro",   # "plan" as intention, not subscription
+    "a confused cat looking at a mirror",      # generation prompt, not user confusion
     "",
 ])
 def test_unrelated_messages_request_no_actions(message):
