@@ -263,11 +263,11 @@ def test_support_phrases_yield_support(message):
 
 def test_support_marker_is_extracted_and_stripped():
     clean, actions = extract_action_markers(
-        "Claro, te paso con una persona: +1 555-748-1227.\n<<ACTION:support>>"
+        "Claro, te paso con nuestro equipo por WhatsApp 👇\n<<ACTION:support>>"
     )
     assert actions == [ACTION_SUPPORT]
     assert "ACTION" not in clean
-    assert clean == "Claro, te paso con una persona: +1 555-748-1227."
+    assert clean == "Claro, te paso con nuestro equipo por WhatsApp 👇"
 
 
 def test_support_marker_passes_through():
