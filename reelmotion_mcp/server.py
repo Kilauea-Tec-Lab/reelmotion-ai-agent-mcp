@@ -51,6 +51,7 @@ if LOW_BALANCE_THRESHOLD <= 0:
 ACTION_EDITOR = "editor"          # show a "go to editor" button
 ACTION_TOKENS_SALE = "tokens_sale"  # show a "buy tokens" button
 ACTION_HOW_TO_USE = "how_to_use"  # show a "how to use" button (platform guide)
+ACTION_SUPPORT = "support"        # show a "chat on WhatsApp" support button
 
 # The bot can surface an action conversationally by emitting a hidden marker
 # like <<ACTION:editor>> or <<ACTION:tokens_sale>> anywhere in its reply
@@ -59,7 +60,8 @@ ACTION_HOW_TO_USE = "how_to_use"  # show a "how to use" button (platform guide)
 # The optional leading horizontal space is absorbed so removing an in-sentence
 # marker ("see <<ACTION:editor>> here") doesn't leave a double space behind.
 ACTION_MARKER_PATTERN = re.compile(
-    r"[ \t]?<<\s*ACTION\s*:\s*(editor|tokens_sale|how_to_use)\s*>>", re.IGNORECASE
+    r"[ \t]?<<\s*ACTION\s*:\s*(editor|tokens_sale|how_to_use|support)\s*>>",
+    re.IGNORECASE,
 )
 
 
@@ -148,6 +150,27 @@ CONFUSED_PHRASES = (
     "estoy perdida", "que puedes hacer", "que puedo hacer aqui",
     "ayudame a entender", "no se como usar", "no se como funciona",
 )
+# Human/support escalation intent → offer the WhatsApp support button.
+# Anchored on contact verbs so a generation prompt ("a real person walking")
+# does NOT trigger it.
+SUPPORT_PHRASES = (
+    # English
+    "talk to a human", "talk to a person", "talk to someone",
+    "speak to a human", "speak to a person", "speak to someone",
+    "talk to support", "speak to support", "contact support",
+    "contact your support", "i need support", "customer support",
+    "customer service", "human agent", "with a real person",
+    "report a problem", "report an issue", "report a bug",
+    "i want a refund", "get a refund", "file a complaint",
+    # Spanish (accent-folded)
+    "hablar con una persona", "hablar con un humano", "hablar con alguien",
+    "hablar con un agente", "hablar con un asesor", "hablar con soporte",
+    "contactar a soporte", "contactar con soporte", "contactar soporte",
+    "necesito soporte", "quiero soporte", "soporte tecnico",
+    "atencion al cliente", "servicio al cliente", "agente humano",
+    "con una persona real", "reportar un problema", "reportar un error",
+    "poner una queja", "quiero una queja", "quiero un reembolso",
+)
 
 
 def _fold(text: str) -> str:
@@ -171,8 +194,9 @@ def detect_user_requested_actions(message: str) -> list:
     Action hints derived directly from what the USER asked for, independent of
     the bot's reply or balance — e.g. "¿dónde edito el video?" → editor,
     "quiero comprar más tokens" / "how do I subscribe?" → tokens_sale,
-    "I am confused" → how_to_use. Returns an ordered, de-duplicated list
-    (editor, tokens_sale, how_to_use).
+    "I am confused" → how_to_use, "quiero hablar con una persona" → support.
+    Returns an ordered, de-duplicated list
+    (editor, tokens_sale, how_to_use, support).
     """
     folded = _fold(message)
     actions = []
@@ -182,6 +206,8 @@ def detect_user_requested_actions(message: str) -> list:
         actions.append(ACTION_TOKENS_SALE)
     if any(phrase in folded for phrase in CONFUSED_PHRASES):
         actions.append(ACTION_HOW_TO_USE)
+    if any(phrase in folded for phrase in SUPPORT_PHRASES):
+        actions.append(ACTION_SUPPORT)
     return actions
 
 
@@ -198,6 +224,8 @@ def compute_response_actions(
       suggested topping up because the user is running low.
     - "how_to_use" when the bot detected the user is confused/lost and
       suggested the platform guide.
+    - "support" when the user asked for support / to talk to a human, so the
+      frontend can open the WhatsApp support conversation.
     """
     marker_actions = marker_actions or []
     actions = []
@@ -211,6 +239,8 @@ def compute_response_actions(
         actions.append(ACTION_TOKENS_SALE)
     if ACTION_HOW_TO_USE in marker_actions:
         actions.append(ACTION_HOW_TO_USE)
+    if ACTION_SUPPORT in marker_actions:
+        actions.append(ACTION_SUPPORT)
     return actions
 
 # Initialize FastMCP server with CORS middleware

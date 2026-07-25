@@ -8,6 +8,7 @@ import server
 from server import (
     ACTION_EDITOR,
     ACTION_HOW_TO_USE,
+    ACTION_SUPPORT,
     ACTION_TOKENS_SALE,
     LOW_BALANCE_THRESHOLD,
     compute_response_actions,
@@ -243,6 +244,40 @@ def test_confused_phrases_yield_how_to_use(message):
 
 
 @pytest.mark.parametrize("message", [
+    "quiero hablar con una persona",
+    "necesito hablar con alguien de soporte",
+    "quiero hablar con un humano",
+    "atención al cliente por favor",
+    "quiero reportar un problema con mi cuenta",
+    "quiero un reembolso",
+    "i want to talk to a human",
+    "can i speak to someone?",
+    "how do i contact support?",
+    "i need support with my account",
+    "i want a refund",
+    "i want to report a bug",
+])
+def test_support_phrases_yield_support(message):
+    assert detect_user_requested_actions(message) == [ACTION_SUPPORT]
+
+
+def test_support_marker_is_extracted_and_stripped():
+    clean, actions = extract_action_markers(
+        "Claro, te paso con una persona: +1 555-748-1227.\n<<ACTION:support>>"
+    )
+    assert actions == [ACTION_SUPPORT]
+    assert "ACTION" not in clean
+    assert clean == "Claro, te paso con una persona: +1 555-748-1227."
+
+
+def test_support_marker_passes_through():
+    actions = compute_response_actions(
+        [], None, HEALTHY_BALANCE, marker_actions=[ACTION_SUPPORT]
+    )
+    assert actions == [ACTION_SUPPORT]
+
+
+@pytest.mark.parametrize("message", [
     "genera una imagen realista de un pug en el mundial",
     "usa veo 3.1",
     "ok",
@@ -251,6 +286,8 @@ def test_confused_phrases_yield_how_to_use(message):
     "¿cuántos tokens cuesta?",        # asking cost, not buying
     "mi plan es hacer un video de mi perro",   # "plan" as intention, not subscription
     "a confused cat looking at a mirror",      # generation prompt, not user confusion
+    "una persona real caminando por la playa",  # generation prompt, not escalation
+    "a real person walking on the beach",
     "",
 ])
 def test_unrelated_messages_request_no_actions(message):
