@@ -21,6 +21,7 @@ from pricing import (
     estimate_generation_cost,
     affordable_options,
     build_insufficient_balance_message,
+    build_video_unaffordable_message,
     is_spanish,
     detect_language,
     is_insufficient_balance_message,
@@ -45,6 +46,7 @@ from moderation import (
     get_refusal_message,
 )
 from workflow_state import (
+    VIDEO_WORKFLOWS,
     WORKFLOW_UNKNOWN,
     apply_user_message,
     build_action_args,
@@ -308,22 +310,22 @@ class GeminiChatbot:
         - If the user already provided a clear descriptive prompt in their message, take that as the prompt and IMMEDIATELY move to Step 2 in the SAME response.
         - Wait for the user's response. SAVE this descriptive text mentally as THE_PROMPT.
         
-        STEP 2 - OFFER TO HELP WITH THE PROMPT:
-        - Tell the user you can help improve their prompt for better results.
-        - Ask: "Would you like me to help you refine or improve your prompt for better results?" (in user's language)
-        - If user says YES/OK/SI/DALE: 
-          → You MUST write an improved, more detailed version of the prompt.
-          → Show it to the user between quotes.
-          → Ask: "Do you like this version?" (in user's language)
-          → If user approves: UPDATE THE_PROMPT to the refined version. Move to Step 3.
-          → If user wants changes: iterate until satisfied, then move to Step 3.
-        - If user says NO or wants to skip: Keep THE_PROMPT as-is and move to Step 3.
-        - ⚠️ CRITICAL: When user says "ok/sí/dale" to this step, it means they WANT HELP WITH THE PROMPT.
-          You MUST write the refined prompt. Do NOT interpret this as final confirmation to generate.
+        STEP 2 - ENRICH THE PROMPT SILENTLY (NO QUESTION):
+        - ⛔ NEVER ask "Would you like me to help you refine or improve your prompt?".
+          That question is banned — it costs a turn and users abandon on it.
+        - Instead, silently upgrade THE_PROMPT into a richer, more detailed version
+          (add composition, lighting, style, and detail cues that fit their idea).
+          Keep their subject, intent and any explicit details EXACTLY as given.
+        - Do NOT show the rewrite as a question or wait for approval. Go straight to
+          Step 3 in the SAME response, and mention the enriched prompt only as part
+          of the Step 4 summary.
+        - ONLY if the user explicitly asks you to improve/rewrite/refine the prompt:
+          write the improved version after a ✨ marker, between quotes, and ask
+          "Do you like this version?". In THAT case "ok/sí/dale" means they accept
+          the rewrite — NOT a confirmation to generate.
         - 🧾 JSON PROMPTS: If THE_PROMPT is a JSON object (the state note shows prompt=<user's JSON prompt>),
-          SKIP the text-refinement offer. Instead offer JSON-aware suggestions: point out useful missing
-          keys (camera, lighting, style, audio) and, only if the user wants changes, show the improved
-          version as a COMPLETE ```json block after the ✨ marker. Never alter their values silently.
+          never alter their values. Move straight to Step 3; only if the user asks for
+          changes, show the improved version as a COMPLETE ```json block after the ✨ marker.
 
         STEP 3 - CHOOSE THE MODEL (PICK BY INTENT, WITH SUGGESTION):
         - Based on THE_PROMPT, choose the BEST model for the user's intent and explain why briefly.
@@ -355,7 +357,7 @@ class GeminiChatbot:
         ADDITIONAL IMAGE RULES:
         1. ⚠️ PROMPT PARAMETER RULE (EXTREMELY IMPORTANT):
            - The 'prompt' parameter MUST be the DESCRIPTIVE TEXT, never a user's conversational reply.
-           - 🚨 REFINED PROMPT RULE: If you refined the prompt in Step 2 and user accepted, use THE REFINED TEXT as the prompt.
+           - 🚨 REFINED PROMPT RULE: Use the enriched version you wrote in Step 2 as the prompt (or, if the user explicitly requested a rewrite and accepted it, THE REFINED TEXT).
            - NEVER use "ok", "si", "dale", "gpt", "confirmo" as the prompt parameter.
         2. FORBIDDEN to modify the user's agreed-upon prompt without their consent.
         3. IMAGE-TO-IMAGE EDITING: If user wants to EDIT an image, they MUST attach the reference image.
@@ -397,17 +399,18 @@ class GeminiChatbot:
         - If message has model names or durations, it's a COMMAND → still ask for descriptive prompt.
         - Wait for response. SAVE as THE_PROMPT.
         
-        STEP 2 - OFFER TO HELP WITH THE PROMPT:
-        - Tell the user you can help improve their prompt for a more cinematic result.
-        - Ask: "Would you like me to help you refine or improve your prompt for better results?" (in user's language)
-        - If user says YES/OK/SI/DALE:
-          → Write an improved, more cinematic version of the prompt.
-          → Show it between quotes.
-          → Ask: "Do you like this version?" (in user's language)
-          → If approved: UPDATE THE_PROMPT. Move to Step 3.
-          → If wants changes: iterate until satisfied, then move to Step 3.
-        - If user says NO or skips: Keep THE_PROMPT as-is, move to Step 3.
-        - ⚠️ CRITICAL: "ok/sí/dale" here means HELP ME WITH THE PROMPT. Write the refined version. Do NOT treat it as a generation confirmation.
+        STEP 2 - ENRICH THE PROMPT SILENTLY (NO QUESTION):
+        - ⛔ NEVER ask "Would you like me to help you refine or improve your prompt?".
+          That question is banned — it costs a turn and users abandon on it.
+        - Instead, silently upgrade THE_PROMPT into a more cinematic version (camera
+          movement, lighting, pacing, mood). Keep their subject, intent and any
+          explicit details EXACTLY as given.
+        - Do NOT ask for approval. Go straight to Step 3 in the SAME response, and
+          mention the enriched prompt only as part of the Step 5 summary.
+        - ONLY if the user explicitly asks you to improve/rewrite/refine the prompt:
+          write the improved version after a ✨ marker, between quotes, and ask
+          "Do you like this version?". In THAT case "ok/sí/dale" means they accept
+          the rewrite — NOT a confirmation to generate.
         
         STEP 3 - ASK FOR THE MODEL (WITH SUGGESTION):
         - Based on THE_PROMPT, suggest a model and explain why briefly.
@@ -492,14 +495,14 @@ class GeminiChatbot:
         - If the user already provided both the video AND a description, take them directly.
         - SAVE the editing description as THE_EDIT_PROMPT.
         - ⛔ If no reference video is attached, ask the user to attach it before proceeding.
-        - Once you have THE_EDIT_PROMPT, ask: "Would you like me to help you refine or improve your prompt for better results?" (in user's language)
-        - If user says YES/OK/SI/DALE:
-          → Write an improved, more detailed version of the editing prompt.
-          → Show it between quotes.
-          → Ask: "Do you like this version?" (in user's language)
-          → If approved: UPDATE THE_EDIT_PROMPT. Move to Step 2.
-          → If wants changes: iterate until satisfied, then move to Step 2.
-        - If user says NO or skips: Keep THE_EDIT_PROMPT as-is, move to Step 2.
+        - ⛔ NEVER ask "Would you like me to help you refine or improve your prompt?".
+          That question is banned — it costs a turn and users abandon on it.
+        - Once you have THE_EDIT_PROMPT, silently sharpen it into clearer editing
+          instructions (keep their intent and explicit details exactly) and move
+          straight to Step 2 in the SAME response.
+        - ONLY if the user explicitly asks you to improve/rewrite/refine it: write the
+          improved version after a ✨ marker, between quotes, and ask "Do you like
+          this version?" before moving to Step 2.
         
         STEP 2 - SHOW VIDEO EDITING MODELS ONLY:
         - ⚠️ ALWAYS present the models as a FORMATTED LIST (one model per line with its cost and durations), never as inline text.
@@ -932,13 +935,62 @@ class GeminiChatbot:
         """
         lang = self._lang_for(self._lang_sample or fallback_text)
         template = build_insufficient_balance_message(required, balance, lang, options)
+        english = build_insufficient_balance_message(required, balance, "en", options)
+        return await self._localize_block(template, english)
 
+    async def _localize_video_budget_block(
+        self, balance: int, options: dict, fallback_text: str = ""
+    ) -> str:
+        """Same rendering contract as _localize_balance_block, for the up-front
+        "your balance can't buy any video" notice."""
+        lang = self._lang_for(self._lang_sample or fallback_text)
+        template = build_video_unaffordable_message(balance, lang, options)
+        english = build_video_unaffordable_message(balance, "en", options)
+        return await self._localize_block(template, english)
+
+    async def _video_budget_block(self, state: Optional[dict], message: str) -> Optional[str]:
+        """
+        Return the up-front "no video is affordable" notice, or None.
+
+        Fires only on the turn where a VIDEO workflow is still at
+        `awaiting_prompt` — i.e. the user just declared video intent and no
+        prompt has been captured yet. Once a prompt exists the step advances and
+        this stops firing, so the user is told once, before the interview, and
+        is never nagged again mid-flow.
+        """
+        if not state or state.get("workflow_type") not in VIDEO_WORKFLOWS:
+            return None
+        if state.get("step") != "awaiting_prompt":
+            return None
+
+        balance = get_token_balance()
+        if balance is None or balance >= min_video_cost():
+            return None
+
+        logger.info(
+            "Up-front video budget block: balance=%s < min_video_cost=%s",
+            balance, min_video_cost(),
+        )
+        text = await self._localize_video_budget_block(
+            balance, affordable_options(balance), message
+        )
+
+        await self.session_manager.add_message(self.conversation_uuid, "user", message)
+        await self.session_manager.add_message(self.conversation_uuid, "assistant", text)
+        # Keep the workflow alive: the user can still answer with a prompt (and
+        # hit the pre-execution gate) or pivot to an image.
+        await self.session_manager.save_workflow_state(self.conversation_uuid, state)
+        return text
+
+    async def _localize_block(self, template: str, english: str) -> str:
+        """Return `template` for Spanish/English, otherwise ask a fast one-shot
+        model to rewrite the English version in the user's language. Falls back
+        to the template on any failure so a block is never lost."""
         # Confident Spanish/English (or no usable sample, e.g. unit tests) →
         # deterministic template, no model call.
         if not self._lang_sample or detect_language(self._lang_sample) in ("es", "en"):
             return template
 
-        english = build_insufficient_balance_message(required, balance, "en", options)
         prompt = (
             "Rewrite the MESSAGE below in the SAME language the user is writing "
             "in (infer it from USER TEXT).\n\n"
@@ -1526,6 +1578,17 @@ IMPORTANT: A tool was JUST executed successfully. The workflow is COMPLETE.
                     "Workflow state after user message: type=%s step=%s",
                     state.get("workflow_type"), state.get("step"),
                 )
+
+            # === UP-FRONT VIDEO BUDGET GATE ===
+            # Say "your balance can't buy any video" at the START of a video
+            # workflow instead of after the full interview. Fires only at
+            # `awaiting_prompt` — the turn where the user declares video intent
+            # and before any prompt/model/duration question — so it states the
+            # limit once and never nags mid-flow. The pre-execution gate in
+            # _save_pending_action / execute_pending_action stays as the backstop.
+            early_block = await self._video_budget_block(state, message)
+            if early_block:
+                return early_block
 
             # === FAST PATH: user confirming the quoted cost (by INTENT) ===
             # Not just an exact word list: obvious yeses resolve instantly, and

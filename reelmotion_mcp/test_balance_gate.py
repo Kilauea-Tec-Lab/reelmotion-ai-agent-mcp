@@ -11,7 +11,13 @@ import pytest
 import chatbot as chatbot_module
 from chatbot import GeminiChatbot
 from generation_errors import format_generation_processing
-from pricing import affordable_options
+from pricing import affordable_options, min_video_cost
+from workflow_state import (
+    WORKFLOW_IMAGE,
+    WORKFLOW_VIDEO_GEN,
+    apply_user_message,
+    new_state,
+)
 from request_context import (
     clear_insufficient_block,
     get_insufficient_block,
@@ -540,3 +546,51 @@ class TestReplyConfirmsCost:
         )
         assert confirmed is False
         llm.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# Up-front video budget gate (fires BEFORE the prompt/model/duration interview)
+# ---------------------------------------------------------------------------
+class TestUpFrontVideoBudgetGate:
+    """`_video_budget_block` must warn at the START of a video workflow, not
+    after the full interview, and must stay silent once a prompt is captured."""
+
+    def _block(self, bot, state, balance, message="I want to create a video"):
+        set_token_balance(balance)
+        bot.session_manager.add_message = AsyncMock()
+        bot.session_manager.save_workflow_state = AsyncMock()
+        return asyncio.run(bot._video_budget_block(state, message))
+
+    def test_blocks_video_intent_when_no_video_is_affordable(self, bot):
+        state = new_state(WORKFLOW_VIDEO_GEN)
+        assert state["step"] == "awaiting_prompt"
+
+        text = self._block(bot, state, balance=20)
+
+        assert text is not None
+        assert "20" in text
+        assert str(min_video_cost()) in text
+        # Steers to what the balance CAN buy instead of dead-ending.
+        assert "Seedream" in text
+        bot.session_manager.save_workflow_state.assert_awaited_once()
+
+    def test_silent_once_a_prompt_is_captured(self, bot):
+        """No nagging mid-flow: past awaiting_prompt the gate stops firing."""
+        state = new_state(WORKFLOW_VIDEO_GEN)
+        state = apply_user_message(state, "a frog jumping across lily pads in the rain")
+        assert state["step"] != "awaiting_prompt"
+
+        assert self._block(bot, state, balance=20) is None
+
+    def test_silent_when_balance_covers_a_video(self, bot):
+        state = new_state(WORKFLOW_VIDEO_GEN)
+        assert self._block(bot, state, balance=min_video_cost()) is None
+
+    def test_silent_for_image_workflows(self, bot):
+        """Images cost 4 tokens — a 20-token balance is fine, never warn."""
+        state = new_state(WORKFLOW_IMAGE)
+        assert self._block(bot, state, balance=20) is None
+
+    def test_silent_when_balance_is_unknown(self, bot):
+        state = new_state(WORKFLOW_VIDEO_GEN)
+        assert self._block(bot, state, balance=None) is None

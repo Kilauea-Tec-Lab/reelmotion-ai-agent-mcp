@@ -509,6 +509,61 @@ def is_insufficient_balance_message(text: str) -> bool:
 _MAX_LISTED_VIDEOS = 4
 
 
+def build_video_unaffordable_message(balance: int, lang: str, options: Dict) -> str:
+    """
+    Shown the moment a VIDEO workflow starts with a balance that cannot buy even
+    the cheapest video — before asking for a prompt, model or duration.
+
+    The old flow ran the full ~8-turn interview and only then surfaced a 402,
+    which converted at 1.1%. This states the limit up front and steers to what
+    the balance CAN buy (images start at 4 tokens) instead of dead-ending.
+    """
+    cheapest = min_video_cost()
+    images = options.get("images", [])
+    image_parts = ", ".join(f"{i['model']} ({i['cost']})" for i in images)
+
+    if lang == "es":
+        lines = [
+            f"⚠️ Con tu saldo de {balance} tokens todavía no alcanza para ningún video "
+            f"— el más barato cuesta {cheapest} tokens.",
+            "",
+        ]
+        if images:
+            lines.append(f"Lo que sí puedes generar ahora mismo:")
+            lines.append(f"• Imagen: {image_parts}")
+            lines.append("")
+            lines.append(
+                "¿Quieres que creemos una imagen, o prefieres recargar tokens para "
+                "el video? (100 tokens por dólar, mínimo $6 = 600 tokens)."
+            )
+        else:
+            lines.append(
+                "Puedes recargar tokens para continuar "
+                "(100 tokens por dólar, mínimo $6 = 600 tokens)."
+            )
+        return "\n".join(lines)
+
+    lines = [
+        f"⚠️ Your balance of {balance} tokens isn't enough for any video yet "
+        f"— the cheapest one costs {cheapest} tokens.",
+        "",
+    ]
+    if images:
+        lines.append("What you can generate right now:")
+        lines.append(f"• Image: {image_parts}")
+        lines.append("")
+        lines.append(
+            "Want to create an image instead, or top up tokens for the video? "
+            "(100 tokens per US dollar, minimum $6 = 600 tokens)."
+        )
+    else:
+        lines.append(
+            "You can top up tokens to continue "
+            "(100 tokens per US dollar, minimum $6 = 600 tokens)."
+        )
+    return "\n".join(lines)
+
+
 def build_insufficient_balance_message(
     required: int,
     balance: int,

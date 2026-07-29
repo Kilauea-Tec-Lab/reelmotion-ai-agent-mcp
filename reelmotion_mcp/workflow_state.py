@@ -485,7 +485,14 @@ def new_state(workflow_type: str = WORKFLOW_UNKNOWN) -> dict:
             "prompt": None,
             "prompt_format": "text",
             "candidate_prompt": None,
-            "refine_resolved": False,
+            # Starts resolved: the agent no longer OFFERS refinement on its own.
+            # The unsolicited "would you like me to refine your prompt?" turn was
+            # the single biggest drop-off in the funnel (124 abandoned chats), so
+            # the workflow goes prompt -> model directly. Refinement still runs
+            # when the user explicitly asks for it: Gemini emits a ✨ candidate,
+            # capture_refined_prompt() stores it, and compute_step() routes to
+            # "refining" on the strength of that candidate alone.
+            "refine_resolved": True,
             "model": None,
             "duration": None,
             "resolution": None,
@@ -517,8 +524,12 @@ def compute_step(state: dict) -> str:
 
     if not params.get("prompt"):
         return "awaiting_prompt"
+    # A pending candidate means the user ASKED for a rewrite and Gemini proposed
+    # one — wait for them to accept it regardless of refine_resolved.
+    if params.get("candidate_prompt"):
+        return "refining"
     if not params.get("refine_resolved"):
-        return "refining" if params.get("candidate_prompt") else "offer_refine"
+        return "offer_refine"
     if workflow_type == WORKFLOW_UNKNOWN:
         return "awaiting_type"
     if not params.get("model"):

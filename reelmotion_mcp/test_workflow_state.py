@@ -238,16 +238,13 @@ class TestDetectWorkflowIntent:
 # transitions: image workflow
 # ---------------------------------------------------------------------------
 class TestImageWorkflow:
-    def test_full_flow(self):
+    def test_full_flow_goes_straight_from_prompt_to_model(self):
+        """The unsolicited refine offer is gone: prompt -> model, no turn in between."""
         state = new_state(WORKFLOW_IMAGE)
         assert state["step"] == "awaiting_prompt"
 
         state = apply_user_message(state, "a red dragon flying over snowy mountains")
         assert state["params"]["prompt"] == "a red dragon flying over snowy mountains"
-        assert state["step"] == "offer_refine"
-
-        state = apply_user_message(state, "no, use mine")
-        assert state["params"]["refine_resolved"] is True
         assert state["step"] == "awaiting_model"
 
         state = apply_user_message(state, "GPT")
@@ -255,11 +252,18 @@ class TestImageWorkflow:
         assert state["step"] == "awaiting_confirmation"
         assert is_ready_for_confirmation(state)
 
-    def test_refine_acceptance_uses_candidate(self):
+    def test_offer_refine_step_is_never_entered(self):
+        state = new_state(WORKFLOW_IMAGE)
+        assert state["params"]["refine_resolved"] is True
+        state = apply_user_message(state, "a dragon over mountains at dawn")
+        assert state["step"] != "offer_refine"
+
+    def test_explicit_refine_acceptance_still_uses_candidate(self):
+        """A user-requested rewrite still works: the ✨ candidate alone routes to
+        `refining`, and accepting it promotes the candidate to the prompt."""
         state = new_state(WORKFLOW_IMAGE)
         state = apply_user_message(state, "a dragon over mountains at dawn")
-        state = apply_user_message(state, "yes")  # wants help refining
-        assert state["step"] == "offer_refine"  # candidate not yet produced
+        assert state["step"] == "awaiting_model"  # no offer turn
 
         refined = 'Here you go!\n✨ **Refined Prompt:** "A majestic crimson dragon soaring over snow-capped peaks at golden dawn"'
         state = capture_refined_prompt(state, refined)
