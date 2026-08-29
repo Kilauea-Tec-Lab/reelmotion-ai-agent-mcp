@@ -952,7 +952,14 @@ async def generate_speech(
             req_uuid = str(uuid_lib.uuid4())
             backend_audio_url = f"https://reelmotion.ai/generated/audio/{req_uuid}.mp3"
 
-            callback_payload = {"audio_url": backend_audio_url, "tokens": tokens_cost}
+            # Send what the price was derived from so the backend can verify it
+            # rather than trusting the number we quote.
+            callback_payload = {
+                "audio_url": backend_audio_url,
+                "tokens": tokens_cost,
+                "characters": len(text),
+                "model_id": model_id,
+            }
             callback_headers = {
                 "Authorization": f"Bearer {api_token}",
                 "Content-Type": "application/json",
