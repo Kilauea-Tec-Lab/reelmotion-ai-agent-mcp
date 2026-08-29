@@ -26,9 +26,8 @@ from pricing import (
     VIDEO_DURATION_RULES,
     SEEDANCE2_MODELS,
     KLING_MODELS,
-    KLING_ROUTE_BASE,
     KLING_ROUTE_EDIT,
-    KLING_ROUTE_TURBO,
+    default_kling_route,
     normalize_seedance_resolution,
     normalize_kling_quality,
 )
@@ -50,8 +49,9 @@ VIDEO_WORKFLOWS = (WORKFLOW_VIDEO_GEN, WORKFLOW_VIDEO_EDIT)
 
 # Models allowed for video-to-video editing (the rest don't support it).
 # kling-o3 covers both the "edit an existing video" and "reference-to-video"
-# routes; runway-aleph remains a high-quality editor.
-VIDEO_EDIT_MODELS = ("runway-aleph", "kling-o3")
+# routes; kling-o1 is the unified generate+edit engine (flat rate); runway-aleph
+# remains a high-quality editor.
+VIDEO_EDIT_MODELS = ("runway-aleph", "kling-o3", "kling-o1")
 
 RACHEL_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"
 
@@ -272,21 +272,39 @@ def _build_model_alias_table() -> Dict[str, str]:
     ):
         table[canonical.lower()] = canonical
     table.update({
-        "seedance 2.0 fast": "seedance-2.0-fast",
-        "seedance 2 fast": "seedance-2.0-fast",
-        "seedance2 fast": "seedance-2.0-fast",
-        "seedance fast": "seedance-2.0-fast",
-        "seedance-2-fast": "seedance-2.0-fast",
-        "seedance 2.0": "seedance-2.0",
-        "seedance 2": "seedance-2.0",
-        "seedance2": "seedance-2.0",
-        "seedance-2": "seedance-2.0",
+        # Seedance: the retired 2.0 / 2.0-fast tiers were replaced by 2.5 / Mini,
+        # so the legacy phrasings keep working but land on the NEW keys.
+        "seedance 2.0 mini": "seedance-2.0-mini",
+        "seedance 2 mini": "seedance-2.0-mini",
+        "seedance2 mini": "seedance-2.0-mini",
+        "seedance mini": "seedance-2.0-mini",
+        "seedance-2-mini": "seedance-2.0-mini",
+        "seedance-2.0-fast": "seedance-2.0-mini",
+        "seedance 2.0 fast": "seedance-2.0-mini",
+        "seedance 2 fast": "seedance-2.0-mini",
+        "seedance2 fast": "seedance-2.0-mini",
+        "seedance fast": "seedance-2.0-mini",
+        "seedance-2-fast": "seedance-2.0-mini",
+        "seedance 2.5": "seedance-2.5",
+        "seedance 2,5": "seedance-2.5",
+        "seedance2.5": "seedance-2.5",
+        "seedance2,5": "seedance-2.5",
+        "seedance-2-5": "seedance-2.5",
+        "seedance 2.0": "seedance-2.5",
+        "seedance-2.0": "seedance-2.5",
+        "seedance 2": "seedance-2.5",
+        "seedance2": "seedance-2.5",
+        "seedance-2": "seedance-2.5",
         "veo 3.1 ultra": "veo-3.1-ultra",
         "veo 3.1 flash": "veo-3.1-flash",
+        "veo 3.1 lite": "veo-3.1-lite",
+        "veo3.1 lite": "veo-3.1-lite",
+        "veo 3,1 lite": "veo-3.1-lite",
         "veo 3.1": "veo-3.1",
         "veo3.1": "veo-3.1",
         "veo 3,1": "veo-3.1",
         "runway aleph": "runway-aleph",
+        "runway aleph 2": "runway-aleph",
         "runway 4.5": "runway-4.5",
         "runway 4,5": "runway-4.5",
         # Kling v3 / v3-turbo / o3 (Evolink). The old kling-v3-omni-*/kling-v1
@@ -299,6 +317,8 @@ def _build_model_alias_table() -> Dict[str, str]:
         "kling v3": "kling-v3",
         "kling o3": "kling-o3",
         "kling-o3": "kling-o3",
+        "kling o1": "kling-o1",
+        "kling-o1": "kling-o1",
         "kling pro": "kling-v3",
         "kling std": "kling-v3-turbo",
         "kling standard": "kling-v3-turbo",
@@ -310,7 +330,17 @@ def _build_model_alias_table() -> Dict[str, str]:
         "nano banana": "Nano Banana 2",
         "nanobanana": "Nano Banana 2",
         "gpt": "GPT",
+        "gpt image 2": "GPT",
+        # Seedream UI names: "Seedream 5.0 Lite" -> Seedream, "Seedream 5.0 Pro"
+        # -> Seedream Pro. Longest-alias-first matching keeps the Pro variants
+        # from being swallowed by the bare "seedream" alias.
+        "seedream pro": "Seedream Pro",
+        "seedream 5.0 pro": "Seedream Pro",
+        "seedream 5 pro": "Seedream Pro",
         "seedream": "Seedream",
+        "seedream lite": "Seedream",
+        "seedream 5.0 lite": "Seedream",
+        "seedream 5 lite": "Seedream",
         "midjourney": "Midjourney",
         "mid journey": "Midjourney",
     })
@@ -845,12 +875,13 @@ def build_action_args(state: dict, ref_urls: Optional[List[str]] = None) -> Opti
             route = (
                 KLING_ROUTE_EDIT
                 if (workflow_type == WORKFLOW_VIDEO_EDIT and model == "kling-o3")
-                else (KLING_ROUTE_TURBO if model == "kling-v3-turbo" else KLING_ROUTE_BASE)
+                # turbo -> turbo, kling-o1 -> its flat route, everything else -> base
+                else default_kling_route(model)
             )
             args["resolution"] = normalize_kling_quality(model, route, params.get("resolution"))
             # mode=edit makes the cost estimate use the edit rate; the tool also
             # auto-detects the edit route from the attached reference video.
-            if workflow_type == WORKFLOW_VIDEO_EDIT and model == "kling-o3":
+            if workflow_type == WORKFLOW_VIDEO_EDIT and model in ("kling-o3", "kling-o1"):
                 args["mode"] = "edit"
         # Reference files are attached by execute_pending_action from refs:{uuid}
         return "generate_video", args

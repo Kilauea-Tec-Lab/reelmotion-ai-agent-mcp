@@ -486,11 +486,12 @@ def generate_image(
     """
     Generate or edit an image using the reelmotion backend.
     This tool supports both text-to-image generation AND image-to-image editing/transformation.
-    COST: Seedream = 4, GPT = 6, Nano Banana 2 = 7, Midjourney = 9 tokens per image.
+    COST: Seedream = 3, Seedream Pro = 4, GPT = 6, Nano Banana 2 = 8, Midjourney = 9 tokens per image.
     There is NO 'Freepik' model.
 
     Model selection (pick by intent):
-    - Seedream: realism, photographic fidelity, cinematic scenes, reference images (recommended default).
+    - Seedream: realism, photographic fidelity, cinematic scenes, reference images (cheapest, recommended default).
+    - Seedream Pro: the same realism with higher fidelity — when the user wants maximum image quality.
     - Midjourney: artistic style, illustration, creative concepts.
     - Nano Banana 2: quick edits of an existing image, multi-reference composition.
     - GPT: readable text inside the image, strict instruction following.
@@ -501,20 +502,20 @@ def generate_image(
       Examples: change style, add elements, modify colors, remove objects, apply effects.
     - Multi-image reference: Generate using multiple reference images (type 3).
 
-    Delivery: Seedream and Midjourney are asynchronous (hybrid). The call returns the
+    Delivery: Seedream, Seedream Pro and Midjourney are asynchronous (hybrid). The call returns the
     finished image (200) or, for slow jobs, a "still processing" marker (202) — the user
     is notified when it's ready; never retry a processing job. They always produce ONE
     image per call ('type'/'quantity' are ignored). A failed job (422) is auto-refunded.
 
     Args:
         prompt: The description of the image to generate (rich, visual, in English), or editing instructions.
-        model: One of: 'Seedream', 'GPT', 'Nano Banana 2', 'Midjourney'. Defaults to 'Seedream'.
+        model: One of: 'Seedream', 'Seedream Pro', 'GPT', 'Nano Banana 2', 'Midjourney'. Defaults to 'Seedream'.
         image_type: 1 (text only), 2 (text + reference image), 3 (text + multiple references). Only GPT and Nano Banana 2 honor it.
-        quantity: Number of images (GPT / Nano Banana 2 only; Seedream/Midjourney always 1). Defaults to 1.
+        quantity: Number of images (GPT / Nano Banana 2 only; Seedream/Seedream Pro/Midjourney always 1). Defaults to 1.
         reference_image: URL of a reference image (image editing/transformation).
         reference_images: List of reference image URLs (multi-image reference).
         aspect_ratio: '16:9' (default), '9:16', '1:1', etc. Choose to match the destination.
-        quality: '2K' or '3K' — Seedream only; ignored by other models and does not change the cost.
+        quality: '2K' or '3K' — Seedream / Seedream Pro only; ignored by other models and does not change the cost.
     """
     return generate_image_impl(
         prompt, model, image_type, quantity, reference_image, reference_images,
@@ -554,30 +555,36 @@ def generate_video(
     - Image-to-video: Animate a reference image into a video.
     - Video-to-video (editing): Transform or edit an existing video using a text prompt + reference video.
       Examples: change style, add effects, modify movement, re-edit scenes.
-      Supported models for video-to-video: runway-aleph, kling-o3 (video-edit).
+      Supported models for video-to-video: runway-aleph, kling-o3 (video-edit), kling-o1.
 
     Token costs per second and valid durations:
-    - runway-aleph: 17 tokens/sec (5-10s) - video-to-video editing
+    - runway-aleph: 30 tokens/sec (5-10s) - Aleph 2, video-to-video editing
     - runway-4.5: 13 tokens/sec (5, 8, or 10s) - high quality (hybrid: 200 sync or 202 processing)
-    - veo-3.1: 44 tokens/sec (8s only)
-    - veo-3.1-flash: 17 tokens/sec (8s only)
-    - veo-3.1-ultra: 65 tokens/sec (8s only) - maximum quality
+    - veo-3.1: 42 tokens/sec (8s only)
+    - veo-3.1-lite: 6 tokens/sec (8s only) - cheapest video with native audio
+    - veo-3.1-flash: 11 tokens/sec (8s only)
+    - veo-3.1-ultra: 63 tokens/sec (8s only) - maximum quality
 
-    Kling v3 / o3 (RESOLUTION + route + audio based, 3-15s; reference 3-10s):
+    Kling v3 / o3 / o1 (RESOLUTION + route + audio based, 3-15s; reference 3-10s):
     - kling-v3: max quality, 4K, native audio, motion-control. text/image: 720p=9, 1080p=12,
       4k=42 (+audio 720p=12, 1080p=14); motion-control: 720p=13, 1080p=17.
     - kling-v3-turbo: fast/cheap drafts (text/image only, max 1080p, no audio): 720p=12, 1080p=14.
     - kling-o3: character/style consistency (reference) or edit an existing video: 720p=13, 1080p=17;
       plain text/image: 720p=9, 1080p=12, 4k=42.
+    - kling-o1: flat 12 tokens/sec (720p and 1080p), 5s or 10s ONLY. Unified generate+edit engine
+      (image-to-video or video editing) with NO text-to-video route — it always needs an image
+      (media_url) or a video (edit_video).
       Heuristic: edit a video -> kling-o3 + edit_video; keep a character/style from images ->
       kling-o3 + reference_images; animate with a guide video -> kling-v3 + motion_video;
       fast/cheap -> kling-v3-turbo; max quality/4K/audio -> kling-v3.
 
-    Seedance 2.0 (RESOLUTION-based pricing, 4-15s duration, default 5s):
-    - seedance-2.0: 480p=15, 720p=32, 1080p=72 tokens/sec (supports 1080p)
-    - seedance-2.0-fast: 480p=12, 720p=26 tokens/sec (max 720p; 1080p auto-downgraded to 720p)
-    - Reference-video discount (reference_videos sent): seedance-2.0 480p=9/720p=20/1080p=43;
-      seedance-2.0-fast 480p=7/720p=16.
+    Seedance (RESOLUTION-based pricing, default 5s):
+    - seedance-2.5: 480p=15, 720p=32, 1080p=78 tokens/sec, 4-30s (supports 1080p, audio free)
+    - seedance-2.0-mini: 480p=5, 720p=11 tokens/sec, 4-15s (max 720p; 1080p auto-downgraded to
+      720p) - cheapest video option on the platform
+    - Reference-video discount (reference_videos sent): seedance-2.5 480p=9/720p=19/1080p=48; seedance-2.0-mini 480p=4/720p=7.
+    - Legacy keys seedance-2.0 / seedance-2.0-fast still resolve to seedance-2.5 /
+      seedance-2.0-mini, but only the new keys should be offered and sent.
     - Mode is auto-detected: reference_images/reference_videos/reference_audios -> reference mode;
       media_url -> image mode; prompt only -> text mode.
 
@@ -587,7 +594,7 @@ def generate_video(
         duration: Video duration in seconds. Valid durations depend on model (see above)
         aspect_ratio: '16:9', '9:16', '1:1', etc. Seedance also accepts auto/21:9/4:3/3:4. Defaults to '16:9'
         reference_image: URL of reference image (for image-to-video generation)
-        reference_video: URL of reference video (for video-to-video editing with runway-aleph / kling-o3)
+        reference_video: URL of reference video (for video-to-video editing with runway-aleph / kling-o3 / kling-o1)
         resolution: '480p'/'720p'/'1080p' (Seedance) or '720p'/'1080p'/'4k' (Kling). Defaults to '720p'
         generate_audio: Whether to generate audio (Seedance only). Defaults to True. Does not affect price.
         seed: Optional random seed for reproducibility (Seedance only)
@@ -601,7 +608,7 @@ def generate_video(
         mode: Force a Kling route: 'motion' | 'reference' | 'edit'
         keep_sound: Keep the original audio in Kling motion/reference/edit routes
         motion_video: Guide video URL for kling-v3 motion-control
-        edit_video: Source video URL for kling-o3 video-edit
+        edit_video: Source video URL for kling-o3 / kling-o1 video-edit
     """
     return generate_video_impl(
         prompt, model, duration, aspect_ratio, reference_image, reference_video,
@@ -616,17 +623,18 @@ def generate_video(
 async def generate_speech(
     text: str,
     voice_id: str = "21m00Tcm4TlvDq8ikWAM",
-    model_id: str = "eleven_multilingual_v2"
+    model_id: str = "eleven_v3"
 ) -> str:
     """
     Generate speech/audio from text using the ElevenLabs API.
-    
-    COST: 1-500 characters = 1 token, 500-999 characters = 8 tokens, 1000+ characters = 13 tokens per 1000 chars.
-    
+
+    COST: 11 tokens per 1000 characters (rounded up) on eleven_v3 and eleven_multilingual_v2;
+    6 tokens per 1000 characters on eleven_flash_v2_5.
+
     Args:
         text: The text content to convert to speech.
         voice_id: The ID of the voice to use. Defaults to "Rachel" (21m00Tcm4TlvDq8ikWAM).
-        model_id: The model ID to use. Defaults to "eleven_multilingual_v2".
+        model_id: The model ID to use. Defaults to "eleven_v3".
     """
     return await generate_speech_impl(text, voice_id, model_id)
 

@@ -28,8 +28,8 @@ from request_context import (
 VIDEO_ACTION = {
     "function": "generate_video",
     "args": {"prompt": "a sunset", "model": "veo-3.1", "duration": 8},
-    "cost_message": "Costo: 352 tokens (44 tokens/sec × 8 sec). ¿Confirmas?",
-    "estimated_cost": 352,
+    "cost_message": "Costo: 336 tokens (42 tokens/sec × 8 sec). ¿Confirmas?",
+    "estimated_cost": 336,
 }
 
 
@@ -72,11 +72,11 @@ class TestExecutePendingActionBalanceGate:
 
         assert tool_result is None
         assert "No tienes tokens suficientes" in response  # Spanish cost_message -> es
-        assert "352" in response and "10" in response
+        assert "336" in response and "10" in response
         tool.assert_not_awaited()
         # Action must NOT be claimed/deleted: user can adjust or top up
         bot.session_manager.claim_pending_action.assert_not_awaited()
-        assert block == {"required": 352, "available": 10}
+        assert block == {"required": 336, "available": 10}
 
     def test_executes_when_balance_unknown(self, bot):
         bot.session_manager.get_pending_action = AsyncMock(return_value=dict(VIDEO_ACTION))
@@ -192,7 +192,7 @@ class TestContextualMessageRendering:
 
 
 class TestSavePendingOrBlock:
-    CONFIRMATION_EN = "Cost: 352 tokens (44 tokens/sec × 8 sec). Do you confirm?"
+    CONFIRMATION_EN = "Cost: 336 tokens (42 tokens/sec × 8 sec). Do you confirm?"
 
     def test_blocks_and_does_not_save_when_insufficient(self, bot):
         set_token_balance(10)
@@ -206,7 +206,7 @@ class TestSavePendingOrBlock:
         assert blocked is not None
         assert "don't have enough tokens" in blocked  # English confirmation -> en
         bot.session_manager.save_pending_action.assert_not_awaited()
-        assert block == {"required": 352, "available": 10}
+        assert block == {"required": 336, "available": 10}
 
     def test_saves_when_sufficient(self, bot):
         set_token_balance(500)
@@ -302,12 +302,12 @@ class TestConversationLanguageOverridesHeuristic:
     def test_lang_for_prefers_conversation_language(self, bot):
         bot._conv_lang = "en"
         # Spanish fallback text, but the resolved conversation is English
-        assert bot._lang_for("El costo será 352 tokens. ¿Confirmas?") == "en"
+        assert bot._lang_for("El costo será 336 tokens. ¿Confirmas?") == "en"
 
     def test_lang_for_falls_back_to_heuristic_when_unresolved(self, bot):
         bot._conv_lang = None
-        assert bot._lang_for("El costo será 352 tokens. ¿Confirmas?") == "es"
-        assert bot._lang_for("Cost: 352 tokens. Do you confirm?") == "en"
+        assert bot._lang_for("El costo será 336 tokens. ¿Confirmas?") == "es"
+        assert bot._lang_for("Cost: 336 tokens. Do you confirm?") == "en"
 
     def test_execute_pending_block_uses_english_when_conversation_is_english(self, bot):
         # Reproduces the reported bug: Spanish cost_message but English chat.
@@ -331,7 +331,7 @@ class TestConversationLanguageOverridesHeuristic:
             bot._save_pending_or_block(
                 "generate_video",
                 {"prompt": "a sunset", "model": "veo-3.1", "duration": 8},
-                "Cost: 352 tokens. Do you confirm?",
+                "Cost: 336 tokens. Do you confirm?",
             )
         )
         assert blocked is not None
@@ -490,7 +490,7 @@ class TestLocalizeBalanceBlock:
             block = asyncio.run(
                 bot._localize_balance_block(
                     352, 10, affordable_options(10),
-                    fallback_text="El costo es 352 tokens. ¿Confirmas?",
+                    fallback_text="El costo es 336 tokens. ¿Confirmas?",
                 )
             )
         assert "No tienes tokens suficientes" in block
@@ -565,10 +565,12 @@ class TestUpFrontVideoBudgetGate:
         state = new_state(WORKFLOW_VIDEO_GEN)
         assert state["step"] == "awaiting_prompt"
 
-        text = self._block(bot, state, balance=20)
+        # Must sit below min_video_cost, which Seedance Mini pushed down to
+        # 8 tokens (2 tokens/s x its 4s minimum).
+        text = self._block(bot, state, balance=5)
 
         assert text is not None
-        assert "20" in text
+        assert "5" in text
         assert str(min_video_cost()) in text
         # Steers to what the balance CAN buy instead of dead-ending.
         assert "Seedream" in text

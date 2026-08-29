@@ -5,8 +5,8 @@ AI-powered agent for image and video generation using Google Gemini and multiple
 ## Features
 
 - 🤖 **Gemini-powered chatbot** with multi-language support (English/Spanish auto-detection)
-- 🖼️ **Image generation** (Seedream, GPT, Nano Banana 2, Midjourney)
-- 🎬 **Video generation** (Runway Aleph, Veo 3.1, Seedance 2.0, and more)
+- 🖼️ **Image generation** (Seedream, Seedream Pro, GPT, Nano Banana 2, Midjourney)
+- 🎬 **Video generation** (Runway Aleph 2, Veo 3.1, Seedance 2.5, Kling, and more)
 - 💾 **Redis-based session management** for concurrent conversations
 - 🔄 **Reference file persistence** (images/videos via URL)
 - 📊 **Token cost calculation** before generation
@@ -132,17 +132,29 @@ GET /health
 
 ### Image Generation
 
-- **Seedream** - Realism / photographic fidelity, cinematic, reference images (4 tokens/image) — recommended default
-- **GPT** - Readable text in image, strict instruction following (6 tokens/image)
-- **Nano Banana 2** - Quick edits / multi-reference composition (7 tokens/image)
-- **Midjourney** - Artistic style, illustration, creative concepts (9 tokens/image)
+- **Seedream** (UI: Seedream 5.0 Lite) - Realism / photographic fidelity, cinematic, reference images (3 tokens/image) — cheapest, recommended default
+- **Seedream Pro** (UI: Seedream 5.0 Pro) - Same realism with higher fidelity, for maximum image quality (4 tokens/image)
+- **GPT** (UI: GPT Image 2) - Readable text in image, strict instruction following (6 tokens/image)
+- **Nano Banana 2** - Quick edits / multi-reference composition (8 tokens/image)
+- **Midjourney** (UI: Midjourney V8.1) - Artistic style, illustration, creative concepts (9 tokens/image)
 
 ### Video Generation
 
-- **Runway Aleph** (19 tokens/sec) - 5-10 seconds, video-to-video
-- **Veo 3.1** (48 tokens/sec) - 8 seconds, high quality
-- **Veo 3.1 Flash** (21 tokens/sec) - 8 seconds, fast & economical
-- **Veo 3.1 Ultra** (60 tokens/sec) - 8 seconds, maximum quality
+- **Runway Aleph 2** (30 tokens/sec) - 5-10 seconds, video-to-video
+- **Runway 4.5** (13 tokens/sec) - 5, 8 or 10 seconds, high quality
+- **Veo 3.1** (42 tokens/sec) - 8 seconds, high quality
+- **Veo 3.1 Lite** (6 tokens/sec) - 8 seconds, cheapest video with native audio
+- **Veo 3.1 Flash** (11 tokens/sec) - 8 seconds, fast & economical
+- **Veo 3.1 Ultra** (63 tokens/sec) - 8 seconds, maximum quality
+- **Seedance 2.5** (480p=15, 720p=32, 1080p=78 tokens/sec) - 4-30 seconds, audio included free
+- **Seedance 2.0 Mini** (480p=5, 720p=11 tokens/sec) - 4-15 seconds, cheapest video option at 480p
+- **Kling V3 / V3 Turbo / O3** (resolution + route based, from 9 tokens/sec) - 3-15 seconds, 4K and native audio on V3/O3
+- **Kling O1** (flat 12 tokens/sec) - 5 or 10 seconds, unified generate+edit (image-to-video or video editing, no text-to-video)
+
+### Speech Generation
+
+- **eleven_v3** (default) and **eleven_multilingual_v2** - 11 tokens per 1000 characters
+- **eleven_flash_v2_5** - 6 tokens per 1000 characters
 
 ## Architecture
 
