@@ -126,8 +126,12 @@ class TestNormalizeModelName:
         ("lets go with veo 3.1", "veo-3.1"),
         ("veo 3.1 ultra", "veo-3.1-ultra"),
         ("Veo 3.1 Flash", "veo-3.1-flash"),
-        ("seedance 2.0 fast", "seedance-2.0-fast"),
-        ("seedance 2", "seedance-2.0"),
+        ("seedance 2.0 fast", "seedance-2.0-mini"),
+        ("seedance 2", "seedance-2.5"),
+        ("seedance 2.5", "seedance-2.5"),
+        ("seedance mini", "seedance-2.0-mini"),
+        ("kling o1", "kling-o1"),
+        ("veo 3.1 lite", "veo-3.1-lite"),
         ("runway aleph", "runway-aleph"),
         ("runway 4.5", "runway-4.5"),
         ("kling v3 turbo", "kling-v3-turbo"),
@@ -523,9 +527,9 @@ class TestBuildActionArgs:
 
     def test_seedance_resolution_included(self):
         state = self._ready_video_state()
-        state["params"].update({"model": "seedance-2.0-fast", "duration": 5, "resolution": "1080p"})
+        state["params"].update({"model": "seedance-2.0-mini", "duration": 5, "resolution": "1080p"})
         _, args = build_action_args(state)
-        assert args["resolution"] == "720p"  # normalized for the fast tier
+        assert args["resolution"] == "720p"  # normalized for the mini tier
 
     def test_kling_resolution_keeps_4k_on_base_route(self):
         state = new_state(WORKFLOW_VIDEO_GEN)

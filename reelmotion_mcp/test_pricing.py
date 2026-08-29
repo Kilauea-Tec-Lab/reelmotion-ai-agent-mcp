@@ -36,18 +36,23 @@ class TestSpeechCost:
     def test_returns_zero_for_empty_text(self):
         assert speech_cost(0) == 0
 
-    def test_tier_one_boundaries(self):
-        assert speech_cost(1) == 1
-        assert speech_cost(500) == 1
+    def test_bills_whole_1000_char_blocks(self):
+        assert speech_cost(1) == 11
+        assert speech_cost(1000) == 11
+        assert speech_cost(1001) == 22
+        assert speech_cost(2500) == 33
 
-    def test_tier_two_boundaries(self):
-        assert speech_cost(501) == 8
-        assert speech_cost(999) == 8
+    def test_flash_is_half_price(self):
+        assert speech_cost(1000, "eleven_flash_v2_5") == 6
+        assert speech_cost(2500, "eleven_flash_v2_5") == 18
 
-    def test_per_thousand_tier_rounds_up(self):
-        assert speech_cost(1000) == 13
-        assert speech_cost(1001) == 26
-        assert speech_cost(2500) == 39
+    def test_quality_models_share_the_full_rate(self):
+        assert speech_cost(1000, "eleven_v3") == 11
+        assert speech_cost(1000, "eleven_multilingual_v2") == 11
+
+    def test_short_text_is_never_free(self):
+        # The old flat tier charged 1 token for up to 500 chars, under cost.
+        assert speech_cost(400) == 11
 
 
 # ---------------------------------------------------------------------------
@@ -57,8 +62,11 @@ class TestEstimateGenerationCost:
     def test_image_gpt_costs_six(self):
         assert estimate_generation_cost("generate_image", {"model": "GPT"}) == 6
 
-    def test_image_seedream_costs_four(self):
-        assert estimate_generation_cost("generate_image", {"model": "Seedream"}) == 4
+    def test_image_seedream_costs_three(self):
+        assert estimate_generation_cost("generate_image", {"model": "Seedream"}) == 3
+
+    def test_image_seedream_pro_costs_four(self):
+        assert estimate_generation_cost("generate_image", {"model": "Seedream Pro"}) == 4
 
     def test_image_midjourney_costs_nine(self):
         assert estimate_generation_cost("generate_image", {"model": "Midjourney"}) == 9
@@ -74,7 +82,7 @@ class TestEstimateGenerationCost:
         cost = estimate_generation_cost(
             "generate_image", {"model": "Seedream", "quantity": 5}
         )
-        assert cost == 4
+        assert cost == 3
 
     def test_image_quantity_ignored_for_midjourney(self):
         cost = estimate_generation_cost(
@@ -83,8 +91,9 @@ class TestEstimateGenerationCost:
         assert cost == 9
 
     def test_image_loose_model_name_is_normalized(self):
-        assert estimate_generation_cost("generate_image", {"model": "nano-banana"}) == 7
-        assert estimate_generation_cost("generate_image", {"model": "seedream 4.0"}) == 4
+        assert estimate_generation_cost("generate_image", {"model": "nano-banana"}) == 8
+        assert estimate_generation_cost("generate_image", {"model": "seedream 4.0"}) == 3
+        assert estimate_generation_cost("generate_image", {"model": "seedream pro"}) == 4
 
     def test_image_freepik_is_not_a_valid_model(self):
         # Freepik was removed from the catalog — unknown model → no estimate.
@@ -97,7 +106,7 @@ class TestEstimateGenerationCost:
         cost = estimate_generation_cost(
             "generate_video", {"model": "veo-3.1", "duration": 8}
         )
-        assert cost == 44 * 8
+        assert cost == 42 * 8
 
     def test_video_kling_v3_1080p_five_seconds(self):
         cost = estimate_generation_cost(
@@ -142,28 +151,58 @@ class TestEstimateGenerationCost:
     def test_video_seedance_720p_five_seconds(self):
         cost = estimate_generation_cost(
             "generate_video",
-            {"model": "seedance-2.0", "duration": 5, "resolution": "720p"},
+            {"model": "seedance-2.5", "duration": 5, "resolution": "720p"},
         )
         assert cost == 160
 
-    def test_video_seedance_fast_1080p_downgrades_to_720p(self):
+    def test_video_seedance_mini_1080p_downgrades_to_720p(self):
         cost = estimate_generation_cost(
             "generate_video",
-            {"model": "seedance-2.0-fast", "duration": 5, "resolution": "1080p"},
+            {"model": "seedance-2.0-mini", "duration": 5, "resolution": "1080p"},
         )
-        assert cost == 26 * 5
+        assert cost == 2 * 5
+
+    def test_legacy_seedance_keys_resolve_to_new_models(self):
+        # Deployed clients still send the retired keys.
+        assert estimate_generation_cost(
+            "generate_video",
+            {"model": "seedance-2.0", "duration": 5, "resolution": "1080p"},
+        ) == 56 * 5
+        assert estimate_generation_cost(
+            "generate_video",
+            {"model": "seedance-2.0-fast", "duration": 5, "resolution": "720p"},
+        ) == 2 * 5
+
+    def test_video_kling_o1_is_flat_and_snaps_duration(self):
+        assert estimate_generation_cost(
+            "generate_video", {"model": "kling-o1", "duration": 5, "resolution": "1080p"}
+        ) == 12 * 5
+        # 7s is not offered; it snaps to 5s rather than billing 7.
+        assert estimate_generation_cost(
+            "generate_video", {"model": "kling-o1", "duration": 7}
+        ) == 12 * 5
+
+    def test_video_veo_lite_is_the_cheapest_veo(self):
+        assert estimate_generation_cost(
+            "generate_video", {"model": "veo-3.1-lite", "duration": 8}
+        ) == 6 * 8
+
+    def test_video_aleph2_rate(self):
+        assert estimate_generation_cost(
+            "generate_video", {"model": "runway-aleph", "duration": 5}
+        ) == 30 * 5
 
     def test_video_seedance_reference_videos_use_discount_table(self):
         cost = estimate_generation_cost(
             "generate_video",
             {
-                "model": "seedance-2.0",
+                "model": "seedance-2.5",
                 "duration": 5,
                 "resolution": "720p",
                 "reference_videos": ["https://example.com/v.mp4"],
             },
         )
-        assert cost == 20 * 5
+        assert cost == 19 * 5
 
     def test_video_legacy_model_returns_none(self):
         assert (
@@ -175,7 +214,7 @@ class TestEstimateGenerationCost:
         assert estimate_generation_cost("generate_video", {"model": "veo-3.1"}) is None
 
     def test_speech_uses_text_length(self):
-        assert estimate_generation_cost("generate_speech", {"text": "x" * 600}) == 8
+        assert estimate_generation_cost("generate_speech", {"text": "x" * 600}) == 11
 
     def test_speech_missing_text_returns_none(self):
         assert estimate_generation_cost("generate_speech", {}) is None
@@ -189,13 +228,16 @@ class TestEstimateGenerationCost:
 # ---------------------------------------------------------------------------
 class TestComputeSeedance2Cost:
     def test_normal_rate(self):
-        assert compute_seedance2_cost("seedance-2.0", "1080p", 4) == 72 * 4
+        assert compute_seedance2_cost("seedance-2.5", "1080p", 4) == 56 * 4
 
     def test_default_duration_is_five(self):
-        assert compute_seedance2_cost("seedance-2.0", "480p", None) == 15 * 5
+        assert compute_seedance2_cost("seedance-2.5", "480p", None) == 15 * 5
 
-    def test_duration_clamped_to_fifteen(self):
-        assert compute_seedance2_cost("seedance-2.0", "480p", 99) == 15 * 15
+    def test_duration_clamped_to_thirty(self):
+        assert compute_seedance2_cost("seedance-2.5", "480p", 99) == 15 * 30
+
+    def test_mini_duration_still_stops_at_fifteen(self):
+        assert compute_seedance2_cost("seedance-2.0-mini", "480p", 99) == 2 * 15
 
 
 # ---------------------------------------------------------------------------
@@ -238,8 +280,10 @@ class TestAffordableOptions:
         videos = {(v["model"], v["resolution"]): v for v in options["videos"]}
         assert videos[("runway-4.5", None)]["max_duration"] == 8
         assert videos[("runway-4.5", None)]["cost"] == 104
-        assert videos[("seedance-2.0-fast", "480p")]["max_duration"] == 10
-        # veo-3.1 (44 x 8 = 352) is unaffordable
+        # Mini is cheap enough to reach its longest clip on this balance.
+        assert videos[("seedance-2.0-mini", "720p")]["max_duration"] == 15
+        assert videos[("seedance-2.0-mini", "720p")]["cost"] == 30
+        # veo-3.1 (42 x 8 = 336) is unaffordable
         assert ("veo-3.1", None) not in videos
 
     def test_balance_zero_affords_nothing(self):
@@ -248,11 +292,12 @@ class TestAffordableOptions:
         assert options["videos"] == []
         assert options["speech_max_chars"] == 0
 
-    def test_speech_max_chars_tiers(self):
-        assert affordable_options(1)["speech_max_chars"] == 500
-        assert affordable_options(8)["speech_max_chars"] == 999
-        assert affordable_options(13)["speech_max_chars"] == 1000
-        assert affordable_options(40)["speech_max_chars"] == 3000
+    def test_speech_max_chars_quotes_the_cheapest_voice(self):
+        # Quoted at the flash rate (6 tokens / 1000 chars), the cheapest voice.
+        assert affordable_options(1)["speech_max_chars"] == 0
+        assert affordable_options(6)["speech_max_chars"] == 1000
+        assert affordable_options(11)["speech_max_chars"] == 1000
+        assert affordable_options(40)["speech_max_chars"] == 6000
 
 
 # ---------------------------------------------------------------------------

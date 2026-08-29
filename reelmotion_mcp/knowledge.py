@@ -51,18 +51,21 @@ and a Help button (opens ReelBot + a Suggestions form).
    Three tabs. The current token balance is shown at the top-right of the modal.
    • IMAGE tab — pick a model, write a prompt, choose aspect ratio, count, optional negative
      prompt and reference images, then Generate:
-       - Seedream 5.0 Lite (4 tokens/image) — up to 3K resolution, up to 14 reference images.
-       - Nano Banana 2 (7 tokens/image) — 4K, multi-image.
+       - Seedream 5.0 Lite (3 tokens/image) — up to 3K resolution, up to 14 reference images.
+       - Seedream 5.0 Pro (4 tokens/image) — same realism with higher fidelity.
+       - Nano Banana 2 (8 tokens/image) — 4K, multi-image.
        - Midjourney V8.1 (9 tokens/request) — returns 4 variations, up to 5 reference images.
-       - GPT Image 1.5 (6 tokens/image) — strong at following instructions and text in image.
+       - GPT Image 2 (6 tokens/image) — strong at following instructions and text in image.
    • VIDEO tab — pick a model, set duration/resolution and options, then Generate:
-       - Models: Seedance 2.0 / Seedance 2.0 Fast, Veo 3.1 Ultra (65 tokens, 8s fixed),
-         Runway Gen 4.5, Runway Aleph (video-to-video), Kling V3 / Kling V3 Turbo / Kling O3.
-       - Durations typically 3–15s; resolutions 720p / 1080p / 4K depending on model;
+       - Models: Seedance 2.5 / Seedance 2.0 Mini, Veo 3.1 Ultra (63 tokens/sec, 8s fixed),
+         Veo 3.1 Lite (6 tokens/sec, 8s fixed), Runway Gen 4.5,
+         Runway Aleph 2 (video-to-video), Kling V3 / Kling V3 Turbo / Kling O3 / Kling O1.
+       - Durations typically 3–15s (Seedance 2.5 up to 30s; Kling O1 only 5s or 10s);
+         resolutions 720p / 1080p / 4K depending on model;
          optional native audio (Kling V3/O3); motion-control / reference / edit modes.
    • VOICE tab — text-to-speech via ElevenLabs: browse 100+ voices (filter by language,
      gender, age), preview them, tune Stability / Similarity / Style sliders, type the text,
-     then Generate. Up to 500 characters = 1 token.
+     then Generate. 11 tokens per 1000 characters (6 on the flash voice model).
    NOTE: The same generation models are also available by just chatting with ReelBot in
    New Chat. AI Lab adds extra manual controls (multi-variation, many reference images,
    voice sliders). Use whichever the user prefers.
@@ -130,8 +133,9 @@ and a Help button (opens ReelBot + a Suggestions form).
 - "How do I make my first image/video?" → Easiest: describe it to ReelBot in New Chat and
   follow the steps. Or open AI Lab, pick a model in the IMAGE/VIDEO tab, and Generate.
 - "What are tokens / what does each thing cost?" → Tokens are credits. Image models cost a
-  few tokens each; video costs scale with model, resolution and duration; voice up to 500
-  characters is 1 token. Exact cost is always shown before you confirm a generation.
+  few tokens each (from 3); video costs scale with model, resolution and duration; voice
+  costs 11 tokens per 1000 characters. Exact cost is always shown before you confirm a
+  generation.
 - "How do I buy more tokens?" → Open Subscribe / My Subscription and top up: 100 tokens per
   dollar, minimum $6 = 600 tokens.
 - "Pro vs Elite? Monthly vs yearly?" → See PLANS & TOKENS. Yearly is billed once for the

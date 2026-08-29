@@ -18,7 +18,7 @@ VEO_JSON = '{"scene": "neon Tokyo alley", "camera": {"movement": "dolly"}, "dura
 COST_MESSAGE = (
     'Prompt: "a frog jumping in the jungle"\n'
     "Model: Veo 3.1\nDuration: 8 seconds\n"
-    "Cost: 352 tokens (44 tokens/sec × 8 sec). Do you confirm?"
+    "Cost: 336 tokens (42 tokens/sec × 8 sec). Do you confirm?"
 )
 
 
@@ -138,7 +138,7 @@ class TestRebuildFromState:
 
     def test_balance_gate_blocks_rebuilt_action(self, make_bot):
         bot = make_bot(workflow_state=ready_video_state())
-        set_token_balance(10)  # veo-3.1 8s = 352 tokens
+        set_token_balance(10)  # veo-3.1 8s = 336 tokens
 
         with MODERATION_OK, patch.object(
             chatbot_module, "generate_video", new=AsyncMock()
@@ -146,7 +146,7 @@ class TestRebuildFromState:
             response = run(bot.send_message("yes"))
 
         tool.assert_not_awaited()
-        assert "352" in response and "10" in response
+        assert "336" in response and "10" in response
         # State survives a block so the user can adjust or top up
         assert bot.session_manager.workflow_state is not None
 
@@ -202,7 +202,7 @@ class TestFastPathWithPendingAction:
             "function": "generate_video",
             "args": {"prompt": "a frog", "model": "veo-3.1", "duration": 8},
             "cost_message": COST_MESSAGE,
-            "estimated_cost": 352,
+            "estimated_cost": 336,
         }
         set_token_balance(500)
 
@@ -244,7 +244,7 @@ class TestRecoveryPathBalanceGate:
         bot.chat_session.send_message_async = AsyncMock(
             side_effect=[empty_response, recovery_response]
         )
-        set_token_balance(10)  # veo-3.1 8s = 352 tokens
+        set_token_balance(10)  # veo-3.1 8s = 336 tokens
 
         with MODERATION_OK, patch.object(
             chatbot_module, "generate_video", new=AsyncMock()
@@ -254,7 +254,7 @@ class TestRecoveryPathBalanceGate:
             response = run(bot.send_message("a frog jumping in the jungle with veo 3.1"))
 
         tool.assert_not_awaited()
-        assert "352" in response and "10" in response
+        assert "336" in response and "10" in response
 
 
 def _fc_response(name, args):
@@ -300,7 +300,7 @@ class TestConfirmationGate:
     def test_unconfirmed_tool_call_is_intercepted(self, make_bot):
         bot = make_bot()
         set_token_balance(None)
-        confirmation_text = "El video costará 352 tokens (44 × 8s). ¿Confirmas?"
+        confirmation_text = "El video costará 336 tokens (44 × 8s). ¿Confirmas?"
         bot.chat_session.send_message_async = AsyncMock(
             side_effect=[
                 _fc_response("generate_video", VIDEO_FC_ARGS),
@@ -375,7 +375,7 @@ class TestConfirmationGate:
         ]
         bot = make_bot(history=history)
         set_token_balance(None)
-        confirmation_text = "El video costará 352 tokens. ¿Confirmas?"
+        confirmation_text = "El video costará 336 tokens. ¿Confirmas?"
         bot.chat_session.send_message_async = AsyncMock(
             side_effect=[
                 _fc_response("generate_video", VIDEO_FC_ARGS),
@@ -392,7 +392,7 @@ class TestConfirmationGate:
 
     def test_unconfirmed_call_with_insufficient_balance_blocks(self, make_bot):
         bot = make_bot()
-        set_token_balance(10)  # veo-3.1 8s = 352 tokens
+        set_token_balance(10)  # veo-3.1 8s = 336 tokens
         bot.chat_session.send_message_async = AsyncMock(
             side_effect=[
                 _fc_response("generate_video", VIDEO_FC_ARGS),
@@ -406,7 +406,7 @@ class TestConfirmationGate:
             response = run(bot.send_message(UNCONFIRMED_MESSAGE))
 
         tool.assert_not_awaited()
-        assert "352" in response and "10" in response
+        assert "336" in response and "10" in response
         assert bot.session_manager.pending is None  # blocked → nothing saved
 
     def test_gemini_insisting_gets_deterministic_confirmation(self, make_bot):
@@ -427,7 +427,7 @@ class TestConfirmationGate:
 
         tool.assert_not_awaited()
         assert bot.session_manager.pending is not None
-        assert "352" in response  # code-generated cost confirmation
+        assert "336" in response  # code-generated cost confirmation
         assert "onfirma" in response  # "¿Confirmas...?" (Spanish message)
 
 

@@ -19,9 +19,10 @@ from typing import Dict, List, Optional
 # Exact, case-sensitive model names as the backend (/api/ai/mcp-image-generation)
 # expects them. There is NO "Freepik" model — never offer or select it.
 IMAGE_COSTS: Dict[str, int] = {
-    "Seedream": 4,
+    "Seedream": 3,
+    "Seedream Pro": 4,
     "GPT": 6,
-    "Nano Banana 2": 7,
+    "Nano Banana 2": 8,
     "Midjourney": 9,
 }
 
@@ -37,17 +38,19 @@ QUANTITY_IMAGE_MODELS = ("GPT", "Nano Banana 2")
 # rate depends on resolution + route + audio, so they live in KLING_TOKEN_RATES
 # below (mirrors how Seedance is handled).
 VIDEO_TOKEN_RATES: Dict[str, int] = {
-    "runway-aleph": 17,
+    "runway-aleph": 30,  # aleph2 $0.28/s (gen4_aleph was shut down 2026-07-30)
     "runway-4.5": 13,
-    "veo-3.1": 44,
-    "veo-3.1-flash": 17,
-    "veo-3.1-ultra": 65,
+    "veo-3.1": 42,
+    "veo-3.1-flash": 11,
+    "veo-3.1-lite": 6,
+    "veo-3.1-ultra": 63,
 }
 
 # Valid durations (seconds) per video model.
 VIDEO_DURATION_RULES: Dict[str, List[int]] = {
     "veo-3.1": [8],
     "veo-3.1-flash": [8],
+    "veo-3.1-lite": [8],
     "veo-3.1-ultra": [8],
     "luma-labs": [5],
     "seedance-pro": [5],
@@ -57,31 +60,47 @@ VIDEO_DURATION_RULES: Dict[str, List[int]] = {
     "kling-v3": list(range(3, 16)),
     "kling-v3-turbo": list(range(3, 16)),
     "kling-o3": list(range(3, 16)),
-    "seedance-2.0": list(range(4, 16)),
-    "seedance-2.0-fast": list(range(4, 16)),
+    "kling-o1": [5, 10],
+    "seedance-2.5": list(range(4, 31)),
+    "seedance-2.0-mini": list(range(4, 16)),
 }
 
+# Retired model keys still sent by older clients -> what they resolve to now.
+VIDEO_MODEL_ALIASES: Dict[str, str] = {
+    "seedance-2.0": "seedance-2.5",
+    "seedance-2.0-fast": "seedance-2.0-mini",
+}
+
+
+def normalize_video_model(model: Optional[str]) -> Optional[str]:
+    """Resolve a legacy video model key to its current replacement."""
+    return VIDEO_MODEL_ALIASES.get(model, model)
+
 # ---------------------------------------------------------------------------
-# Seedance 2.0 pricing & helpers
+# Seedance 2.5 / 2.0 Mini pricing & helpers (Evolink)
 # ---------------------------------------------------------------------------
 # Seedance is the only video tier whose price depends on RESOLUTION (not just
 # duration). The backend (/api/ai/generate-video) does the real charging; these
 # tables mirror its rates so the agent can quote the cost before generating.
-SEEDANCE2_MODELS = ("seedance-2.0", "seedance-2.0-fast")
+SEEDANCE2_MODELS = ("seedance-2.5", "seedance-2.0-mini")
 
-# tokens per second, indexed by resolution. "fast" tier has no 1080p.
+# tokens per second, indexed by resolution. Mini has no 1080p.
 SEEDANCE2_TOKEN_RATES = {
     "normal": {
-        "seedance-2.0": {"480p": 15, "720p": 32, "1080p": 72},
-        "seedance-2.0-fast": {"480p": 12, "720p": 26},
+        "seedance-2.5": {"480p": 15, "720p": 32, "1080p": 56},
+        # PROVISIONAL: Evolink publishes one blended $0.011/s rate for Mini.
+        "seedance-2.0-mini": {"480p": 2, "720p": 2},
     },
     # Discounted rate applies ONLY in reference mode when reference_videos are
-    # sent (fal.ai charges ×0.6 in that case).
+    # sent (Evolink bills video-fed routes at roughly ×0.6).
     "reference_discount": {
-        "seedance-2.0": {"480p": 9, "720p": 20, "1080p": 43},
-        "seedance-2.0-fast": {"480p": 7, "720p": 16},
+        "seedance-2.5": {"480p": 9, "720p": 19, "1080p": 35},
+        "seedance-2.0-mini": {"480p": 2, "720p": 2},
     },
 }
+
+# Seedance 2.5 accepts up to 30s; Mini stops at 15s.
+SEEDANCE_MAX_DURATION = {"seedance-2.5": 30, "seedance-2.0-mini": 15}
 
 SEEDANCE2_VALID_ASPECT_RATIOS = ("auto", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16")
 
@@ -96,15 +115,16 @@ def normalize_seedance_resolution(model: str, resolution: Optional[str]) -> str:
     return res
 
 
-def normalize_seedance_duration(duration) -> int:
-    """Normalize a Seedance duration to an int in the valid 4-15 range (default 5)."""
+def normalize_seedance_duration(duration, model: Optional[str] = None) -> int:
+    """Normalize a Seedance duration to its valid range (2.5: 4-30, Mini: 4-15)."""
+    hi = SEEDANCE_MAX_DURATION.get(model, 15)
     if duration in (None, "", "auto"):
         return 5
     try:
         dur = int(duration)
     except (TypeError, ValueError):
         return 5
-    return max(4, min(15, dur))
+    return max(4, min(hi, dur))
 
 
 def compute_seedance2_cost(
@@ -113,13 +133,13 @@ def compute_seedance2_cost(
     duration,
     has_reference_videos: bool = False,
 ) -> int:
-    """Total token cost for a Seedance 2.0 generation = rate(resolution) × duration."""
+    """Total token cost for a Seedance generation = rate(resolution) × duration."""
     res = normalize_seedance_resolution(model, resolution)
     table_key = "reference_discount" if has_reference_videos else "normal"
     per_sec = SEEDANCE2_TOKEN_RATES[table_key].get(model, {}).get(res)
     if per_sec is None:
         per_sec = SEEDANCE2_TOKEN_RATES["normal"].get(model, {}).get(res, 0)
-    return per_sec * normalize_seedance_duration(duration)
+    return per_sec * normalize_seedance_duration(duration, model)
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +151,7 @@ def compute_seedance2_cost(
 # duration. The backend is the real biller (it trims quality/audio/duration and
 # reserves atomically); these tables mirror its rates so the agent can quote a
 # cost BEFORE generating.
-KLING_MODELS = ("kling-v3", "kling-v3-turbo", "kling-o3")
+KLING_MODELS = ("kling-v3", "kling-v3-turbo", "kling-o3", "kling-o1")
 
 # Routes (also used by tools.py to shape the request payload)
 KLING_ROUTE_BASE = "base"            # v3/o3 text-to-video or image-to-video
@@ -139,6 +159,7 @@ KLING_ROUTE_TURBO = "turbo"          # kling-v3-turbo (text/image-to-video only)
 KLING_ROUTE_REFERENCE = "reference"  # kling-o3 reference-to-video (consistency)
 KLING_ROUTE_EDIT = "edit"            # kling-o3 video-edit
 KLING_ROUTE_MOTION = "motion"        # kling-v3 motion-control (guide video)
+KLING_ROUTE_O1 = "o1"                # kling-o1 image-to-video or video-edit (flat)
 
 # Per-second token rates, indexed by route then resolution.
 KLING_TOKEN_RATES = {
@@ -147,7 +168,11 @@ KLING_TOKEN_RATES = {
     KLING_ROUTE_REFERENCE: {"720p": 13, "1080p": 17},
     KLING_ROUTE_EDIT: {"720p": 13, "1080p": 17},
     KLING_ROUTE_MOTION: {"720p": 13, "1080p": 17},
+    KLING_ROUTE_O1: {"720p": 12, "1080p": 12},  # flat $0.111/s
 }
+
+# kling-o1 only generates 5s or 10s clips.
+KLING_O1_DURATIONS = (5, 10)
 
 # Audio surcharge applies ONLY to the base (v3/o3 text/image) route, at
 # 720p/1080p. Audio is ignored (and not charged) on turbo/reference/edit/motion.
@@ -167,12 +192,17 @@ KLING_BASE_RATES_BY_MODEL = {
     "kling-v3": KLING_TOKEN_RATES[KLING_ROUTE_BASE],
     "kling-o3": KLING_TOKEN_RATES[KLING_ROUTE_BASE],
     "kling-v3-turbo": KLING_TOKEN_RATES[KLING_ROUTE_TURBO],
+    "kling-o1": KLING_TOKEN_RATES[KLING_ROUTE_O1],
 }
 
 
 def default_kling_route(provider: str) -> str:
     """The route a Kling provider falls into for plain text/image-to-video."""
-    return KLING_ROUTE_TURBO if provider == "kling-v3-turbo" else KLING_ROUTE_BASE
+    if provider == "kling-v3-turbo":
+        return KLING_ROUTE_TURBO
+    if provider == "kling-o1":
+        return KLING_ROUTE_O1
+    return KLING_ROUTE_BASE
 
 
 def normalize_kling_quality(provider: str, route: Optional[str], quality: Optional[str]) -> str:
@@ -191,13 +221,18 @@ def normalize_kling_quality(provider: str, route: Optional[str], quality: Option
 
 
 def normalize_kling_duration(duration, route: Optional[str] = None) -> int:
-    """Clamp a Kling duration to its valid range (3-15s, reference 3-10s; default 5)."""
+    """
+    Clamp a Kling duration to its valid range (3-15s, reference 3-10s; default 5).
+    kling-o1 only accepts 5s or 10s, so those requests snap to the nearest.
+    """
     if duration in (None, "", "auto"):
         return 5
     try:
         dur = int(duration)
     except (TypeError, ValueError):
         return 5
+    if route == KLING_ROUTE_O1:
+        return min(KLING_O1_DURATIONS, key=lambda allowed: abs(allowed - dur))
     hi = KLING_REFERENCE_DURATION_MAX if route == KLING_ROUTE_REFERENCE else KLING_DURATION_MAX
     return max(KLING_DURATION_MIN, min(hi, dur))
 
@@ -211,6 +246,9 @@ def kling_route_from_args(provider: str, args: Optional[dict]) -> str:
     mode = str(args.get("mode") or "").lower().strip()
     if provider == "kling-v3-turbo":
         return KLING_ROUTE_TURBO
+    if provider == "kling-o1":
+        # O1 is one flat rate whether it generates from an image or edits a video.
+        return KLING_ROUTE_O1
     has_ref_video = bool(args.get("reference_videos") or args.get("reference_video"))
     if provider == "kling-o3":
         if mode == "edit" or args.get("edit_video") or has_ref_video:
@@ -256,24 +294,29 @@ def compute_kling_cost(
 
 
 # ---------------------------------------------------------------------------
-# Speech pricing (tiered by character count)
+# Speech pricing (proportional to character count)
 # ---------------------------------------------------------------------------
-SPEECH_TIER_1_MAX = 500   # 1-500 chars -> 1 token
-SPEECH_TIER_2_MAX = 999   # 501-999 chars -> 8 tokens
-SPEECH_TIER_1_COST = 1
-SPEECH_TIER_2_COST = 8
-SPEECH_RATE_PER_1000 = 13  # 1000+ chars -> 13 tokens per 1000 chars (rounded up)
+# ElevenLabs bills per character: $0.10 / 1000 chars on v3 and multilingual v2,
+# $0.05 / 1000 on flash. Applying the house rule (1 token = 1¢ USD, +5% margin)
+# gives 11 tokens per 1000 chars on the quality models and 6 on flash. The old
+# flat tiers charged 1 token for anything under 500 chars, which sold ~500
+# characters of v2 (about 6 tokens of cost) at a loss on every short line.
+SPEECH_RATE_PER_1000 = 11        # eleven_v3 / eleven_multilingual_v2
+SPEECH_RATE_PER_1000_FLASH = 6   # eleven_flash_v2_5
+FLASH_MODELS = ("eleven_flash_v2_5", "eleven_turbo_v2_5")
 
 
-def speech_cost(text_length: int) -> int:
-    """Token cost for a TTS generation of the given character count."""
+def speech_cost(text_length: int, model_id: Optional[str] = None) -> int:
+    """
+    Token cost for a TTS generation, proportional to length and never free.
+
+    Billing is per 1000 characters rounded up, so a 1-char line still costs one
+    block — matching how ElevenLabs itself bills a request.
+    """
     if text_length <= 0:
         return 0
-    if text_length <= SPEECH_TIER_1_MAX:
-        return SPEECH_TIER_1_COST
-    if text_length <= SPEECH_TIER_2_MAX:
-        return SPEECH_TIER_2_COST
-    return math.ceil(text_length / 1000) * SPEECH_RATE_PER_1000
+    rate = SPEECH_RATE_PER_1000_FLASH if model_id in FLASH_MODELS else SPEECH_RATE_PER_1000
+    return math.ceil(text_length / 1000) * rate
 
 
 # ---------------------------------------------------------------------------
@@ -285,7 +328,7 @@ def _normalize_image_model(model: str) -> Optional[str]:
         return model
     lowered = (model or "").lower()
     if "seedream" in lowered:
-        return "Seedream"
+        return "Seedream Pro" if "pro" in lowered else "Seedream"
     if "midjourney" in lowered or lowered.strip() == "mj":
         return "Midjourney"
     if "nano" in lowered or "banana" in lowered:
@@ -321,7 +364,7 @@ def estimate_generation_cost(function_name: str, args: dict) -> Optional[int]:
         return IMAGE_COSTS[model] * quantity
 
     if function_name == "generate_video":
-        model = args.get("model")
+        model = normalize_video_model(args.get("model"))
         duration = args.get("duration")
         if model in SEEDANCE2_MODELS:
             has_ref_videos = bool(args.get("reference_videos") or args.get("reference_video"))
@@ -349,7 +392,7 @@ def estimate_generation_cost(function_name: str, args: dict) -> Optional[int]:
         text = args.get("text")
         if not text:
             return None
-        return speech_cost(len(text))
+        return speech_cost(len(text), args.get("model_id"))
 
     return None
 
@@ -396,14 +439,9 @@ def affordable_options(balance: int) -> Dict:
     # Most capable options first (longest duration, then cheapest)
     videos.sort(key=lambda v: (-v["max_duration"], v["cost"]))
 
-    if balance >= SPEECH_RATE_PER_1000:
-        speech_max_chars = (balance // SPEECH_RATE_PER_1000) * 1000
-    elif balance >= SPEECH_TIER_2_COST:
-        speech_max_chars = SPEECH_TIER_2_MAX
-    elif balance >= SPEECH_TIER_1_COST:
-        speech_max_chars = SPEECH_TIER_1_MAX
-    else:
-        speech_max_chars = 0
+    # Quote the cheapest voice (flash) so the answer is what the balance can
+    # actually reach; the quality models cost about twice as much per 1000 chars.
+    speech_max_chars = (balance // SPEECH_RATE_PER_1000_FLASH) * 1000
 
     return {"images": images, "videos": videos, "speech_max_chars": speech_max_chars}
 

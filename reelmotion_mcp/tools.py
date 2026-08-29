@@ -23,6 +23,7 @@ from pricing import (
     KLING_ROUTE_REFERENCE,
     KLING_ROUTE_TURBO,
     _normalize_image_model,
+    normalize_video_model,
     normalize_seedance_resolution,
     normalize_seedance_duration,
     normalize_kling_quality,
@@ -557,30 +558,35 @@ async def generate_video(
     Sends `provider` + params to the backend (/api/ai/mcp-video-generation).
 
     Token costs per second (source of truth: pricing.py VIDEO_TOKEN_RATES):
-    - runway-aleph: 17 tokens/sec (5-10s)
+    - runway-aleph: 30 tokens/sec (5-10s) — Aleph 2
     - runway-4.5: 13 tokens/sec (5, 8, or 10s) — hybrid: backend waits synchronously
       (up to ~590s) and returns the finished video (200); only very long jobs spill
       to 202 (still processing, async notification)
-    - veo-3.1: 44 tokens/sec (8s only)
-    - veo-3.1-flash: 17 tokens/sec (8s only)
-    - veo-3.1-ultra: 65 tokens/sec (8s only)
+    - veo-3.1: 42 tokens/sec (8s only)
+    - veo-3.1-flash: 11 tokens/sec (8s only)
+    - veo-3.1-lite: 6 tokens/sec (8s only) — cheapest video with native audio
+    - veo-3.1-ultra: 63 tokens/sec (8s only)
 
-    Kling v3 / o3 (Evolink) — resolution + route + audio based pricing, 3-15s
+    Kling v3 / o3 / o1 (Evolink) — resolution + route + audio based pricing, 3-15s
     (reference route 3-10s), tokens/sec:
     - kling-v3 / kling-o3 text or image: 720p=9, 1080p=12, 4k=42 (+audio 720p=12, 1080p=14)
     - kling-v3-turbo: 720p=12, 1080p=14 (max 1080p, no audio)
     - kling-o3 reference / video-edit: 720p=13, 1080p=17 (max 1080p)
     - kling-v3 motion-control: 720p=13, 1080p=17 (provisional)
+    - kling-o1: flat 12 tokens/sec, 5s or 10s only. Unified generate+edit engine:
+      image-to-video or video editing. It has NO text-to-video route, so it always
+      needs an image (media_url) or a video (edit_video).
     Kling routing: motion_video -> motion (kling-v3); edit_video / a video media ->
     video-edit (kling-o3); reference_images / mode='reference' -> reference (kling-o3);
     otherwise text/image-to-video. `quality` (720p/1080p/4k, default 720p) and
     `sound` ('on'/'off', base route only) are clamped by the backend.
 
-    Seedance 2.0 (resolution-based pricing, 4-15s, default 5s):
-    - seedance-2.0: 480p=15, 720p=32, 1080p=72 tokens/sec
-    - seedance-2.0-fast: 480p=12, 720p=26 tokens/sec (no 1080p -> downgraded to 720p)
-    - Reference-video discount (reference_videos sent): seedance-2.0 480p=9/720p=20/1080p=43;
-      seedance-2.0-fast 480p=7/720p=16.
+    Seedance (resolution-based pricing, default 5s):
+    - seedance-2.5: 480p=15, 720p=32, 1080p=56 tokens/sec, 4-30s, free audio
+    - seedance-2.0-mini: 480p=2, 720p=2 tokens/sec, 4-15s (no 1080p -> 720p);
+      cheapest video on the platform
+    - Reference-video discount (reference_videos sent): seedance-2.5 480p=9/720p=19/1080p=35.
+    Legacy keys seedance-2.0 and seedance-2.0-fast still resolve to 2.5 and Mini.
     Seedance-only params: resolution, generate_audio, seed, media_url + end_frame
     (image mode), reference_images/reference_videos/reference_audios (reference mode).
 
@@ -596,12 +602,14 @@ async def generate_video(
         return get_refusal_message(prompt)
 
     prompt = clean_prompt_from_model_mentions(prompt)
+    # Retired keys (seedance-2.0 / -fast) still arrive from older clients.
+    model = normalize_video_model(model)
     is_seedance = model in SEEDANCE2_MODELS
     is_kling = model in KLING_MODELS
     # Seedance/Kling accept an empty/"auto" duration (normalized to a default);
     # other models expect an explicit integer.
     if is_seedance:
-        duration = normalize_seedance_duration(duration)
+        duration = normalize_seedance_duration(duration, model)
     elif is_kling:
         duration = int(duration) if str(duration).strip().isdigit() else 5
     else:
@@ -611,9 +619,9 @@ async def generate_video(
     # keys no longer exist (they return 400).
     allowed_models = [
         "runway-aleph", "runway-4.5",
-        "veo-3.1", "veo-3.1-flash", "veo-3.1-ultra",
-        "kling-v3", "kling-v3-turbo", "kling-o3",
-        "seedance-2.0", "seedance-2.0-fast",
+        "veo-3.1", "veo-3.1-flash", "veo-3.1-lite", "veo-3.1-ultra",
+        "kling-v3", "kling-v3-turbo", "kling-o3", "kling-o1",
+        "seedance-2.5", "seedance-2.0-mini",
     ]
 
     if model not in allowed_models:
@@ -868,13 +876,13 @@ async def generate_video(
 async def generate_speech(
     text: str,
     voice_id: str = "21m00Tcm4TlvDq8ikWAM",
-    model_id: str = "eleven_multilingual_v2",
+    model_id: str = "eleven_v3",
 ) -> str:
     """
     Generate speech/audio from text using the ElevenLabs API.
 
-    COST: 1-500 characters = 1 token, 501-999 characters = 8 tokens,
-          1000+ characters = 13 tokens per 1000 chars (rounded up).
+    COST: 11 tokens per 1000 characters (rounded up) on eleven_v3 and
+          eleven_multilingual_v2; 6 tokens per 1000 on eleven_flash_v2_5.
     (Source of truth: pricing.py speech_cost().)
     """
     import base64
@@ -936,8 +944,9 @@ async def generate_speech(
         if backend_url and api_token:
             backend_url = backend_url.rstrip("/")
             callback_url = f"{backend_url}/api/ai/mcp-voice-generation"
-            # Real tiered cost (was hardcoded to 5, under/over-billing every TTS)
-            tokens_cost = speech_cost(len(text))
+            # Cost is proportional to length and depends on the voice model
+            # (flash is half the price of v3 / multilingual v2).
+            tokens_cost = speech_cost(len(text), model_id)
 
             # Backend requires an http/https URL — use a placeholder for the Data URI
             req_uuid = str(uuid_lib.uuid4())
