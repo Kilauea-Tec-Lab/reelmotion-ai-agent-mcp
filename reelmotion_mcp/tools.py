@@ -129,11 +129,11 @@ def clean_prompt_from_model_mentions(prompt: str) -> str:
 
     # Shared model-name alternation (kept in sync with the current catalog).
     _models = (
-        r"runway(?:[-\s]?(?:aleph|4\.?5))?|"
-        r"veo[-\s]?3\.?1(?:[-\s]?(?:flash|ultra))?|"
-        r"seedream|midjourney|nano[-\s]?banana(?:\s?2)?|gpt|"
-        r"seedance[-\s]?2(?:\.0)?(?:[-\s]?fast)?|"
-        r"kling[-\s]?(?:v?3[-\s]?turbo|v?3|o3)"
+        r"runway(?:[-\s]?(?:aleph(?:\s?2)?|4\.?5))?|"
+        r"veo[-\s]?3\.?1(?:[-\s]?(?:flash|ultra|lite))?|"
+        r"seedream(?:\s?(?:pro|lite))?|midjourney|nano[-\s]?banana(?:\s?2)?|gpt|"
+        r"seedance[-\s]?2(?:\.[05])?(?:[-\s]?(?:fast|mini))?|"
+        r"kling[-\s]?(?:v?3[-\s]?turbo|v?3|o3|o1)"
     )
     patterns = [
         # English: "with veo 3.1", "using kling v3", etc.
@@ -141,8 +141,8 @@ def clean_prompt_from_model_mentions(prompt: str) -> str:
         # Spanish: "con veo 3.1", "usando kling o3", etc.
         r"\s+(?:con|usando|mediante|por)\s+(?:" + _models + r")\s*$",
         # Bare model name at end without preposition
-        r"\s+(?:runway[-\s]?(?:aleph|4\.?5)|veo[-\s]?3\.?1[-\s]?(?:flash|ultra)|"
-        r"kling[-\s]?(?:v?3[-\s]?turbo|v?3|o3))\s*$",
+        r"\s+(?:runway[-\s]?(?:aleph(?:\s?2)?|4\.?5)|veo[-\s]?3\.?1[-\s]?(?:flash|ultra|lite)|"
+        r"kling[-\s]?(?:v?3[-\s]?turbo|v?3|o3|o1))\s*$",
     ]
 
     cleaned = prompt
@@ -582,10 +582,10 @@ async def generate_video(
     `sound` ('on'/'off', base route only) are clamped by the backend.
 
     Seedance (resolution-based pricing, default 5s):
-    - seedance-2.5: 480p=15, 720p=32, 1080p=56 tokens/sec, 4-30s, free audio
-    - seedance-2.0-mini: 480p=2, 720p=2 tokens/sec, 4-15s (no 1080p -> 720p);
+    - seedance-2.5: 480p=15, 720p=32, 1080p=78 tokens/sec, 4-30s, free audio
+    - seedance-2.0-mini: 480p=5, 720p=11 tokens/sec, 4-15s (no 1080p -> 720p);
       cheapest video on the platform
-    - Reference-video discount (reference_videos sent): seedance-2.5 480p=9/720p=19/1080p=35.
+    - Reference-video discount (reference_videos sent): seedance-2.5 480p=9/720p=19/1080p=48; seedance-2.0-mini 480p=4/720p=7.
     Legacy keys seedance-2.0 and seedance-2.0-fast still resolve to 2.5 and Mini.
     Seedance-only params: resolution, generate_audio, seed, media_url + end_frame
     (image mode), reference_images/reference_videos/reference_audios (reference mode).

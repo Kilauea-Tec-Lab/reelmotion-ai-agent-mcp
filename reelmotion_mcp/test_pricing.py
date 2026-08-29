@@ -160,18 +160,18 @@ class TestEstimateGenerationCost:
             "generate_video",
             {"model": "seedance-2.0-mini", "duration": 5, "resolution": "1080p"},
         )
-        assert cost == 2 * 5
+        assert cost == 11 * 5  # clamped to 720p
 
     def test_legacy_seedance_keys_resolve_to_new_models(self):
         # Deployed clients still send the retired keys.
         assert estimate_generation_cost(
             "generate_video",
             {"model": "seedance-2.0", "duration": 5, "resolution": "1080p"},
-        ) == 56 * 5
+        ) == 78 * 5
         assert estimate_generation_cost(
             "generate_video",
             {"model": "seedance-2.0-fast", "duration": 5, "resolution": "720p"},
-        ) == 2 * 5
+        ) == 11 * 5
 
     def test_video_kling_o1_is_flat_and_snaps_duration(self):
         assert estimate_generation_cost(
@@ -228,7 +228,7 @@ class TestEstimateGenerationCost:
 # ---------------------------------------------------------------------------
 class TestComputeSeedance2Cost:
     def test_normal_rate(self):
-        assert compute_seedance2_cost("seedance-2.5", "1080p", 4) == 56 * 4
+        assert compute_seedance2_cost("seedance-2.5", "1080p", 4) == 78 * 4
 
     def test_default_duration_is_five(self):
         assert compute_seedance2_cost("seedance-2.5", "480p", None) == 15 * 5
@@ -237,7 +237,7 @@ class TestComputeSeedance2Cost:
         assert compute_seedance2_cost("seedance-2.5", "480p", 99) == 15 * 30
 
     def test_mini_duration_still_stops_at_fifteen(self):
-        assert compute_seedance2_cost("seedance-2.0-mini", "480p", 99) == 2 * 15
+        assert compute_seedance2_cost("seedance-2.0-mini", "480p", 99) == 5 * 15
 
 
 # ---------------------------------------------------------------------------
@@ -281,8 +281,8 @@ class TestAffordableOptions:
         assert videos[("runway-4.5", None)]["max_duration"] == 8
         assert videos[("runway-4.5", None)]["cost"] == 104
         # Mini is cheap enough to reach its longest clip on this balance.
-        assert videos[("seedance-2.0-mini", "720p")]["max_duration"] == 15
-        assert videos[("seedance-2.0-mini", "720p")]["cost"] == 30
+        assert videos[("seedance-2.0-mini", "480p")]["max_duration"] == 15
+        assert videos[("seedance-2.0-mini", "480p")]["cost"] == 75
         # veo-3.1 (42 x 8 = 336) is unaffordable
         assert ("veo-3.1", None) not in videos
 

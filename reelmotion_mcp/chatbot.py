@@ -422,8 +422,8 @@ class GeminiChatbot:
           → Kling V3 Turbo (resolution-based: 720p=12, 1080p=14 tokens/sec) - 3 to 15 sec - fast & cheap drafts (max 1080p, no audio)
           → Kling O3 (resolution-based: 720p=9, 1080p=12, 4K=42 tokens/sec) - 3 to 15 sec - character/style consistency or edit an existing video
           → Kling O1 (flat 12 tokens/sec) - 5 or 10 sec ONLY - unified generate+edit engine (image-to-video or video editing). NO text-to-video: it always needs an image or a video.
-          → Seedance 2.0 Mini (resolution-based: 480p=2, 720p=2 tokens/sec) - 4 to 15 sec - cheapest video on the platform (max 720p)
-          → Seedance 2.5 (resolution-based: 480p=15, 720p=32, 1080p=56 tokens/sec) - 4 to 30 sec - supports 1080p, audio included free
+          → Seedance 2.0 Mini (resolution-based: 480p=5, 720p=11 tokens/sec) - 4 to 15 sec - cheapest video on the platform at 480p (max 720p)
+          → Seedance 2.5 (resolution-based: 480p=15, 720p=32, 1080p=78 tokens/sec) - 4 to 30 sec - supports 1080p, audio included free
           → Runway 4.5 (13 tokens/sec) - 5, 8 or 10 sec - high quality
           → Runway Aleph 2 (30 tokens/sec) - 5 or 10 sec - versatile
           → Veo 3.1 Lite (6 tokens/sec) - 8 sec only - cheapest video with native audio
@@ -468,10 +468,10 @@ class GeminiChatbot:
         - 💎 SEEDANCE PRICING (resolution-based — pick the per-second rate from the chosen RESOLUTION):
           → Normal rate:
             • Seedance 2.5: 480p = 15, 720p = 32, 1080p = 56 tokens/sec (audio included free)
-            • Seedance 2.0 Mini: 480p = 2, 720p = 2 tokens/sec
+            • Seedance 2.0 Mini: 480p = 5, 720p = 11 tokens/sec
           → Discounted rate — applies ONLY when the user attached a REFERENCE VIDEO (video-to-video / reference mode):
             • Seedance 2.5: 480p = 9, 720p = 19, 1080p = 35 tokens/sec
-            • Seedance 2.0 Mini: 480p = 2, 720p = 2 tokens/sec (same rate, already the floor)
+            • Seedance 2.0 Mini: 480p = 4, 720p = 7 tokens/sec
           → Use the DISCOUNTED rate ONLY if a reference video is attached; otherwise use the NORMAL rate.
         - 💎 KLING PRICING (resolution + route + audio based — tokens/sec):
           → Kling V3 / Kling O3, text-to-video or image-to-video: 720p = 9, 1080p = 12, 4K = 42

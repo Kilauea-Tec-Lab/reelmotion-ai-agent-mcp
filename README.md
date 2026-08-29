@@ -146,8 +146,8 @@ GET /health
 - **Veo 3.1 Lite** (6 tokens/sec) - 8 seconds, cheapest video with native audio
 - **Veo 3.1 Flash** (11 tokens/sec) - 8 seconds, fast & economical
 - **Veo 3.1 Ultra** (63 tokens/sec) - 8 seconds, maximum quality
-- **Seedance 2.5** (480p=15, 720p=32, 1080p=56 tokens/sec) - 4-30 seconds, audio included free
-- **Seedance 2.0 Mini** (480p=2, 720p=2 tokens/sec) - 4-15 seconds, cheapest video option on the platform
+- **Seedance 2.5** (480p=15, 720p=32, 1080p=78 tokens/sec) - 4-30 seconds, audio included free
+- **Seedance 2.0 Mini** (480p=5, 720p=11 tokens/sec) - 4-15 seconds, cheapest video option at 480p
 - **Kling V3 / V3 Turbo / O3** (resolution + route based, from 9 tokens/sec) - 3-15 seconds, 4K and native audio on V3/O3
 - **Kling O1** (flat 12 tokens/sec) - 5 or 10 seconds, unified generate+edit (image-to-video or video editing, no text-to-video)
 

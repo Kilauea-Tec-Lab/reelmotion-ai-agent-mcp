@@ -85,17 +85,22 @@ def normalize_video_model(model: Optional[str]) -> Optional[str]:
 SEEDANCE2_MODELS = ("seedance-2.5", "seedance-2.0-mini")
 
 # tokens per second, indexed by resolution. Mini has no 1080p.
+#
+# These are Evolink LIST prices, deliberately not the promos live in Aug 2026
+# (Mini 60% off through 2026-09-06, Seedance 2.5 1080p 28% off through
+# 2026-09-17). Pricing off a promo would flip these models to a loss the day it
+# lapses. List USD/second: 2.5 = 0.138/0.296/0.739, 2.5 video-fed =
+# 0.084/0.180/0.450, Mini = 0.0475/0.100, Mini video-fed = 0.030/0.0625.
 SEEDANCE2_TOKEN_RATES = {
     "normal": {
-        "seedance-2.5": {"480p": 15, "720p": 32, "1080p": 56},
-        # PROVISIONAL: Evolink publishes one blended $0.011/s rate for Mini.
-        "seedance-2.0-mini": {"480p": 2, "720p": 2},
+        "seedance-2.5": {"480p": 15, "720p": 32, "1080p": 78},
+        "seedance-2.0-mini": {"480p": 5, "720p": 11},
     },
     # Discounted rate applies ONLY in reference mode when reference_videos are
     # sent (Evolink bills video-fed routes at roughly ×0.6).
     "reference_discount": {
-        "seedance-2.5": {"480p": 9, "720p": 19, "1080p": 35},
-        "seedance-2.0-mini": {"480p": 2, "720p": 2},
+        "seedance-2.5": {"480p": 9, "720p": 19, "1080p": 48},
+        "seedance-2.0-mini": {"480p": 4, "720p": 7},
     },
 }
 

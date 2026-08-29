@@ -579,10 +579,10 @@ def generate_video(
       fast/cheap -> kling-v3-turbo; max quality/4K/audio -> kling-v3.
 
     Seedance (RESOLUTION-based pricing, default 5s):
-    - seedance-2.5: 480p=15, 720p=32, 1080p=56 tokens/sec, 4-30s (supports 1080p, audio free)
-    - seedance-2.0-mini: 480p=2, 720p=2 tokens/sec, 4-15s (max 720p; 1080p auto-downgraded to
+    - seedance-2.5: 480p=15, 720p=32, 1080p=78 tokens/sec, 4-30s (supports 1080p, audio free)
+    - seedance-2.0-mini: 480p=5, 720p=11 tokens/sec, 4-15s (max 720p; 1080p auto-downgraded to
       720p) - cheapest video option on the platform
-    - Reference-video discount (reference_videos sent): seedance-2.5 480p=9/720p=19/1080p=35.
+    - Reference-video discount (reference_videos sent): seedance-2.5 480p=9/720p=19/1080p=48; seedance-2.0-mini 480p=4/720p=7.
     - Legacy keys seedance-2.0 / seedance-2.0-fast still resolve to seedance-2.5 /
       seedance-2.0-mini, but only the new keys should be offered and sent.
     - Mode is auto-detected: reference_images/reference_videos/reference_audios -> reference mode;
