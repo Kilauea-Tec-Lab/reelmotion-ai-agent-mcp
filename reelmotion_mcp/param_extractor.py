@@ -74,7 +74,7 @@ async def _get_extractor_model():
                 logger.warning("Param extractor disabled: GOOGLE_API_KEY not set")
                 return None
             genai.configure(api_key=api_key)
-            model_name = os.getenv("GEMINI_EXTRACTOR_MODEL", "gemini-2.0-flash")
+            model_name = os.getenv("GEMINI_EXTRACTOR_MODEL", "gemini-flash-lite-latest")
             _extractor_model = genai.GenerativeModel(
                 model_name,
                 system_instruction=_SYSTEM_INSTRUCTION,

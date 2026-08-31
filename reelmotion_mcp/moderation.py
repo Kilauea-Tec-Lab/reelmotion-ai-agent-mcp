@@ -402,7 +402,7 @@ async def _get_moderation_model():
                 return None
             # Reuse global configure() done elsewhere; safe to call again.
             genai.configure(api_key=api_key)
-            model_name = os.getenv("GEMINI_MODERATION_MODEL", "gemini-2.0-flash")
+            model_name = os.getenv("GEMINI_MODERATION_MODEL", "gemini-flash-lite-latest")
             _moderation_model = genai.GenerativeModel(
                 model_name,
                 system_instruction=(
@@ -416,7 +416,10 @@ async def _get_moderation_model():
                     HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
                     HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
                 },
-                generation_config={"temperature": 0.0, "max_output_tokens": 4},
+                # 64, not 4: current Gemini models spend output budget on internal
+                # reasoning before the first text token, so a 4-token cap returns
+                # MAX_TOKENS with an empty part and moderation silently fails open.
+                generation_config={"temperature": 0.0, "max_output_tokens": 64},
             )
             logger.info("LLM moderation model initialized: %s", model_name)
             return _moderation_model
