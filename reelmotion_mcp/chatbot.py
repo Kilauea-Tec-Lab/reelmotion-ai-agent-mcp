@@ -418,18 +418,18 @@ class GeminiChatbot:
         - Based on THE_PROMPT, suggest a model and explain why briefly.
         - ⚠️ ALWAYS present the models as a FORMATTED LIST (one model per line with its cost and durations), never as inline text.
         - Show available models with costs AND valid durations:
-          → Kling V3 (resolution-based: 720p=9, 1080p=12, 4K=42 tokens/sec) - 3 to 15 sec - max quality, 4K, native audio, motion-control
-          → Kling V3 Turbo (resolution-based: 720p=12, 1080p=14 tokens/sec) - 3 to 15 sec - fast & cheap drafts (max 1080p, no audio)
-          → Kling O3 (resolution-based: 720p=9, 1080p=12, 4K=42 tokens/sec) - 3 to 15 sec - character/style consistency or edit an existing video
-          → Kling O1 (flat 12 tokens/sec) - 5 or 10 sec ONLY - unified generate+edit engine (image-to-video or video editing). NO text-to-video: it always needs an image or a video.
-          → Seedance 2.0 Mini (resolution-based: 480p=5, 720p=11 tokens/sec) - 4 to 15 sec - cheapest video on the platform at 480p (max 720p)
-          → Seedance 2.5 (resolution-based: 480p=15, 720p=32, 1080p=78 tokens/sec) - 4 to 30 sec - supports 1080p, audio included free
-          → Runway 4.5 (13 tokens/sec) - 5, 8 or 10 sec - high quality
-          → Runway Aleph 2 (30 tokens/sec) - 5 or 10 sec - versatile
+          → Kling V3 (resolution-based: 720p=10, 1080p=14, 4K=46 tokens/sec) - 3 to 15 sec - max quality, 4K, native audio, motion-control
+          → Kling V3 Turbo (resolution-based: 720p=14, 1080p=16 tokens/sec) - 3 to 15 sec - fast & cheap drafts (max 1080p, no audio)
+          → Kling O3 (resolution-based: 720p=10, 1080p=14, 4K=46 tokens/sec) - 3 to 15 sec - character/style consistency or edit an existing video
+          → Kling O1 (flat 13 tokens/sec) - 5 or 10 sec ONLY - unified generate+edit engine (image-to-video or video editing). NO text-to-video: it always needs an image or a video.
+          → Seedance 2.0 Mini (resolution-based: 480p=6, 720p=12 tokens/sec) - 4 to 15 sec - cheapest video on the platform at 480p (max 720p)
+          → Seedance 2.5 (resolution-based: 480p=16, 720p=35, 1080p=85 tokens/sec) - 4 to 30 sec - supports 1080p, audio included free
+          → Runway 4.5 (14 tokens/sec) - 5, 8 or 10 sec - high quality
+          → Runway Aleph 2 (33 tokens/sec) - 5 or 10 sec - versatile
           → Veo 3.1 Lite (6 tokens/sec) - 8 sec only - cheapest video with native audio
-          → Veo 3.1 Flash (11 tokens/sec) - 8 sec only - fast and good quality
-          → Veo 3.1 (42 tokens/sec) - 8 sec only - high quality
-          → Veo 3.1 Ultra (63 tokens/sec) - 8 sec only - maximum Veo quality
+          → Veo 3.1 Flash (12 tokens/sec) - 8 sec only - fast and good quality
+          → Veo 3.1 (46 tokens/sec) - 8 sec only - high quality
+          → Veo 3.1 Ultra (69 tokens/sec) - 8 sec only - maximum Veo quality
         - Budget/draft heuristic: the cheapest option on the platform is Seedance 2.0 Mini — suggest it
           when the user wants a draft, a test, or the lowest possible cost.
         - Kling quick-pick heuristic: fast/cheap → Kling V3 Turbo; max quality / 4K / audio → Kling V3;
@@ -446,7 +446,7 @@ class GeminiChatbot:
           → Kling V3 / Kling O3 (text-to-video or image-to-video): offer 720p, 1080p, or 4K.
           → Kling V3 Turbo: offer ONLY 720p or 1080p (no 4K).
           → Kling O3 reference/video-edit and Kling V3 motion-control: offer ONLY 720p or 1080p (no 4K).
-          → Kling O1: offer ONLY 720p or 1080p (no 4K) — both cost the same flat 12 tokens/sec.
+          → Kling O1: offer ONLY 720p or 1080p (no 4K) — both cost the same flat 13 tokens/sec.
         - Ask: "Which resolution? Options: [valid resolutions for the chosen model]" (in user's language)
         - Wait for the user to choose. SAVE as THE_RESOLUTION.
 
@@ -518,9 +518,9 @@ class GeminiChatbot:
         STEP 2 - SHOW VIDEO EDITING MODELS ONLY:
         - ⚠️ ALWAYS present the models as a FORMATTED LIST (one model per line with its cost and durations), never as inline text.
         - Show ONLY the models that support video-to-video editing:
-          → **Kling O3** (resolution-based: 720p = 13, 1080p = 17 tokens/sec) - 3 to 15 sec - video-edit ⭐ Recommended
-          → **Kling O1** (flat 12 tokens/sec) - 5 or 10 sec only - unified generate+edit engine
-          → **Runway Aleph 2** (30 tokens/sec) - 5 or 10 sec - High quality editing
+          → **Kling O3** (resolution-based: 720p = 15, 1080p = 19 tokens/sec) - 3 to 15 sec - video-edit ⭐ Recommended
+          → **Kling O1** (flat 13 tokens/sec) - 5 or 10 sec only - unified generate+edit engine
+          → **Runway Aleph 2** (33 tokens/sec) - 5 or 10 sec - High quality editing
         - ⛔ DO NOT show any other models (Veo, Runway 4.5, Seedance, Kling V3/Turbo, etc.) - they do NOT support video-to-video editing here.
         - Suggest Kling O3 as the recommended option for editing an existing video.
         - For Kling O3 and Kling O1 you MUST also ask for the resolution (720p or 1080p) before quoting the cost.

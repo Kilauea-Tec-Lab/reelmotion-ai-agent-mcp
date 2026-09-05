@@ -558,22 +558,22 @@ async def generate_video(
     Sends `provider` + params to the backend (/api/ai/mcp-video-generation).
 
     Token costs per second (source of truth: pricing.py VIDEO_TOKEN_RATES):
-    - runway-aleph: 30 tokens/sec (5-10s) — Aleph 2
-    - runway-4.5: 13 tokens/sec (5, 8, or 10s) — hybrid: backend waits synchronously
+    - runway-aleph: 33 tokens/sec (5-10s) — Aleph 2
+    - runway-4.5: 14 tokens/sec (5, 8, or 10s) — hybrid: backend waits synchronously
       (up to ~590s) and returns the finished video (200); only very long jobs spill
       to 202 (still processing, async notification)
-    - veo-3.1: 42 tokens/sec (8s only)
-    - veo-3.1-flash: 11 tokens/sec (8s only)
+    - veo-3.1: 46 tokens/sec (8s only)
+    - veo-3.1-flash: 12 tokens/sec (8s only)
     - veo-3.1-lite: 6 tokens/sec (8s only) — cheapest video with native audio
-    - veo-3.1-ultra: 63 tokens/sec (8s only)
+    - veo-3.1-ultra: 69 tokens/sec (8s only)
 
     Kling v3 / o3 / o1 (Evolink) — resolution + route + audio based pricing, 3-15s
     (reference route 3-10s), tokens/sec:
-    - kling-v3 / kling-o3 text or image: 720p=9, 1080p=12, 4k=42 (+audio 720p=12, 1080p=14)
-    - kling-v3-turbo: 720p=12, 1080p=14 (max 1080p, no audio)
-    - kling-o3 reference / video-edit: 720p=13, 1080p=17 (max 1080p)
-    - kling-v3 motion-control: 720p=13, 1080p=17 (provisional)
-    - kling-o1: flat 12 tokens/sec, 5s or 10s only. Unified generate+edit engine:
+    - kling-v3 / kling-o3 text or image: 720p=10, 1080p=14, 4k=46 (+audio 720p=14, 1080p=16)
+    - kling-v3-turbo: 720p=14, 1080p=16 (max 1080p, no audio)
+    - kling-o3 reference / video-edit: 720p=15, 1080p=19 (max 1080p)
+    - kling-v3 motion-control: 720p=15, 1080p=19 (provisional)
+    - kling-o1: flat 13 tokens/sec, 5s or 10s only. Unified generate+edit engine:
       image-to-video or video editing. It has NO text-to-video route, so it always
       needs an image (media_url) or a video (edit_video).
     Kling routing: motion_video -> motion (kling-v3); edit_video / a video media ->
@@ -582,10 +582,10 @@ async def generate_video(
     `sound` ('on'/'off', base route only) are clamped by the backend.
 
     Seedance (resolution-based pricing, default 5s):
-    - seedance-2.5: 480p=15, 720p=32, 1080p=78 tokens/sec, 4-30s, free audio
-    - seedance-2.0-mini: 480p=5, 720p=11 tokens/sec, 4-15s (no 1080p -> 720p);
+    - seedance-2.5: 480p=16, 720p=35, 1080p=85 tokens/sec, 4-30s, free audio
+    - seedance-2.0-mini: 480p=6, 720p=12 tokens/sec, 4-15s (no 1080p -> 720p);
       cheapest video on the platform
-    - Reference-video discount (reference_videos sent): seedance-2.5 480p=9/720p=19/1080p=48; seedance-2.0-mini 480p=4/720p=7.
+    - Reference-video discount (reference_videos sent): seedance-2.5 480p=10/720p=21/1080p=52; seedance-2.0-mini 480p=4/720p=8.
     Legacy keys seedance-2.0 and seedance-2.0-fast still resolve to 2.5 and Mini.
     Seedance-only params: resolution, generate_audio, seed, media_url + end_frame
     (image mode), reference_images/reference_videos/reference_audios (reference mode).

@@ -54,10 +54,10 @@ and a Help button (opens ReelBot + a Suggestions form).
        - Seedream 5.0 Lite (3 tokens/image) — up to 3K resolution, up to 14 reference images.
        - Seedream 5.0 Pro (4 tokens/image) — same realism with higher fidelity.
        - Nano Banana 2 (8 tokens/image) — 4K, multi-image.
-       - Midjourney V8.1 (9 tokens/request) — returns 4 variations, up to 5 reference images.
-       - GPT Image 2 (6 tokens/image) — strong at following instructions and text in image.
+       - Midjourney V8.1 (10 tokens/request) — returns 4 variations, up to 5 reference images.
+       - GPT Image 2 (7 tokens/image) — strong at following instructions and text in image.
    • VIDEO tab — pick a model, set duration/resolution and options, then Generate:
-       - Models: Seedance 2.5 / Seedance 2.0 Mini, Veo 3.1 Ultra (63 tokens/sec, 8s fixed),
+       - Models: Seedance 2.5 / Seedance 2.0 Mini, Veo 3.1 Ultra (69 tokens/sec, 8s fixed),
          Veo 3.1 Lite (6 tokens/sec, 8s fixed), Runway Gen 4.5,
          Runway Aleph 2 (video-to-video), Kling V3 / Kling V3 Turbo / Kling O3 / Kling O1.
        - Durations typically 3–15s (Seedance 2.5 up to 30s; Kling O1 only 5s or 10s);
