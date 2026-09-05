@@ -1,4 +1,9 @@
-fastmcp
+# Pinned: the unpinned install resolved to fastmcp 4.0.3, which no longer has
+# fastmcp.prompts.prompt.Message — the import at server.py:11 — and crash-looped
+# the api container on 2026-09-05.
+# An unpinned fastmcp meant a --no-cache rebuild could break a deploy that
+# changed nothing but constants. Bump deliberately, not by rebuilding.
+fastmcp==2.14.1
 google-generativeai
 python-dotenv
 httpx
