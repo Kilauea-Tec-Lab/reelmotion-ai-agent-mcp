@@ -1,15 +1,30 @@
-# Pinned: the unpinned install resolved to fastmcp 4.0.3, which no longer has
-# fastmcp.prompts.prompt.Message — the import at server.py:11 — and crash-looped
-# the api container on 2026-09-05.
-# An unpinned fastmcp meant a --no-cache rebuild could break a deploy that
-# changed nothing but constants. Bump deliberately, not by rebuilding.
+# Every version here is pinned on purpose.
+#
+# These were all unpinned until 2026-09-05, when a `docker-compose build
+# --no-cache` -- for a deploy that changed nothing but price constants -- floated
+# the whole tree to new majors and crash-looped the api container in production:
+#   mcp 1.25 -> 2.1        (2.x stopped pulling pydantic-settings, which
+#                           fastmcp.settings imports -> ModuleNotFoundError)
+#   fastmcp 2.14 -> 4.0.3  (dropped fastmcp.prompts.prompt.Message, imported
+#                           by server.py:11)
+#   starlette 0.50 -> 1.6, uvicorn 0.40 -> 0.52, sse-starlette 3.0 -> 3.4,
+#   redis 7.1 -> 8.1, cachetools 6.2 -> 7.1
+#
+# The versions below are the ones the dev venv and the last working image run.
+# mcp, uvicorn and pydantic-settings used to arrive transitively; they are
+# listed explicitly because the resolver stopped guaranteeing them.
+# Bump these deliberately, one at a time, with a deploy you are watching.
+
 fastmcp==2.14.1
-google-generativeai
-python-dotenv
-httpx
-starlette
-pydantic
-sse-starlette
-redis>=5.0.0
-aiofiles>=23.0.0
-cachetools
+mcp==1.25.0
+pydantic==2.12.5
+pydantic-settings==2.12.0
+starlette==0.50.0
+uvicorn==0.40.0
+sse-starlette==3.0.4
+httpx==0.28.1
+google-generativeai==0.8.6
+python-dotenv==1.2.1
+redis==7.1.0
+aiofiles==25.1.0
+cachetools==6.2.4
