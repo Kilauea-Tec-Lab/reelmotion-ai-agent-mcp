@@ -558,20 +558,20 @@ def generate_video(
       Supported models for video-to-video: runway-aleph, kling-o3 (video-edit), kling-o1.
 
     Token costs per second and valid durations:
-    - runway-aleph: 30 tokens/sec (5-10s) - Aleph 2, video-to-video editing
-    - runway-4.5: 13 tokens/sec (5, 8, or 10s) - high quality (hybrid: 200 sync or 202 processing)
-    - veo-3.1: 42 tokens/sec (8s only)
+    - runway-aleph: 33 tokens/sec (5-10s) - Aleph 2, video-to-video editing
+    - runway-4.5: 14 tokens/sec (5, 8, or 10s) - high quality (hybrid: 200 sync or 202 processing)
+    - veo-3.1: 46 tokens/sec (8s only)
     - veo-3.1-lite: 6 tokens/sec (8s only) - cheapest video with native audio
-    - veo-3.1-flash: 11 tokens/sec (8s only)
-    - veo-3.1-ultra: 63 tokens/sec (8s only) - maximum quality
+    - veo-3.1-flash: 12 tokens/sec (8s only)
+    - veo-3.1-ultra: 69 tokens/sec (8s only) - maximum quality
 
     Kling v3 / o3 / o1 (RESOLUTION + route + audio based, 3-15s; reference 3-10s):
-    - kling-v3: max quality, 4K, native audio, motion-control. text/image: 720p=9, 1080p=12,
-      4k=42 (+audio 720p=12, 1080p=14); motion-control: 720p=13, 1080p=17.
-    - kling-v3-turbo: fast/cheap drafts (text/image only, max 1080p, no audio): 720p=12, 1080p=14.
-    - kling-o3: character/style consistency (reference) or edit an existing video: 720p=13, 1080p=17;
-      plain text/image: 720p=9, 1080p=12, 4k=42.
-    - kling-o1: flat 12 tokens/sec (720p and 1080p), 5s or 10s ONLY. Unified generate+edit engine
+    - kling-v3: max quality, 4K, native audio, motion-control. text/image: 720p=10, 1080p=14,
+      4k=46 (+audio 720p=14, 1080p=16); motion-control: 720p=15, 1080p=19.
+    - kling-v3-turbo: fast/cheap drafts (text/image only, max 1080p, no audio): 720p=14, 1080p=16.
+    - kling-o3: character/style consistency (reference) or edit an existing video: 720p=15, 1080p=19;
+      plain text/image: 720p=10, 1080p=14, 4k=46.
+    - kling-o1: flat 13 tokens/sec (720p and 1080p), 5s or 10s ONLY. Unified generate+edit engine
       (image-to-video or video editing) with NO text-to-video route — it always needs an image
       (media_url) or a video (edit_video).
       Heuristic: edit a video -> kling-o3 + edit_video; keep a character/style from images ->
@@ -579,10 +579,10 @@ def generate_video(
       fast/cheap -> kling-v3-turbo; max quality/4K/audio -> kling-v3.
 
     Seedance (RESOLUTION-based pricing, default 5s):
-    - seedance-2.5: 480p=15, 720p=32, 1080p=78 tokens/sec, 4-30s (supports 1080p, audio free)
-    - seedance-2.0-mini: 480p=5, 720p=11 tokens/sec, 4-15s (max 720p; 1080p auto-downgraded to
+    - seedance-2.5: 480p=16, 720p=35, 1080p=85 tokens/sec, 4-30s (supports 1080p, audio free)
+    - seedance-2.0-mini: 480p=6, 720p=12 tokens/sec, 4-15s (max 720p; 1080p auto-downgraded to
       720p) - cheapest video option on the platform
-    - Reference-video discount (reference_videos sent): seedance-2.5 480p=9/720p=19/1080p=48; seedance-2.0-mini 480p=4/720p=7.
+    - Reference-video discount (reference_videos sent): seedance-2.5 480p=10/720p=21/1080p=52; seedance-2.0-mini 480p=4/720p=8.
     - Legacy keys seedance-2.0 / seedance-2.0-fast still resolve to seedance-2.5 /
       seedance-2.0-mini, but only the new keys should be offered and sent.
     - Mode is auto-detected: reference_images/reference_videos/reference_audios -> reference mode;
@@ -592,7 +592,7 @@ def generate_video(
         prompt: Description of the video to generate or editing instructions (exact user text, NO modifications)
         model: Provider to use (see catalog above). Sent to the backend as `provider`.
         duration: Video duration in seconds. Valid durations depend on model (see above)
-        aspect_ratio: '16:9', '9:16', '1:1', etc. Seedance also accepts auto/21:9/4:3/3:4. Defaults to '16:9'
+        aspect_ratio: '16:9', '9:16', '1:1', etc. Seedance also accepts adaptive/21:9/4:3/3:4. Defaults to '16:9'
         reference_image: URL of reference image (for image-to-video generation)
         reference_video: URL of reference video (for video-to-video editing with runway-aleph / kling-o3 / kling-o1)
         resolution: '480p'/'720p'/'1080p' (Seedance) or '720p'/'1080p'/'4k' (Kling). Defaults to '720p'

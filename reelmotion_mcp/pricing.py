@@ -19,11 +19,11 @@ from typing import Dict, List, Optional
 # Exact, case-sensitive model names as the backend (/api/ai/mcp-image-generation)
 # expects them. There is NO "Freepik" model — never offer or select it.
 IMAGE_COSTS: Dict[str, int] = {
-    "Seedream": 3,
+    "Seedream": 4,
     "Seedream Pro": 4,
-    "GPT": 6,
+    "GPT": 7,
     "Nano Banana 2": 8,
-    "Midjourney": 9,
+    "Midjourney": 10,
 }
 
 # Only these image models honor `type`/`quantity` (multi-image in one call).
@@ -38,12 +38,12 @@ QUANTITY_IMAGE_MODELS = ("GPT", "Nano Banana 2")
 # rate depends on resolution + route + audio, so they live in KLING_TOKEN_RATES
 # below (mirrors how Seedance is handled).
 VIDEO_TOKEN_RATES: Dict[str, int] = {
-    "runway-aleph": 30,  # aleph2 $0.28/s (gen4_aleph was shut down 2026-07-30)
-    "runway-4.5": 13,
-    "veo-3.1": 42,
-    "veo-3.1-flash": 11,
+    "runway-aleph": 33,  # aleph2 $0.28/s (gen4_aleph was shut down 2026-07-30)
+    "runway-4.5": 14,
+    "veo-3.1": 46,
+    "veo-3.1-flash": 12,
     "veo-3.1-lite": 6,
-    "veo-3.1-ultra": 63,
+    "veo-3.1-ultra": 69,
 }
 
 # Valid durations (seconds) per video model.
@@ -93,21 +93,21 @@ SEEDANCE2_MODELS = ("seedance-2.5", "seedance-2.0-mini")
 # 0.084/0.180/0.450, Mini = 0.0475/0.100, Mini video-fed = 0.030/0.0625.
 SEEDANCE2_TOKEN_RATES = {
     "normal": {
-        "seedance-2.5": {"480p": 15, "720p": 32, "1080p": 78},
-        "seedance-2.0-mini": {"480p": 5, "720p": 11},
+        "seedance-2.5": {"480p": 16, "720p": 35, "1080p": 85},
+        "seedance-2.0-mini": {"480p": 6, "720p": 12},
     },
     # Discounted rate applies ONLY in reference mode when reference_videos are
     # sent (Evolink bills video-fed routes at roughly ×0.6).
     "reference_discount": {
-        "seedance-2.5": {"480p": 9, "720p": 19, "1080p": 48},
-        "seedance-2.0-mini": {"480p": 4, "720p": 7},
+        "seedance-2.5": {"480p": 10, "720p": 21, "1080p": 52},
+        "seedance-2.0-mini": {"480p": 4, "720p": 8},
     },
 }
 
 # Seedance 2.5 accepts up to 30s; Mini stops at 15s.
 SEEDANCE_MAX_DURATION = {"seedance-2.5": 30, "seedance-2.0-mini": 15}
 
-SEEDANCE2_VALID_ASPECT_RATIOS = ("auto", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16")
+SEEDANCE2_VALID_ASPECT_RATIOS = ("adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16")
 
 
 def normalize_seedance_resolution(model: str, resolution: Optional[str]) -> str:
@@ -168,11 +168,11 @@ KLING_ROUTE_O1 = "o1"                # kling-o1 image-to-video or video-edit (fl
 
 # Per-second token rates, indexed by route then resolution.
 KLING_TOKEN_RATES = {
-    KLING_ROUTE_BASE: {"720p": 9, "1080p": 12, "4k": 42},
-    KLING_ROUTE_TURBO: {"720p": 12, "1080p": 14},
-    KLING_ROUTE_REFERENCE: {"720p": 13, "1080p": 17},
-    KLING_ROUTE_EDIT: {"720p": 13, "1080p": 17},
-    KLING_ROUTE_MOTION: {"720p": 13, "1080p": 17},
+    KLING_ROUTE_BASE: {"720p": 10, "1080p": 14, "4k": 46},
+    KLING_ROUTE_TURBO: {"720p": 14, "1080p": 16},
+    KLING_ROUTE_REFERENCE: {"720p": 15, "1080p": 19},
+    KLING_ROUTE_EDIT: {"720p": 15, "1080p": 19},
+    KLING_ROUTE_MOTION: {"720p": 15, "1080p": 19},
     KLING_ROUTE_O1: {"720p": 12, "1080p": 12},  # flat $0.111/s
 }
 
@@ -182,7 +182,7 @@ KLING_O1_DURATIONS = (5, 10)
 # Audio surcharge applies ONLY to the base (v3/o3 text/image) route, at
 # 720p/1080p. Audio is ignored (and not charged) on turbo/reference/edit/motion.
 KLING_AUDIO_RATES = {
-    KLING_ROUTE_BASE: {"720p": 12, "1080p": 14},
+    KLING_ROUTE_BASE: {"720p": 14, "1080p": 16},
 }
 
 KLING_VALID_QUALITIES = ("720p", "1080p", "4k")
@@ -302,11 +302,11 @@ def compute_kling_cost(
 # Speech pricing (proportional to character count)
 # ---------------------------------------------------------------------------
 # ElevenLabs bills per character: $0.10 / 1000 chars on v3 and multilingual v2,
-# $0.05 / 1000 on flash. Applying the house rule (1 token = 1¢ USD, +5% margin)
-# gives 11 tokens per 1000 chars on the quality models and 6 on flash. The old
+# $0.05 / 1000 on flash. Applying the house rule (1 token = 1¢ USD, +15% margin)
+# gives 12 tokens per 1000 chars on the quality models and 6 on flash. The old
 # flat tiers charged 1 token for anything under 500 chars, which sold ~500
 # characters of v2 (about 6 tokens of cost) at a loss on every short line.
-SPEECH_RATE_PER_1000 = 11        # eleven_v3 / eleven_multilingual_v2
+SPEECH_RATE_PER_1000 = 12        # eleven_v3 / eleven_multilingual_v2
 SPEECH_RATE_PER_1000_FLASH = 6   # eleven_flash_v2_5
 FLASH_MODELS = ("eleven_flash_v2_5", "eleven_turbo_v2_5")
 

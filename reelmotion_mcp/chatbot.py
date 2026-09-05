@@ -467,19 +467,19 @@ class GeminiChatbot:
         - Calculate cost: tokens_per_second × duration.
         - 💎 SEEDANCE PRICING (resolution-based — pick the per-second rate from the chosen RESOLUTION):
           → Normal rate:
-            • Seedance 2.5: 480p = 15, 720p = 32, 1080p = 56 tokens/sec (audio included free)
-            • Seedance 2.0 Mini: 480p = 5, 720p = 11 tokens/sec
+            • Seedance 2.5: 480p = 16, 720p = 35, 1080p = 85 tokens/sec (audio included free)
+            • Seedance 2.0 Mini: 480p = 6, 720p = 12 tokens/sec
           → Discounted rate — applies ONLY when the user attached a REFERENCE VIDEO (video-to-video / reference mode):
-            • Seedance 2.5: 480p = 9, 720p = 19, 1080p = 35 tokens/sec
-            • Seedance 2.0 Mini: 480p = 4, 720p = 7 tokens/sec
+            • Seedance 2.5: 480p = 10, 720p = 21, 1080p = 52 tokens/sec
+            • Seedance 2.0 Mini: 480p = 4, 720p = 8 tokens/sec
           → Use the DISCOUNTED rate ONLY if a reference video is attached; otherwise use the NORMAL rate.
         - 💎 KLING PRICING (resolution + route + audio based — tokens/sec):
-          → Kling V3 / Kling O3, text-to-video or image-to-video: 720p = 9, 1080p = 12, 4K = 42
-            (with audio add the surcharge: 720p = 12, 1080p = 14; audio only on this route)
-          → Kling V3 Turbo (text/image-to-video only): 720p = 12, 1080p = 14 (no 4K, no audio)
-          → Kling O3 reference mode / video-edit: 720p = 13, 1080p = 17 (no 4K, no audio)
-          → Kling V3 motion-control (guide video): 720p = 13, 1080p = 17 (no 4K, no audio)
-          → Kling O1 (image-to-video or video-edit): flat 12 tokens/sec at 720p and 1080p, 5s or 10s only
+          → Kling V3 / Kling O3, text-to-video or image-to-video: 720p = 10, 1080p = 14, 4K = 46
+            (with audio add the surcharge: 720p = 14, 1080p = 16; audio only on this route)
+          → Kling V3 Turbo (text/image-to-video only): 720p = 14, 1080p = 16 (no 4K, no audio)
+          → Kling O3 reference mode / video-edit: 720p = 15, 1080p = 19 (no 4K, no audio)
+          → Kling V3 motion-control (guide video): 720p = 15, 1080p = 19 (no 4K, no audio)
+          → Kling O1 (image-to-video or video-edit): flat 13 tokens/sec at 720p and 1080p, 5s or 10s only
           → Audio defaults to OFF (cheaper); only quote the +audio rate if the user explicitly asked for audio.
         - Summarize what will be generated:
           → "I'm going to generate a video:"

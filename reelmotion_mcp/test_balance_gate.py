@@ -28,8 +28,8 @@ from request_context import (
 VIDEO_ACTION = {
     "function": "generate_video",
     "args": {"prompt": "a sunset", "model": "veo-3.1", "duration": 8},
-    "cost_message": "Costo: 336 tokens (42 tokens/sec × 8 sec). ¿Confirmas?",
-    "estimated_cost": 336,
+    "cost_message": "Costo: 368 tokens (46 tokens/sec × 8 sec). ¿Confirmas?",
+    "estimated_cost": 368,
 }
 
 
@@ -72,11 +72,11 @@ class TestExecutePendingActionBalanceGate:
 
         assert tool_result is None
         assert "No tienes tokens suficientes" in response  # Spanish cost_message -> es
-        assert "336" in response and "10" in response
+        assert "368" in response and "10" in response
         tool.assert_not_awaited()
         # Action must NOT be claimed/deleted: user can adjust or top up
         bot.session_manager.claim_pending_action.assert_not_awaited()
-        assert block == {"required": 336, "available": 10}
+        assert block == {"required": 368, "available": 10}
 
     def test_executes_when_balance_unknown(self, bot):
         bot.session_manager.get_pending_action = AsyncMock(return_value=dict(VIDEO_ACTION))
@@ -192,7 +192,7 @@ class TestContextualMessageRendering:
 
 
 class TestSavePendingOrBlock:
-    CONFIRMATION_EN = "Cost: 336 tokens (42 tokens/sec × 8 sec). Do you confirm?"
+    CONFIRMATION_EN = "Cost: 368 tokens (46 tokens/sec × 8 sec). Do you confirm?"
 
     def test_blocks_and_does_not_save_when_insufficient(self, bot):
         set_token_balance(10)
@@ -206,7 +206,7 @@ class TestSavePendingOrBlock:
         assert blocked is not None
         assert "don't have enough tokens" in blocked  # English confirmation -> en
         bot.session_manager.save_pending_action.assert_not_awaited()
-        assert block == {"required": 336, "available": 10}
+        assert block == {"required": 368, "available": 10}
 
     def test_saves_when_sufficient(self, bot):
         set_token_balance(500)
