@@ -585,8 +585,14 @@ def generate_video(
     - Reference-video discount (reference_videos sent): seedance-2.5 480p=10/720p=21/1080p=52; seedance-2.0-mini 480p=4/720p=8.
     - Legacy keys seedance-2.0 / seedance-2.0-fast still resolve to seedance-2.5 /
       seedance-2.0-mini, but only the new keys should be offered and sent.
-    - Mode is auto-detected: reference_images/reference_videos/reference_audios -> reference mode;
-      media_url -> image mode; prompt only -> text mode.
+    - Mode is auto-detected: mode='edit' + edit_video -> video-edit; reference_images/
+      reference_videos/reference_audios -> reference mode; media_url -> image mode;
+      prompt only -> text mode.
+    - ⚠️ Editing an existing clip (swap the person, remove an object, change the background
+      while keeping everything else) MUST go through mode='edit' + edit_video, NOT
+      reference_videos. reference-to-video makes a NEW video and Evolink rejects it with
+      "identified as a video editing task". video-edit keeps framing, motion and length,
+      and bills at the discounted video rate.
 
     Args:
         prompt: Description of the video to generate or editing instructions (exact user text, NO modifications)
@@ -594,7 +600,7 @@ def generate_video(
         duration: Video duration in seconds. Valid durations depend on model (see above)
         aspect_ratio: '16:9', '9:16', '1:1', etc. Seedance also accepts adaptive/21:9/4:3/3:4. Defaults to '16:9'
         reference_image: URL of reference image (for image-to-video generation)
-        reference_video: URL of reference video (for video-to-video editing with runway-aleph / kling-o3 / kling-o1)
+        reference_video: URL of reference video (for video-to-video editing with runway-aleph / kling-o3 / kling-o1 / seedance-2.5)
         resolution: '480p'/'720p'/'1080p' (Seedance) or '720p'/'1080p'/'4k' (Kling). Defaults to '720p'
         generate_audio: Whether to generate audio (Seedance only). Defaults to True. Does not affect price.
         seed: Optional random seed for reproducibility (Seedance only)
@@ -605,10 +611,11 @@ def generate_video(
         reference_audios: List of reference audio URLs for Seedance reference mode (max 3)
         quality: Kling resolution '720p'/'1080p'/'4k' (default 720p; 4K only on kling-v3/o3 text/image)
         sound: Kling audio 'on'/'off' (default off; only effective on the text/image route of kling-v3/o3)
-        mode: Force a Kling route: 'motion' | 'reference' | 'edit'
+        mode: Force a route: 'motion' | 'reference' | 'edit'. 'edit' works on Kling AND
+              on seedance-2.5 (-> seedance-2.5-video-edit)
         keep_sound: Keep the original audio in Kling motion/reference/edit routes
         motion_video: Guide video URL for kling-v3 motion-control
-        edit_video: Source video URL for kling-o3 / kling-o1 video-edit
+        edit_video: Source video URL for video-edit (kling-o3 / kling-o1 / seedance-2.5)
     """
     return generate_video_impl(
         prompt, model, duration, aspect_ratio, reference_image, reference_video,

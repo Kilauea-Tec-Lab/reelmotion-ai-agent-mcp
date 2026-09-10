@@ -234,6 +234,40 @@ class TestDetectWorkflowIntent:
     def test_edit_without_reference_is_video_gen(self):
         assert detect_workflow_intent("edit this video", has_reference_video=False) == WORKFLOW_VIDEO_GEN
 
+    def test_edit_verb_on_something_inside_the_video(self):
+        """
+        El caso que se rompio en produccion: el objeto del verbo es la persona, no
+        el video. Con _EDIT_MARKERS = ("cambia el video", ...) esto caia en
+        WORKFLOW_VIDEO_GEN, se enviaba como reference_videos y Evolink lo rechazaba
+        con "Your request was identified as a video editing task".
+        """
+        for msg in (
+            "Cambia a la persona del video por la persona de la imagen",
+            "cambia la persona del video por la de la foto, deja todo lo demas igual",
+            "quita el logo del video",
+            "reemplaza el fondo por una playa",
+            "replace the guy in the clip with the person in the photo",
+        ):
+            assert detect_workflow_intent(msg, has_reference_video=True) == WORKFLOW_VIDEO_EDIT, msg
+
+    def test_edit_verbs_still_need_a_video_attached(self):
+        """Sin video adjunto, "cambia..." no puede ser una edicion de video."""
+        assert detect_workflow_intent(
+            "cambia la persona del video", has_reference_video=False
+        ) == WORKFLOW_VIDEO_GEN
+
+    def test_creation_still_wins_over_loose_edit_verbs(self):
+        """
+        "cambia" es un verbo suelto y comun: no debe secuestrar una generacion
+        normal solo porque haya un video en la sesion.
+        """
+        assert detect_workflow_intent(
+            "crea un video donde cambia el clima", has_reference_video=True
+        ) == WORKFLOW_VIDEO_GEN
+        assert detect_workflow_intent(
+            "crea una imagen de un gato", has_reference_video=True
+        ) == WORKFLOW_IMAGE
+
     def test_no_intent(self):
         assert detect_workflow_intent("hola, ¿cómo estás?") is None
 

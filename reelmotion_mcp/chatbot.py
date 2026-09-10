@@ -557,10 +557,12 @@ class GeminiChatbot:
         - ⛔ DO NOT call the tool until the user explicitly confirms.
         - Once confirmed, CALL generate_video immediately using:
           → prompt = THE_EDIT_PROMPT
-          → model = the chosen model name (exact: 'kling-o3', 'kling-o1' or 'runway-aleph'). It is sent to the backend as `provider`.
+          → model = the chosen model name (exact: 'seedance-2.5', 'kling-o3', 'kling-o1' or 'runway-aleph'). It is sent to the backend as `provider`.
           → duration = THE_DURATION
-          → reference_video = the attached video URL (for kling-o3 / kling-o1 this becomes the edit_video / video-edit route)
-          → resolution = THE_RESOLUTION (kling-o3 / kling-o1 only: '720p' or '1080p')
+          → reference_video = the attached video URL (for seedance-2.5 / kling-o3 / kling-o1 this becomes the edit_video / video-edit route)
+          → mode = 'edit'  ⚠️ REQUIRED on seedance-2.5: without it the clip goes as a
+            plain reference and Evolink rejects it ("identified as a video editing task")
+          → resolution = THE_RESOLUTION (seedance-2.5: '480p'/'720p'/'1080p'; kling-o3 / kling-o1: '720p' or '1080p')
         
         ═══════════════════════════════════════════════════
         

@@ -435,7 +435,16 @@ _VIDEO_MARKERS = ("video", "vídeo", "anima", "animate", "movimiento", "movement
 _IMAGE_MARKERS = ("imagen", "image", "foto", "photo", "picture", "draw", "dibuj")
 _SPEECH_MARKERS = ("speech", "voice", "voz", "narra", "narración", "narracion",
                    "narration", "audio", "habla")
-_EDIT_MARKERS = ("edit", "edita", "modifica", "modify", "cambia el video", "change the video")
+# Verbos de edicion sueltos, sin el objeto pegado: "cambia el video" solo matcheaba
+# cuando el objeto era el video entero, asi que "cambia LA PERSONA del video" caia en
+# generacion y el clip se iba como reference_videos (Evolink lo rechaza con "identified
+# as a video editing task"). No hace falta exigir la palabra "video" en el marcador:
+# todos los usos exigen ademas has_reference_video, o sea que ya hay un video adjunto.
+_EDIT_MARKERS = (
+    "edit", "edita", "modifica", "modify",
+    "cambia", "cambiar", "change", "reemplaza", "replace", "sustituye", "swap",
+    "quita", "quitar", "remove", "borra", "elimina", "delete",
+)
 
 # "crea una imagen" / "make a video": the object right after a creation verb is
 # the strongest intent signal (beats loose markers elsewhere in the message,
@@ -472,8 +481,14 @@ def detect_workflow_intent(message: str, has_reference_video: bool = False) -> O
     if verb_object:
         intent = _OBJECT_TO_WORKFLOW.get(verb_object.group(1).lower())
         if intent == WORKFLOW_VIDEO_GEN:
-            has_edit = any(m in msg for m in _EDIT_MARKERS)
-            return WORKFLOW_VIDEO_EDIT if (has_edit and has_reference_video) else WORKFLOW_VIDEO_GEN
+            # Manda el verbo que abre la frase, no un marcador suelto mas adelante:
+            # "crea un video donde cambia el clima" es generacion, no edicion.
+            verb_is_edit = verb_object.group(0).startswith("edit")
+            return (
+                WORKFLOW_VIDEO_EDIT
+                if (verb_is_edit and has_reference_video)
+                else WORKFLOW_VIDEO_GEN
+            )
         if intent:
             return intent
 
@@ -497,6 +512,10 @@ def detect_workflow_intent(message: str, has_reference_video: bool = False) -> O
         return WORKFLOW_IMAGE
     if has_speech_marker:
         return WORKFLOW_SPEECH
+    # Verbo de edicion con un video ya adjunto, sin decir "video": "quita el logo",
+    # "reemplaza el fondo por una playa". Va al final para que imagen y voz ganen.
+    if has_edit_marker and has_reference_video:
+        return WORKFLOW_VIDEO_EDIT
     return None
 
 
