@@ -167,7 +167,10 @@ and a Help button (opens ReelBot + a Suggestions form).
 - "Insufficient tokens. You need N but only have M." → Buy more tokens (minimum $6 = 600) or
   subscribe to a plan, then retry.
 - Model reference rules: Kling V3 Turbo only accepts an image reference (no video input);
-  Kling O3 edit mode requires a video reference; Runway Aleph requires a video reference.
+  Kling O3 edit mode requires a video reference; Runway Aleph requires a video reference;
+  Seedance 2.5 accepts video input (edit, extend and reference modes) and can combine a
+  source video with reference images -- e.g. swapping the person in a clip for the one in
+  a photo. Its edit mode always outputs the source video length.
 - "The Editor won't open on my phone." → By design — the Editor is desktop only.
 - "I lost my edit." → The Editor autosaves; press Ctrl+S to force a save.
 - "I was charged but didn't get my tokens / plan." → Email support@reelmotion.ai with the

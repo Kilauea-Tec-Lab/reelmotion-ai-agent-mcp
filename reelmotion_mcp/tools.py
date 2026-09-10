@@ -388,15 +388,19 @@ def _build_seedance_media(
     reference_audios: Optional[list],
     media_url: Optional[str],
     end_frame: Optional[str],
+    edit_video: Optional[str] = None,
+    mode: Optional[str] = None,
 ) -> bool:
     """
     Populate a Seedance payload with the right media fields and let the backend
     autodetect the sub-mode:
+      - mode="edit" + a video -> seedance-2.5-video-edit (keeps the source clip and
+        only changes what the prompt asks for; output length follows the input)
       - reference_images / reference_videos / reference_audios -> reference mode
       - media_url -> image mode
       - none -> text mode
     Explicit args take precedence over session reference files.
-    Returns True if reference_videos were attached (discounted rate applies).
+    Returns True if a video was attached (discounted rate applies).
     """
     session_images: list = []
     session_videos: list = []
@@ -409,6 +413,17 @@ def _build_seedance_media(
     image_urls = list(reference_images) if reference_images else session_images
     if media_url:
         image_urls = [media_url] + [u for u in image_urls if u != media_url]
+
+    # Edit mode: the user wants THIS clip back with one thing changed (swap the
+    # person for the one in a photo, remove an object...). The dedicated video-edit
+    # route preserves framing, motion and length; reference-to-video does not.
+    source_video = edit_video or (video_urls[0] if video_urls else None)
+    if mode == "edit" and source_video:
+        payload["edit_video"] = source_video
+        payload["mode"] = "edit"
+        if image_urls:
+            payload["reference_images"] = image_urls[:9]
+        return True
 
     if video_urls:
         # Reference mode (discounted): @Image dance like @Video, style transfer, etc.
@@ -716,7 +731,8 @@ async def generate_video(
 
         used_ref_videos = _build_seedance_media(
             payload, context_files, reference_images, effective_ref_videos,
-            reference_audios, effective_media_url, end_frame,
+            reference_audios, effective_media_url, end_frame, edit_video,
+            "edit" if (mode == "edit" or edit_video) else mode,
         )
         cost = compute_seedance2_cost(model, res, duration, has_reference_videos=used_ref_videos)
         logger.debug(

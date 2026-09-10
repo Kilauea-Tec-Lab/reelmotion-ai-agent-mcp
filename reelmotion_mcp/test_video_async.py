@@ -276,3 +276,67 @@ class TestVideoPayloadContract:
         )
         assert result.lower().startswith("error")
         assert client.last_json is None          # never posted
+
+
+# ---------------------------------------------------------------------------
+# Seedance media routing: edit vs reference
+# ---------------------------------------------------------------------------
+class TestSeedanceMediaRouting:
+    """
+    "Cambia la persona del video por la de la imagen" tiene que ir a
+    seedance-2.5-video-edit (conserva encuadre, movimiento y duracion del clip),
+    no a reference-to-video, que solo lo usa como referencia de estilo.
+    El backend elige la ruta por `mode`/`edit_video`, asi que lo que importa es
+    que el payload los lleve.
+    """
+
+    VIDEO = "https://storage.googleapis.com/b/clip.mp4"
+    IMAGE = "https://storage.googleapis.com/b/face.jpg"
+
+    def _build(self, **kwargs):
+        payload = {}
+        opts = dict(
+            context_files=None, reference_images=None, reference_videos=None,
+            reference_audios=None, media_url=None, end_frame=None,
+            edit_video=None, mode=None,
+        )
+        opts.update(kwargs)
+        used_video = tools._build_seedance_media(payload, **opts)
+        return payload, used_video
+
+    def test_edit_mode_sends_edit_video_and_reference_image(self):
+        payload, used_video = self._build(
+            mode="edit", edit_video=self.VIDEO, reference_images=[self.IMAGE],
+        )
+        assert payload["edit_video"] == self.VIDEO
+        assert payload["mode"] == "edit"
+        assert payload["reference_images"] == [self.IMAGE]
+        assert "reference_videos" not in payload
+        assert used_video is True  # tarifa de video
+
+    def test_edit_mode_picks_up_the_video_from_session_files(self):
+        """El video suele llegar como adjunto del chat, no como argumento."""
+        payload, _ = self._build(
+            mode="edit",
+            context_files=[
+                {"url": self.VIDEO, "type": "video"},
+                {"url": self.IMAGE, "type": "image"},
+            ],
+        )
+        assert payload["edit_video"] == self.VIDEO
+        assert payload["reference_images"] == [self.IMAGE]
+
+    def test_without_edit_mode_it_stays_on_reference_route(self):
+        payload, used_video = self._build(
+            reference_videos=[self.VIDEO], reference_images=[self.IMAGE],
+        )
+        assert payload["reference_videos"] == [self.VIDEO]
+        assert "edit_video" not in payload
+        assert used_video is True
+
+    def test_edit_mode_without_video_falls_back(self):
+        """Sin video no hay nada que editar: no debe inventar la ruta de edit."""
+        payload, used_video = self._build(mode="edit", reference_images=[self.IMAGE])
+        assert "edit_video" not in payload
+        assert payload["media_url"] == self.IMAGE  # image-to-video
+        assert used_video is False

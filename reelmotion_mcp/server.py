@@ -555,7 +555,7 @@ def generate_video(
     - Image-to-video: Animate a reference image into a video.
     - Video-to-video (editing): Transform or edit an existing video using a text prompt + reference video.
       Examples: change style, add effects, modify movement, re-edit scenes.
-      Supported models for video-to-video: runway-aleph, kling-o3 (video-edit), kling-o1.
+      Supported models for video-to-video: seedance-2.5 (video-edit/extend), runway-aleph, kling-o3 (video-edit), kling-o1.
 
     Token costs per second and valid durations:
     - runway-aleph: 33 tokens/sec (5-10s) - Aleph 2, video-to-video editing

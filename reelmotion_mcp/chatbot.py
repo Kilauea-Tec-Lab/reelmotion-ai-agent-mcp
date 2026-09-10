@@ -248,7 +248,7 @@ class GeminiChatbot:
            - Mentions video models: Seedance 2.5, Veo 3.1, Runway Aleph, Runway 4.5, etc.
            - IMPORTANT: Start the VIDEO WORKFLOW, do NOT call the tool directly.
            - For video EDITING (video-to-video), the user MUST provide a reference video.
-             Supported models for video editing: Runway Aleph, Kling O3 (video-edit), Kling O1.
+             Supported models for video editing: Seedance 2.5, Runway Aleph, Kling O3 (video-edit), Kling O1.
         
         2. IMAGE GENERATION/EDITING INTENT:
            - "Generate image" = IMAGE workflow
@@ -518,12 +518,22 @@ class GeminiChatbot:
         STEP 2 - SHOW VIDEO EDITING MODELS ONLY:
         - ⚠️ ALWAYS present the models as a FORMATTED LIST (one model per line with its cost and durations), never as inline text.
         - Show ONLY the models that support video-to-video editing:
-          → **Kling O3** (resolution-based: 720p = 15, 1080p = 19 tokens/sec) - 3 to 15 sec - video-edit ⭐ Recommended
+          → **Seedance 2.5** (resolution-based: 480p = 10, 720p = 21, 1080p = 52 tokens/sec) - keeps the source video length ⭐ Recommended
+          → **Kling O3** (resolution-based: 720p = 15, 1080p = 19 tokens/sec) - 3 to 15 sec - video-edit
           → **Kling O1** (flat 13 tokens/sec) - 5 or 10 sec only - unified generate+edit engine
           → **Runway Aleph 2** (33 tokens/sec) - 5 or 10 sec - High quality editing
-        - ⛔ DO NOT show any other models (Veo, Runway 4.5, Seedance, Kling V3/Turbo, etc.) - they do NOT support video-to-video editing here.
-        - Suggest Kling O3 as the recommended option for editing an existing video.
-        - For Kling O3 and Kling O1 you MUST also ask for the resolution (720p or 1080p) before quoting the cost.
+        - ⛔ DO NOT show any other models (Veo, Runway 4.5, Kling V3/Turbo, etc.) - they do NOT support video-to-video editing here.
+        - Suggest Seedance 2.5 as the recommended option when the user wants to keep the
+          original video intact and only swap/change something in it (a person, an object,
+          the style), because it preserves the source framing, motion and length.
+        - ⚠️ For Seedance 2.5 editing the OUTPUT ALWAYS MATCHES THE SOURCE VIDEO LENGTH.
+          Still ask for duration in Step 3 (it is needed for the estimate), but tell the
+          user the result will keep the original clip length, and ask them for the length
+          of their video so the estimate is realistic.
+        - ⚠️ Seedance 2.5 editing bills the source video too, not only the output, so the
+          final charge follows the source length. Present the number as an estimate.
+        - For Seedance 2.5, Kling O3 and Kling O1 you MUST also ask for the resolution
+          (Seedance: 480p, 720p or 1080p; Kling: 720p or 1080p) before quoting the cost.
         - Ask: "Which model would you like to use?" (in user's language)
         - Wait for user to choose. SAVE as THE_MODEL.
 
@@ -723,10 +733,29 @@ class GeminiChatbot:
             enable_automatic_function_calling=False
         )
     
+    # Extensiones -> tipo, para no asumir "image" cuando el caller no manda types.
+    _EXT_TO_TYPE = {
+        "mp4": "video", "mov": "video", "webm": "video", "mkv": "video",
+        "avi": "video", "m4v": "video",
+        "mp3": "audio", "wav": "audio", "m4a": "audio", "ogg": "audio",
+        "aac": "audio", "flac": "audio",
+    }
+
+    @classmethod
+    def _infer_file_type(cls, url: str) -> str:
+        ext = url.split("?")[0].rsplit(".", 1)[-1].lower() if "." in url.split("?")[0] else ""
+        return cls._EXT_TO_TYPE.get(ext, "image")
+
     async def set_reference_files(self, file_urls: list, file_types: list = None):
         """Store reference file URLs in Redis for this chat session."""
+        # Asumir "image" convertia un video adjunto en imagen y rompia en silencio
+        # todas las rutas de video (seedance edit/reference, kling edit, aleph).
         if not file_types:
-            file_types = ["image"] * len(file_urls)
+            file_types = [self._infer_file_type(u) for u in file_urls]
+        elif len(file_types) < len(file_urls):
+            file_types = list(file_types) + [
+                self._infer_file_type(u) for u in file_urls[len(file_types):]
+            ]
         
         # Store as list of dicts with URL and type
         files_data = [

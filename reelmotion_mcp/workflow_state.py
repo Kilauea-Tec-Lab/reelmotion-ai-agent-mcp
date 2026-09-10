@@ -50,8 +50,10 @@ VIDEO_WORKFLOWS = (WORKFLOW_VIDEO_GEN, WORKFLOW_VIDEO_EDIT)
 # Models allowed for video-to-video editing (the rest don't support it).
 # kling-o3 covers both the "edit an existing video" and "reference-to-video"
 # routes; kling-o1 is the unified generate+edit engine (flat rate); runway-aleph
-# remains a high-quality editor.
-VIDEO_EDIT_MODELS = ("runway-aleph", "kling-o3", "kling-o1")
+# remains a high-quality editor; seedance-2.5 routes to seedance-2.5-video-edit,
+# which keeps the source length (Evolink forces duration=-1) and bills the
+# discounted video tier.
+VIDEO_EDIT_MODELS = ("runway-aleph", "kling-o3", "kling-o1", "seedance-2.5")
 
 RACHEL_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"
 
@@ -871,6 +873,11 @@ def build_action_args(state: dict, ref_urls: Optional[List[str]] = None) -> Opti
         }
         if model in SEEDANCE2_MODELS:
             args["resolution"] = normalize_seedance_resolution(model, params.get("resolution"))
+            # Igual que kling: mode=edit hace que el estimado use la tarifa de video
+            # (la con descuento) y que la tool rutee a seedance-2.5-video-edit en vez
+            # de reference-to-video. Sin esto el bot cotizaba la tarifa normal.
+            if workflow_type == WORKFLOW_VIDEO_EDIT:
+                args["mode"] = "edit"
         elif model in KLING_MODELS:
             route = (
                 KLING_ROUTE_EDIT

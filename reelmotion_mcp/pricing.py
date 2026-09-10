@@ -372,7 +372,14 @@ def estimate_generation_cost(function_name: str, args: dict) -> Optional[int]:
         model = normalize_video_model(args.get("model"))
         duration = args.get("duration")
         if model in SEEDANCE2_MODELS:
-            has_ref_videos = bool(args.get("reference_videos") or args.get("reference_video"))
+            # mode="edit" y edit_video tambien alimentan un video: sin ellos el
+            # estimado usaba la tarifa normal y el cobro real la de video.
+            has_ref_videos = bool(
+                args.get("reference_videos")
+                or args.get("reference_video")
+                or args.get("edit_video")
+                or args.get("mode") == "edit"
+            )
             return compute_seedance2_cost(
                 model, args.get("resolution"), duration, has_reference_videos=has_ref_videos
             )

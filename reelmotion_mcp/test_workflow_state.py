@@ -531,6 +531,25 @@ class TestBuildActionArgs:
         _, args = build_action_args(state)
         assert args["resolution"] == "720p"  # normalized for the mini tier
 
+    def test_seedance_edit_workflow_sets_mode_edit(self):
+        """mode=edit rutea a seedance-2.5-video-edit y activa la tarifa de video."""
+        state = new_state(WORKFLOW_VIDEO_EDIT)
+        state["params"].update({
+            "prompt": "cambia la persona del video por la de la imagen",
+            "refine_resolved": True,
+            "model": "seedance-2.5", "duration": 7, "resolution": "480p",
+        })
+        state["step"] = compute_step(state)
+        _, args = build_action_args(state)
+        assert args["mode"] == "edit"
+        assert args["resolution"] == "480p"
+
+    def test_seedance_generation_workflow_has_no_edit_mode(self):
+        state = self._ready_video_state()
+        state["params"].update({"model": "seedance-2.5", "duration": 5, "resolution": "720p"})
+        _, args = build_action_args(state)
+        assert "mode" not in args
+
     def test_kling_resolution_keeps_4k_on_base_route(self):
         state = new_state(WORKFLOW_VIDEO_GEN)
         state["params"].update({

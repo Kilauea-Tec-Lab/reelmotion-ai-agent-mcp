@@ -204,6 +204,26 @@ class TestEstimateGenerationCost:
         )
         assert cost == 21 * 5
 
+    def test_video_seedance_edit_mode_uses_discount_table(self):
+        """El video llega por mode=edit/edit_video, no por reference_videos: sin
+        esto el bot cotizaba 35 t/s y el backend cobraba 21."""
+        for extra in (
+            {"mode": "edit"},
+            {"edit_video": "https://example.com/v.mp4"},
+        ):
+            cost = estimate_generation_cost(
+                "generate_video",
+                {"model": "seedance-2.5", "duration": 5, "resolution": "720p", **extra},
+            )
+            assert cost == 21 * 5, extra
+
+    def test_video_seedance_without_video_keeps_normal_rate(self):
+        cost = estimate_generation_cost(
+            "generate_video",
+            {"model": "seedance-2.5", "duration": 5, "resolution": "720p"},
+        )
+        assert cost == 35 * 5
+
     def test_video_legacy_model_returns_none(self):
         assert (
             estimate_generation_cost("generate_video", {"model": "luma-labs", "duration": 5})
