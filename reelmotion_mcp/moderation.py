@@ -364,9 +364,10 @@ DISALLOWED categories (BLOCK if the request describes, depicts, or asks to gener
 - Harassment/doxxing: threats, intimidation toward real or identifiable people.
 - Self-harm/suicide: methods, glorification, instructions, encouragement.
 - Illegal activity instructions: drug synthesis, weapon construction, hacking real systems, fraud how-tos.
-- Sexual deepfakes of real people; defamatory or sexual depictions of identifiable real public figures.
+- Sexual deepfakes; sexual, defamatory or deceptive depictions of an identifiable real public figure (a named celebrity, politician or similar) passed off as authentic footage.
 
 ALLOWED (do NOT block these):
+- Editing media the user uploaded: replacing/swapping/re-casting the person in their own photo or video with a fictional or AI-generated character, changing wardrobe (non-revealing), background, lighting or style, keeping framing and motion. This is the product's core feature. Block only if the request adds sexual or violent content, or names an identifiable real public figure as the replacement.
 - Tasteful art with clothed people, including swimwear in normal contexts (beach, pool).
 - Action/adventure scenes with non-graphic stylized combat.
 - Historical/educational depictions without sexual or graphic emphasis.
