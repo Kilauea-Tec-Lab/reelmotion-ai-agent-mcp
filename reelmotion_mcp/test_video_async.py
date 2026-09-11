@@ -381,6 +381,14 @@ class TestKlingEditMediaRouting:
         assert route == tools.KLING_ROUTE_EDIT
         assert payload["reference_images"] == [self.IMAGE]
 
+    def test_edit_route_dedupes_the_photo_sent_both_as_arg_and_session_file(self):
+        """execute_pending_action manda reference_image Y el mismo archivo viene en la sesion."""
+        _, payload = self._build(
+            mode="edit", edit_video=self.VIDEO, reference_image=self.IMAGE,
+            context_files=[{"url": self.IMAGE, "type": "image"}],
+        )
+        assert payload["reference_images"] == [self.IMAGE]
+
     def test_edit_route_without_a_photo_sends_no_images(self):
         route, payload = self._build(mode="edit", edit_video=self.VIDEO)
         assert route == tools.KLING_ROUTE_EDIT

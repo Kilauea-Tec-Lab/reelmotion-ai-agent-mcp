@@ -523,7 +523,7 @@ def _build_kling_media(
             # La foto de la persona que entra al video viaja como image_urls en
             # kling-o3-video-edit (el backend acepta hasta 4). Sin esto el prompt
             # habla de "la imagen" y Evolink nunca la recibe.
-            appearance = explicit_ref_images or i2v_candidates
+            appearance = list(dict.fromkeys(explicit_ref_images or i2v_candidates))
             if appearance:
                 payload["reference_images"] = appearance[:4]
             return KLING_ROUTE_EDIT, payload
