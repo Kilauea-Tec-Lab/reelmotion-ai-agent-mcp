@@ -340,3 +340,48 @@ class TestSeedanceMediaRouting:
         assert "edit_video" not in payload
         assert payload["media_url"] == self.IMAGE  # image-to-video
         assert used_video is False
+
+
+class TestKlingEditMediaRouting:
+    """
+    Mismo caso en kling-o3: el swap de persona iba con edit_video pero SIN la foto
+    (has_image=false, has_refs=false en el backend) y Evolink fallaba con
+    "Task processing failed". La ruta de edit tiene que llevar la imagen.
+    """
+
+    VIDEO = "https://storage.googleapis.com/b/clip.mp4"
+    IMAGE = "https://storage.googleapis.com/b/face.jpg"
+
+    def _build(self, **kwargs):
+        opts = dict(
+            model="kling-o3", mode=None, media_url=None, reference_image=None,
+            reference_images=None, reference_video=None, reference_videos=None,
+            motion_video=None, edit_video=None, context_files=None,
+        )
+        opts.update(kwargs)
+        return tools._build_kling_media(**opts)
+
+    def test_edit_route_carries_the_reference_photo_from_session_files(self):
+        route, payload = self._build(
+            mode="edit",
+            context_files=[
+                {"url": self.VIDEO, "type": "video"},
+                {"url": self.IMAGE, "type": "image"},
+            ],
+        )
+        assert route == tools.KLING_ROUTE_EDIT
+        assert payload["edit_video"] == self.VIDEO
+        assert payload["reference_images"] == [self.IMAGE]
+
+    def test_edit_route_carries_the_singular_reference_image_arg(self):
+        """execute_pending_action manda reference_image (singular)."""
+        route, payload = self._build(
+            mode="edit", edit_video=self.VIDEO, reference_image=self.IMAGE,
+        )
+        assert route == tools.KLING_ROUTE_EDIT
+        assert payload["reference_images"] == [self.IMAGE]
+
+    def test_edit_route_without_a_photo_sends_no_images(self):
+        route, payload = self._build(mode="edit", edit_video=self.VIDEO)
+        assert route == tools.KLING_ROUTE_EDIT
+        assert "reference_images" not in payload
