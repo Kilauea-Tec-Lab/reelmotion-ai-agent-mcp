@@ -552,6 +552,11 @@ def new_state(workflow_type: str = WORKFLOW_UNKNOWN) -> dict:
             "quantity": 1,
             "speech_text": None,
             "text_confirmed": False,
+            # Explicit media picked by Gemini from the Studio project context
+            # (last frame of the previous shot, character references, end frame).
+            "media_url": None,
+            "reference_images": None,
+            "end_frame": None,
         },
         "updated_at": "",
     }
@@ -909,7 +914,11 @@ def build_action_args(state: dict, ref_urls: Optional[List[str]] = None) -> Opti
             # auto-detects the edit route from the attached reference video.
             if workflow_type == WORKFLOW_VIDEO_EDIT and model in ("kling-o3", "kling-o1"):
                 args["mode"] = "edit"
-        # Reference files are attached by execute_pending_action from refs:{uuid}
+        # Reference files are attached by execute_pending_action from refs:{uuid};
+        # explicit project media (see new_state) rides along and wins over them.
+        for media_key in ("media_url", "reference_images", "end_frame"):
+            if params.get(media_key):
+                args[media_key] = params[media_key]
         return "generate_video", args
 
     if workflow_type == WORKFLOW_SPEECH:

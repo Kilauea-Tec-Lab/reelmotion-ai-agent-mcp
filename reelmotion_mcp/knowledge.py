@@ -33,8 +33,9 @@ HOW TO USE THIS MANUAL:
 - Chat history — the user's past conversations (search, rename, delete).
 - User menu (bottom) — My Profile, Support (email), WhatsApp Support, Log Out, and
   language selector.
-Other areas: Discover (community feed), Projects/Folders (legacy dashboard at /v2),
-and a Help button (opens ReelBot + a Suggestions form).
+- Projects — Studio workspaces: brief + visual style + characters/references + a
+  timeline of shots that chain into one coherent video, each with its own project chat.
+Other areas: Discover (community feed).
 
 ────────────────────────────────────────
 📖 B. WHAT EACH SECTION IS AND HOW TO USE IT
@@ -118,13 +119,15 @@ and a Help button (opens ReelBot + a Suggestions form).
 8) DISCOVER
    A community feed of creations other users have shared publicly.
 
-9) PROJECTS / FOLDERS (legacy dashboard at /v2)
-   Organize work into folders. The user must create a folder first, then create projects
-   inside it.
-
-10) HELP BUTTON
-   Opens ReelBot plus a Suggestions form (choose a category, give a rating, write the
-   suggestion, leave an email for follow-up).
+9) PROJECTS (Studio, sidebar → Projects)
+   A project = brief + visual style + characters/reference images + an ordered timeline of
+   shots. Each shot has a prompt, model, duration and a continuity mode with the previous
+   shot: "last frame" (previous clip's last frame becomes the first frame — works with every
+   model), "extend" (Seedance 2.5 continues the clip), "keyframes" (start + end frame,
+   Seedance 2.5 / Luma), or none. Characters/references are sent as reference images to
+   kling-o3 / seedance-2.5 for identity consistency. Every project has its own chat with
+   ReelBot that already knows the brief, style, characters and previous shots; videos
+   generated from that chat are added to the timeline automatically.
 
 ────────────────────────────────────────
 ❓ C. FREQUENTLY ASKED QUESTIONS (usage)

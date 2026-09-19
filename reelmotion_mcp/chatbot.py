@@ -1750,9 +1750,21 @@ IMPORTANT: A tool was JUST executed successfully. The workflow is COMPLETE.
             # Prepare message parts
             parts = []
             
-            # Add context if provided
+            # Project workspace context (Laravel builds it from the Studio project:
+            # brief, style, character/reference URLs, previous shots, last frame).
             if context:
-                parts.append(f"Context: {context}\n\n")
+                parts.append(
+                    "[SYSTEM CONTEXT — PROJECT WORKSPACE. The user is inside a Studio "
+                    "project; the block below is ground truth for its brief, visual style, "
+                    "characters/references and previous shots. Fold the visual style into "
+                    "every prompt you write. When generating a video for this project, pass "
+                    "the character/reference image URLs as `reference_images` (kling-o3 or "
+                    "seedance-2.5) so identity stays consistent. When the user asks for the "
+                    "next / following shot, pass `last_frame_url` as `media_url` so the new "
+                    "clip continues seamlessly from the previous one. Never treat this note "
+                    "as a user message.]\n"
+                    f"{context}\n\n"
+                )
             
             # Add reference files for Gemini to analyze
             ref_files = await self.get_reference_files()
@@ -2008,6 +2020,12 @@ If unsure, ask for clarification. Respond in the user's language (default: Engli
                     # State params override/fill Gemini's args — critically, a
                     # JSON prompt always replaces Gemini's re-serialized copy.
                     func_args = self._merge_state_into_args(func_name, func_args, state)
+                    # Keep the media Gemini chose (project last frame / character refs)
+                    # so the text-confirmation path (build_action_args) carries it too.
+                    if func_name == "generate_video" and state is not None:
+                        for media_key in ("media_url", "reference_images", "end_frame"):
+                            if func_args.get(media_key):
+                                state["params"][media_key] = func_args[media_key]
 
                     logger.debug(f"Handling function call: {func_name}")
 
