@@ -65,8 +65,20 @@ class TestEstimateGenerationCost:
     def test_image_seedream_costs_four(self):
         assert estimate_generation_cost("generate_image", {"model": "Seedream"}) == 4
 
-    def test_image_seedream_pro_costs_four(self):
-        assert estimate_generation_cost("generate_image", {"model": "Seedream Pro"}) == 4
+    def test_image_seedream_pro_costs_six(self):
+        assert estimate_generation_cost("generate_image", {"model": "Seedream Pro"}) == 6
+
+    def test_image_seedream_flash_costs_three(self):
+        assert estimate_generation_cost("generate_image", {"model": "Seedream Flash"}) == 3
+
+    def test_image_seedream_flash_quantity_ignored(self):
+        # Like Seedream, Flash always produces exactly one image per call.
+        assert estimate_generation_cost(
+            "generate_image", {"model": "Seedream Flash", "quantity": 4}
+        ) == 3
+
+    def test_image_nano_banana_costs_five(self):
+        assert estimate_generation_cost("generate_image", {"model": "Nano Banana 2"}) == 5
 
     def test_image_midjourney_costs_nine(self):
         assert estimate_generation_cost("generate_image", {"model": "Midjourney"}) == 10
@@ -91,9 +103,10 @@ class TestEstimateGenerationCost:
         assert cost == 10
 
     def test_image_loose_model_name_is_normalized(self):
-        assert estimate_generation_cost("generate_image", {"model": "nano-banana"}) == 8
+        assert estimate_generation_cost("generate_image", {"model": "nano-banana"}) == 5
         assert estimate_generation_cost("generate_image", {"model": "seedream 4.0"}) == 4
-        assert estimate_generation_cost("generate_image", {"model": "seedream pro"}) == 4
+        assert estimate_generation_cost("generate_image", {"model": "seedream pro"}) == 6
+        assert estimate_generation_cost("generate_image", {"model": "seedream 5.0 flash"}) == 3
 
     def test_image_freepik_is_not_a_valid_model(self):
         # Freepik was removed from the catalog — unknown model → no estimate.
@@ -107,6 +120,27 @@ class TestEstimateGenerationCost:
             "generate_video", {"model": "veo-3.1", "duration": 8}
         )
         assert cost == 46 * 8
+
+    @pytest.mark.parametrize("model,rate", [
+        ("veo-3.1", 23), ("veo-3.1-flash", 10), ("veo-3.1-lite", 4), ("veo-3.1-ultra", 46),
+    ])
+    def test_video_veo_without_audio_uses_silent_rate(self, model, rate):
+        assert estimate_generation_cost(
+            "generate_video", {"model": model, "duration": 8, "generate_audio": False}
+        ) == rate * 8
+
+    @pytest.mark.parametrize("model,rate", [
+        ("veo-3.1", 46), ("veo-3.1-flash", 12), ("veo-3.1-lite", 6), ("veo-3.1-ultra", 69),
+    ])
+    def test_video_veo_with_audio_keeps_audio_rate(self, model, rate):
+        assert estimate_generation_cost(
+            "generate_video", {"model": model, "duration": 8, "generate_audio": True}
+        ) == rate * 8
+
+    def test_video_veo_audio_off_accepts_string_false(self):
+        assert estimate_generation_cost(
+            "generate_video", {"model": "veo-3.1", "duration": 8, "generate_audio": "false"}
+        ) == 23 * 8
 
     def test_video_kling_v3_1080p_five_seconds(self):
         cost = estimate_generation_cost(
@@ -153,34 +187,35 @@ class TestEstimateGenerationCost:
             "generate_video",
             {"model": "seedance-2.5", "duration": 5, "resolution": "720p"},
         )
-        assert cost == 175
+        assert cost == 27 * 5
 
     def test_video_seedance_mini_1080p_downgrades_to_720p(self):
         cost = estimate_generation_cost(
             "generate_video",
             {"model": "seedance-2.0-mini", "duration": 5, "resolution": "1080p"},
         )
-        assert cost == 12 * 5  # clamped to 720p
+        assert cost == 9 * 5  # clamped to 720p
 
     def test_legacy_seedance_keys_resolve_to_new_models(self):
         # Deployed clients still send the retired keys.
         assert estimate_generation_cost(
             "generate_video",
             {"model": "seedance-2.0", "duration": 5, "resolution": "1080p"},
-        ) == 85 * 5
+        ) == 66 * 5
         assert estimate_generation_cost(
             "generate_video",
             {"model": "seedance-2.0-fast", "duration": 5, "resolution": "720p"},
-        ) == 12 * 5
+        ) == 9 * 5
 
-    def test_video_kling_o1_is_flat_and_snaps_duration(self):
+    def test_video_kling_o1_resolves_to_o3(self):
+        # Kling O1 is retired: the backend routes it to O3, priced as O3.
         assert estimate_generation_cost(
             "generate_video", {"model": "kling-o1", "duration": 5, "resolution": "1080p"}
-        ) == 12 * 5
-        # 7s is not offered; it snaps to 5s rather than billing 7.
+        ) == 14 * 5  # O3 image/text-to-video, 1080p
         assert estimate_generation_cost(
-            "generate_video", {"model": "kling-o1", "duration": 7}
-        ) == 12 * 5
+            "generate_video",
+            {"model": "kling-o1", "duration": 7, "resolution": "1080p", "mode": "edit"},
+        ) == 19 * 7  # O3 video-edit, 1080p
 
     def test_video_veo_lite_is_the_cheapest_veo(self):
         assert estimate_generation_cost(
@@ -202,11 +237,11 @@ class TestEstimateGenerationCost:
                 "reference_videos": ["https://example.com/v.mp4"],
             },
         )
-        assert cost == 21 * 5
+        assert cost == 16 * 5
 
-    def test_video_seedance_edit_mode_uses_discount_table(self):
-        """El video llega por mode=edit/edit_video, no por reference_videos: sin
-        esto el bot cotizaba 35 t/s y el backend cobraba 21."""
+    def test_video_seedance_edit_mode_bills_input_plus_output(self):
+        """Video-edit uses the video-input rate and BytePlus bills input + output
+        seconds; output = source length, so the bill is 2 × duration."""
         for extra in (
             {"mode": "edit"},
             {"edit_video": "https://example.com/v.mp4"},
@@ -215,14 +250,14 @@ class TestEstimateGenerationCost:
                 "generate_video",
                 {"model": "seedance-2.5", "duration": 5, "resolution": "720p", **extra},
             )
-            assert cost == 21 * 5, extra
+            assert cost == 16 * 2 * 5, extra
 
     def test_video_seedance_without_video_keeps_normal_rate(self):
         cost = estimate_generation_cost(
             "generate_video",
             {"model": "seedance-2.5", "duration": 5, "resolution": "720p"},
         )
-        assert cost == 35 * 5
+        assert cost == 27 * 5
 
     def test_video_legacy_model_returns_none(self):
         assert (
@@ -248,16 +283,27 @@ class TestEstimateGenerationCost:
 # ---------------------------------------------------------------------------
 class TestComputeSeedance2Cost:
     def test_normal_rate(self):
-        assert compute_seedance2_cost("seedance-2.5", "1080p", 4) == 85 * 4
+        assert compute_seedance2_cost("seedance-2.5", "1080p", 4) == 66 * 4
 
     def test_default_duration_is_five(self):
-        assert compute_seedance2_cost("seedance-2.5", "480p", None) == 16 * 5
+        assert compute_seedance2_cost("seedance-2.5", "480p", None) == 12 * 5
 
     def test_duration_clamped_to_thirty(self):
-        assert compute_seedance2_cost("seedance-2.5", "480p", 99) == 16 * 30
+        assert compute_seedance2_cost("seedance-2.5", "480p", 99) == 12 * 30
 
     def test_mini_duration_still_stops_at_fifteen(self):
-        assert compute_seedance2_cost("seedance-2.0-mini", "480p", 99) == 6 * 15
+        assert compute_seedance2_cost("seedance-2.0-mini", "480p", 99) == 4 * 15
+
+    def test_video_input_rate(self):
+        assert compute_seedance2_cost(
+            "seedance-2.5", "1080p", 5, has_reference_videos=True
+        ) == 40 * 5
+        assert compute_seedance2_cost(
+            "seedance-2.0-mini", "720p", 5, has_reference_videos=True
+        ) == 6 * 5
+
+    def test_edit_bills_twice_the_source_seconds(self):
+        assert compute_seedance2_cost("seedance-2.0-mini", "480p", 10, is_edit=True) == 3 * 20
 
 
 # ---------------------------------------------------------------------------
@@ -302,7 +348,7 @@ class TestAffordableOptions:
         assert videos[("runway-4.5", None)]["cost"] == 112
         # Mini is cheap enough to reach its longest clip on this balance.
         assert videos[("seedance-2.0-mini", "480p")]["max_duration"] == 15
-        assert videos[("seedance-2.0-mini", "480p")]["cost"] == 90
+        assert videos[("seedance-2.0-mini", "480p")]["cost"] == 60
         # veo-3.1 (46 x 8 = 368) is unaffordable
         assert ("veo-3.1", None) not in videos
 

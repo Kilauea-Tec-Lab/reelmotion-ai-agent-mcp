@@ -5,7 +5,7 @@ AI-powered agent for image and video generation using Google Gemini and multiple
 ## Features
 
 - 🤖 **Gemini-powered chatbot** with multi-language support (English/Spanish auto-detection)
-- 🖼️ **Image generation** (Seedream, Seedream Pro, GPT, Nano Banana 2, Midjourney)
+- 🖼️ **Image generation** (Seedream, Seedream Pro, Seedream Flash, GPT, Nano Banana 2, Midjourney)
 - 🎬 **Video generation** (Runway Aleph 2, Veo 3.1, Seedance 2.5, Kling, and more)
 - 💾 **Redis-based session management** for concurrent conversations
 - 🔄 **Reference file persistence** (images/videos via URL)
@@ -132,24 +132,24 @@ GET /health
 
 ### Image Generation
 
-- **Seedream** (UI: Seedream 5.0 Lite) - Realism / photographic fidelity, cinematic, reference images (3 tokens/image) — cheapest, recommended default
-- **Seedream Pro** (UI: Seedream 5.0 Pro) - Same realism with higher fidelity, for maximum image quality (4 tokens/image)
-- **GPT** (UI: GPT Image 2) - Readable text in image, strict instruction following (6 tokens/image)
-- **Nano Banana 2** - Quick edits / multi-reference composition (8 tokens/image)
-- **Midjourney** (UI: Midjourney V8.1) - Artistic style, illustration, creative concepts (9 tokens/image)
+- **Seedream Flash** (UI: Seedream 5.0 Flash) - Cheapest image model, fast drafts (3 tokens/image)
+- **Seedream** (UI: Seedream 5.0 Lite) - Realism / photographic fidelity, cinematic, reference images (4 tokens/image) — recommended default
+- **Seedream Pro** (UI: Seedream 5.0 Pro) - Same realism with higher fidelity, for maximum image quality (6 tokens/image, +1 per reference image after the first)
+- **GPT** (UI: GPT Image 2) - Readable text in image, strict instruction following (7 tokens/image)
+- **Nano Banana 2** (UI: Nano Banana 2.1) - Quick edits / multi-reference composition (5 tokens/image)
+- **Midjourney** (UI: Midjourney V8.1) - Artistic style, illustration, creative concepts (10 tokens/image)
 
 ### Video Generation
 
-- **Runway Aleph 2** (30 tokens/sec) - 5-10 seconds, video-to-video
-- **Runway 4.5** (13 tokens/sec) - 5, 8 or 10 seconds, high quality
-- **Veo 3.1** (42 tokens/sec) - 8 seconds, high quality
-- **Veo 3.1 Lite** (6 tokens/sec) - 8 seconds, cheapest video with native audio
-- **Veo 3.1 Flash** (11 tokens/sec) - 8 seconds, fast & economical
-- **Veo 3.1 Ultra** (63 tokens/sec) - 8 seconds, maximum quality
-- **Seedance 2.5** (480p=15, 720p=32, 1080p=78 tokens/sec) - 4-30 seconds, audio included free
-- **Seedance 2.0 Mini** (480p=5, 720p=11 tokens/sec) - 4-15 seconds, cheapest video option at 480p
-- **Kling V3 / V3 Turbo / O3** (resolution + route based, from 9 tokens/sec) - 3-15 seconds, 4K and native audio on V3/O3
-- **Kling O1** (flat 12 tokens/sec) - 5 or 10 seconds, unified generate+edit (image-to-video or video editing, no text-to-video)
+- **Runway Aleph 2** (33 tokens/sec) - 5-10 seconds, video-to-video
+- **Runway 4.5** (14 tokens/sec) - 5, 8 or 10 seconds, high quality
+- **Veo 3.1** (46 tokens/sec; 23 without audio) - 8 seconds, high quality
+- **Veo 3.1 Lite** (6 tokens/sec; 4 without audio) - 8 seconds, cheapest Veo
+- **Veo 3.1 Flash** (12 tokens/sec; 10 without audio) - 8 seconds, fast & economical
+- **Veo 3.1 Ultra** (69 tokens/sec; 46 without audio) - 8 seconds, maximum quality
+- **Seedance 2.5** (480p=12, 720p=27, 1080p=66 tokens/sec; with video input 8/16/40 on input + output seconds) - 4-30 seconds, audio included free
+- **Seedance 2.0 Mini** (480p=4, 720p=9 tokens/sec; with video input 3/6) - 4-15 seconds, cheapest video option at 480p
+- **Kling V3 / V3 Turbo / O3** (resolution + route based, from 10 tokens/sec) - 3-15 seconds, 4K and native audio on V3/O3 (Kling O1 is retired; `kling-o1` resolves to O3)
 
 ### Speech Generation
 

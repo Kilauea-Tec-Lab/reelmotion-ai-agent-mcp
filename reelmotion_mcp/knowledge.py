@@ -52,16 +52,19 @@ Other areas: Discover (community feed).
    Three tabs. The current token balance is shown at the top-right of the modal.
    • IMAGE tab — pick a model, write a prompt, choose aspect ratio, count, optional negative
      prompt and reference images, then Generate:
-       - Seedream 5.0 Lite (3 tokens/image) — up to 3K resolution, up to 14 reference images.
-       - Seedream 5.0 Pro (4 tokens/image) — same realism with higher fidelity.
-       - Nano Banana 2 (8 tokens/image) — 4K, multi-image.
+       - Seedream 5.0 Flash (3 tokens/image) — cheapest image model, fast drafts.
+       - Seedream 5.0 Lite (4 tokens/image) — up to 3K resolution, up to 14 reference images.
+       - Seedream 5.0 Pro (6 tokens/image, +1 per reference image after the first) — same realism with higher fidelity.
+       - Nano Banana 2.1 (5 tokens/image) — 4K, multi-image.
        - Midjourney V8.1 (10 tokens/request) — returns 4 variations, up to 5 reference images.
        - GPT Image 2 (7 tokens/image) — strong at following instructions and text in image.
    • VIDEO tab — pick a model, set duration/resolution and options, then Generate:
        - Models: Seedance 2.5 / Seedance 2.0 Mini, Veo 3.1 Ultra (69 tokens/sec, 8s fixed),
          Veo 3.1 Lite (6 tokens/sec, 8s fixed), Runway Gen 4.5,
-         Runway Aleph 2 (video-to-video), Kling V3 / Kling V3 Turbo / Kling O3 / Kling O1.
-       - Durations typically 3–15s (Seedance 2.5 up to 30s; Kling O1 only 5s or 10s);
+         Runway Aleph 2 (video-to-video), Kling V3 / Kling V3 Turbo / Kling O3.
+       - Veo 3.1 can be generated without audio for roughly half price
+         (Veo 3.1 23, Flash 10, Lite 4, Ultra 46 tokens/sec).
+       - Durations typically 3–15s (Seedance 2.5 up to 30s);
          resolutions 720p / 1080p / 4K depending on model;
          optional native audio (Kling V3/O3); motion-control / reference / edit modes.
    • VOICE tab — text-to-speech via ElevenLabs: browse 100+ voices (filter by language,

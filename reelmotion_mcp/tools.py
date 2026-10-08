@@ -16,6 +16,8 @@ from pricing import (
     SEEDANCE2_TOKEN_RATES,
     SEEDANCE2_VALID_ASPECT_RATIOS,
     VIDEO_DURATION_RULES,
+    VEO_SILENT_TOKEN_RATES,
+    is_audio_off,
     KLING_MODELS,
     KLING_ROUTE_BASE,
     KLING_ROUTE_EDIT,
@@ -131,7 +133,7 @@ def clean_prompt_from_model_mentions(prompt: str) -> str:
     _models = (
         r"runway(?:[-\s]?(?:aleph(?:\s?2)?|4\.?5))?|"
         r"veo[-\s]?3\.?1(?:[-\s]?(?:flash|ultra|lite))?|"
-        r"seedream(?:\s?(?:pro|lite))?|midjourney|nano[-\s]?banana(?:\s?2)?|gpt|"
+        r"seedream(?:\s?(?:pro|lite|flash))?|midjourney|nano[-\s]?banana(?:\s?2(?:\.1)?)?|gpt|"
         r"seedance[-\s]?2(?:\.[05])?(?:[-\s]?(?:fast|mini))?|"
         r"kling[-\s]?(?:v?3[-\s]?turbo|v?3|o3|o1)"
     )
@@ -216,10 +218,11 @@ async def generate_image(
     Generate or edit an image using the reelmotion backend.
     Supports text-to-image (type 1), image-to-image (type 2), and multi-image reference (type 3).
 
-    COST: Seedream = 4, GPT = 6, Nano Banana 2 = 7, Midjourney = 9 tokens per image.
+    COST: Seedream Flash = 3, Seedream = 4, Seedream Pro = 6 (+1 per extra reference
+    image), Nano Banana 2 (runs Nano Banana 2.1) = 5, GPT = 7, Midjourney = 10 tokens per image.
     (Source of truth: pricing.py IMAGE_COSTS. There is NO Freepik model.)
 
-    Seedream and Midjourney deliver asynchronously (hybrid): the call may return
+    Seedream (Lite/Pro/Flash) and Midjourney deliver asynchronously (hybrid): the call may return
     the finished image (200) or, for slow jobs, "still processing" (202) — in
     which case the user is notified when it's ready and we never retry. A failed
     job (422) is auto-refunded by the backend; insufficient balance is 402.
@@ -400,7 +403,7 @@ def _build_seedance_media(
       - media_url -> image mode
       - none -> text mode
     Explicit args take precedence over session reference files.
-    Returns True if a video was attached (discounted rate applies).
+    Returns True if a video was attached (video-input rate applies).
     """
     session_images: list = []
     session_videos: list = []
@@ -426,7 +429,7 @@ def _build_seedance_media(
         return True
 
     if video_urls:
-        # Reference mode (discounted): @Image dance like @Video, style transfer, etc.
+        # Reference mode (video-input rate): @Image dance like @Video, style transfer, etc.
         payload["reference_videos"] = video_urls[:3]
         if image_urls:
             payload["reference_images"] = image_urls[:9]
@@ -587,29 +590,32 @@ async def generate_video(
     - veo-3.1-flash: 12 tokens/sec (8s only)
     - veo-3.1-lite: 6 tokens/sec (8s only) — cheapest video with native audio
     - veo-3.1-ultra: 69 tokens/sec (8s only)
+    - Veo WITHOUT audio (generate_audio=False, roughly half price): veo-3.1=23,
+      veo-3.1-flash=10, veo-3.1-lite=4, veo-3.1-ultra=46 tokens/sec.
 
-    Kling v3 / o3 / o1 (Evolink) — resolution + route + audio based pricing, 3-15s
+    Kling v3 / o3 (Evolink) — resolution + route + audio based pricing, 3-15s
     (reference route 3-10s), tokens/sec:
     - kling-v3 / kling-o3 text or image: 720p=10, 1080p=14, 4k=46 (+audio 720p=14, 1080p=16)
     - kling-v3-turbo: 720p=14, 1080p=16 (max 1080p, no audio)
     - kling-o3 reference / video-edit: 720p=15, 1080p=19 (max 1080p)
     - kling-v3 motion-control: 720p=15, 1080p=19 (provisional)
-    - kling-o1: flat 13 tokens/sec, 5s or 10s only. Unified generate+edit engine:
-      image-to-video or video editing. It has NO text-to-video route, so it always
-      needs an image (media_url) or a video (edit_video).
+    Kling O1 is retired: a legacy 'kling-o1' resolves to kling-o3.
     Kling routing: motion_video -> motion (kling-v3); edit_video / a video media ->
     video-edit (kling-o3); reference_images / mode='reference' -> reference (kling-o3);
     otherwise text/image-to-video. `quality` (720p/1080p/4k, default 720p) and
     `sound` ('on'/'off', base route only) are clamped by the backend.
 
     Seedance (resolution-based pricing, default 5s):
-    - seedance-2.5: 480p=16, 720p=35, 1080p=85 tokens/sec, 4-30s, free audio
-    - seedance-2.0-mini: 480p=6, 720p=12 tokens/sec, 4-15s (no 1080p -> 720p);
+    - seedance-2.5: 480p=12, 720p=27, 1080p=66 tokens/sec, 4-30s, free audio
+    - seedance-2.0-mini: 480p=4, 720p=9 tokens/sec, 4-15s (no 1080p -> 720p);
       cheapest video on the platform
-    - Reference-video discount (reference_videos sent): seedance-2.5 480p=10/720p=21/1080p=52; seedance-2.0-mini 480p=4/720p=8.
+    - Video-input rate (reference_videos or video-edit): seedance-2.5 480p=8/720p=16/1080p=40;
+      seedance-2.0-mini 480p=3/720p=6. Billed on INPUT + OUTPUT seconds, so a
+      video-edit (output = source length) costs 2 × source seconds.
     Legacy keys seedance-2.0 and seedance-2.0-fast still resolve to 2.5 and Mini.
-    Seedance-only params: resolution, generate_audio, seed, media_url + end_frame
+    Seedance-only params: resolution, seed, media_url + end_frame
     (image mode), reference_images/reference_videos/reference_audios (reference mode).
+    generate_audio: Seedance (free) and Veo (False = silent, cheaper rate).
 
     Kling-only params: quality, sound, mode ('motion'/'reference'/'edit'),
     keep_sound, motion_video, edit_video.
@@ -641,7 +647,7 @@ async def generate_video(
     allowed_models = [
         "runway-aleph", "runway-4.5",
         "veo-3.1", "veo-3.1-flash", "veo-3.1-lite", "veo-3.1-ultra",
-        "kling-v3", "kling-v3-turbo", "kling-o3", "kling-o1",
+        "kling-v3", "kling-v3-turbo", "kling-o3",
         "seedance-2.5", "seedance-2.0-mini",
     ]
 
@@ -700,6 +706,10 @@ async def generate_video(
     if chat_id:
         payload["chat_id"] = chat_id
 
+    # Veo can run without audio (Vertex AI, cheaper per-second rate).
+    if model in VEO_SILENT_TOKEN_RATES:
+        payload["generate_audio"] = not is_audio_off(generate_audio)
+
     if is_seedance:
         # Resolution-based tier; the "fast" sub-tier has no 1080p.
         res = normalize_seedance_resolution(model, resolution)
@@ -740,7 +750,10 @@ async def generate_video(
             reference_audios, effective_media_url, end_frame, edit_video,
             "edit" if (mode == "edit" or edit_video) else mode,
         )
-        cost = compute_seedance2_cost(model, res, duration, has_reference_videos=used_ref_videos)
+        is_edit = str(mode or "").lower().strip() == "edit" or bool(edit_video)
+        cost = compute_seedance2_cost(
+            model, res, duration, has_reference_videos=used_ref_videos, is_edit=is_edit,
+        )
         logger.debug(
             "Seedance payload: model=%s, resolution=%s, duration=%ds, ref_videos=%s, cost=%d tokens",
             model, res, duration, used_ref_videos, cost,
@@ -816,7 +829,7 @@ async def generate_video(
     try:
         # 900s read ceiling. The job-backed providers (runway-4.5, kling) now answer
         # 202 almost immediately and are tracked via the in-chat card, but the other
-        # providers (sora/veo/seedance) are still fully synchronous and can take
+        # providers (veo/seedance) are still fully synchronous and can take
         # several minutes, so the ceiling MUST stay high (≥600s) or a slow-but-
         # successful generation surfaces as a connection error and the user never
         # sees the video. AsyncClient keeps the event loop free for other conversations.

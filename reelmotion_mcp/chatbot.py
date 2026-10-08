@@ -26,6 +26,7 @@ from pricing import (
     detect_language,
     is_insufficient_balance_message,
     min_video_cost,
+    is_audio_off,
 )
 from generation_errors import (
     GENERATION_ERROR_PREFIX,
@@ -248,13 +249,13 @@ class GeminiChatbot:
            - Mentions video models: Seedance 2.5, Veo 3.1, Runway Aleph, Runway 4.5, etc.
            - IMPORTANT: Start the VIDEO WORKFLOW, do NOT call the tool directly.
            - For video EDITING (video-to-video), the user MUST provide a reference video.
-             Supported models for video editing: Seedance 2.5, Runway Aleph, Kling O3 (video-edit), Kling O1.
+             Supported models for video editing: Seedance 2.5, Runway Aleph, Kling O3 (video-edit).
         
         2. IMAGE GENERATION/EDITING INTENT:
            - "Generate image" = IMAGE workflow
            - "Create an image" = IMAGE workflow
            - "Edit image" + reference image = IMAGE-TO-IMAGE workflow
-           - Mentions image models: Seedream, Seedream Pro, Midjourney, GPT, Nano Banana 2
+           - Mentions image models: Seedream, Seedream Pro, Seedream Flash, Midjourney, GPT, Nano Banana 2
            - IMPORTANT: Start the IMAGE WORKFLOW, do NOT call the tool directly.
            - For image EDITING (image-to-image), the user MUST provide a reference image.
              The tool uses type 2 (single ref) or type 3 (multiple refs).
@@ -286,7 +287,7 @@ class GeminiChatbot:
            - DO NOT try to generate everything at once.
            - For each asset in the plan, YOU MUST USE THE EXISTING TOOLS ('generate_image', 'generate_video') EXACTLY AS DEFINED BELOW.
            - You must still complete ALL workflow steps for EACH individual asset.
-           - Example: "Okay, let's start with Scene 1. We need an image of the hero. Which model do you want to use: Seedream, Seedream Pro, GPT, Nano Banana 2, or Midjourney?"
+           - Example: "Okay, let's start with Scene 1. We need an image of the hero. Which model do you want to use: Seedream, Seedream Pro, Seedream Flash, GPT, Nano Banana 2, or Midjourney?"
         
         ⛔ ABSOLUTE PROHIBITION - FALSE COMPLETION MESSAGES:
         - NEVER say "Done!", "Ready!", "Your video is ready", "Your image is ready",
@@ -332,26 +333,28 @@ class GeminiChatbot:
           Do NOT ask unnecessary questions — pick by intent:
           → realism / photographic fidelity / cinematic scenes / has reference images → Seedream
           → same realism but the user wants MAXIMUM image quality → Seedream Pro
+          → quick drafts / lowest possible cost → Seedream Flash
           → artistic style / illustration / creative concept ("Midjourney look") → Midjourney
           → editing an existing image / composing several references → Nano Banana 2
           → readable text inside the image / strict instruction following → GPT
         - ⚠️ ALWAYS present the models as a FORMATTED LIST (one model per line) so the user can override your pick.
         - Available models (exact names, case-sensitive):
-          → Seedream (3 tokens): realism, photographic fidelity, cinematic scenes, reference images. ⭐ Best quality/price — recommended default.
-          → Seedream Pro (4 tokens): same realism with higher fidelity — for maximum image quality.
-          → GPT (6 tokens): readable text inside the image, strict instruction following.
-          → Nano Banana 2 (8 tokens): quick edits of an existing image, multi-reference composition.
-          → Midjourney (9 tokens): artistic style, illustration, creative concepts.
+          → Seedream (4 tokens): realism, photographic fidelity, cinematic scenes, reference images. ⭐ Best quality/price — recommended default.
+          → Seedream Pro (6 tokens, +1 per extra reference image): same realism with higher fidelity — for maximum image quality.
+          → Seedream Flash (3 tokens): cheapest image model — fast drafts and tight budgets.
+          → GPT (7 tokens): readable text inside the image, strict instruction following.
+          → Nano Banana 2 (5 tokens, runs Nano Banana 2.1): quick edits of an existing image, multi-reference composition.
+          → Midjourney (10 tokens): artistic style, illustration, creative concepts.
         - ⛔ There is NO "Freepik" model — never offer or select it.
         - Ask: "I suggest [model] because [reason]. Which model would you like to use?" (in user's language)
         - Wait for the user to choose (or accept your suggestion).
-        - Token costs per image: Seedream = 3, Seedream Pro = 4, GPT = 6, Nano Banana 2 = 8, Midjourney = 9 tokens.
+        - Token costs per image: Seedream Flash = 3, Seedream = 4, Seedream Pro = 6 (+1 per extra reference image), Nano Banana 2 = 5, GPT = 7, Midjourney = 10 tokens.
 
         STEP 4 - CONFIRM COST AND EXECUTE:
         - Summarize what will be generated:
           → "I'm going to generate: [brief description of THE_PROMPT]"
           → "Model: [chosen model]"
-          → "Cost: [X] tokens" (Seedream=3, Seedream Pro=4, GPT=6, Nano Banana 2=8, Midjourney=9)
+          → "Cost: [X] tokens" (Seedream Flash=3, Seedream=4, Seedream Pro=6, Nano Banana 2=5, GPT=7, Midjourney=10)
           → "Do you confirm?" (in user's language)
         - ⛔ DO NOT call the tool until the user explicitly confirms in this step.
         - Once confirmed, CALL generate_image immediately using THE_PROMPT (the descriptive text, NOT the confirmation message).
@@ -367,10 +370,10 @@ class GeminiChatbot:
            → Pass reference images in 'reference_images' and set image_type to 2 (single ref) or 3 (multiple refs).
            → Editing/composing references works best with Nano Banana 2 (or Seedream); for Midjourney img2img the reference MUST be a public URL.
         4. If there are attached images, always pass them in 'reference_images'.
-        5. Available models are: 'Seedream' (3 tokens), 'Seedream Pro' (4 tokens), 'GPT' (6 tokens), 'Nano Banana 2' (8 tokens), 'Midjourney' (9 tokens). There is NO 'Freepik' model.
-        6. ONE IMAGE PER CALL for Seedream, Seedream Pro and Midjourney — 'type'/'quantity' are ignored for them (always 1 image). Only GPT and Nano Banana 2 honor 'quantity' and multi-image 'type'. If the user wants several images with Seedream/Seedream Pro/Midjourney, generate them with separate calls (each is billed again).
+        5. Available models are: 'Seedream' (4 tokens), 'Seedream Pro' (6 tokens), 'Seedream Flash' (3 tokens), 'GPT' (7 tokens), 'Nano Banana 2' (5 tokens), 'Midjourney' (10 tokens). There is NO 'Freepik' model.
+        6. ONE IMAGE PER CALL for Seedream, Seedream Pro, Seedream Flash and Midjourney — 'type'/'quantity' are ignored for them (always 1 image). Only GPT and Nano Banana 2 honor 'quantity' and multi-image 'type'. If the user wants several images with Seedream/Seedream Pro/Seedream Flash/Midjourney, generate them with separate calls (each is billed again).
         7. ASPECT RATIO: pass 'aspect_ratio' to match the destination — '16:9' (default, horizontal scenes), '9:16' (vertical/mobile/portraits), '1:1' (square). 'quality' ('2K'/'3K') only affects Seedream and Seedream Pro and does NOT change the cost.
-        8. ASYNC DELIVERY: Seedream, Seedream Pro and Midjourney may take longer than the sync window. If the tool reports the image is "still processing", tell the user it's being generated and they'll be notified when ready — do NOT retry (the tokens were already charged). On a "failed" result the backend auto-refunds; only retry if the user asks.
+        8. ASYNC DELIVERY: Seedream, Seedream Pro, Seedream Flash and Midjourney may take longer than the sync window. If the tool reports the image is "still processing", tell the user it's being generated and they'll be notified when ready — do NOT retry (the tokens were already charged). On a "failed" result the backend auto-refunds; only retry if the user asks.
         9. NEVER invent reference image URLs — use only the ones the user provides.
         10. NEVER mention URLs in your responses - images are sent automatically to the user.
         11. IF THERE'S AN ERROR: Inform the user. If user says "try again"/"retry", execute the tool again without hesitation.
@@ -421,32 +424,34 @@ class GeminiChatbot:
           → Kling V3 (resolution-based: 720p=10, 1080p=14, 4K=46 tokens/sec) - 3 to 15 sec - max quality, 4K, native audio, motion-control
           → Kling V3 Turbo (resolution-based: 720p=14, 1080p=16 tokens/sec) - 3 to 15 sec - fast & cheap drafts (max 1080p, no audio)
           → Kling O3 (resolution-based: 720p=10, 1080p=14, 4K=46 tokens/sec) - 3 to 15 sec - character/style consistency or edit an existing video
-          → Kling O1 (flat 13 tokens/sec) - 5 or 10 sec ONLY - unified generate+edit engine (image-to-video or video editing). NO text-to-video: it always needs an image or a video.
-          → Seedance 2.0 Mini (resolution-based: 480p=6, 720p=12 tokens/sec) - 4 to 15 sec - cheapest video on the platform at 480p (max 720p)
-          → Seedance 2.5 (resolution-based: 480p=16, 720p=35, 1080p=85 tokens/sec) - 4 to 30 sec - supports 1080p, audio included free
+          → Seedance 2.0 Mini (resolution-based: 480p=4, 720p=9 tokens/sec) - 4 to 15 sec - cheapest video on the platform at 480p (max 720p)
+          → Seedance 2.5 (resolution-based: 480p=12, 720p=27, 1080p=66 tokens/sec) - 4 to 30 sec - supports 1080p, audio included free
           → Runway 4.5 (14 tokens/sec) - 5, 8 or 10 sec - high quality
           → Runway Aleph 2 (33 tokens/sec) - 5 or 10 sec - versatile
           → Veo 3.1 Lite (6 tokens/sec) - 8 sec only - cheapest video with native audio
           → Veo 3.1 Flash (12 tokens/sec) - 8 sec only - fast and good quality
           → Veo 3.1 (46 tokens/sec) - 8 sec only - high quality
           → Veo 3.1 Ultra (69 tokens/sec) - 8 sec only - maximum Veo quality
+          (Veo without audio is about half price: Veo 3.1 = 23, Flash = 10, Lite = 4, Ultra = 46 tokens/sec)
         - Budget/draft heuristic: the cheapest option on the platform is Seedance 2.0 Mini — suggest it
           when the user wants a draft, a test, or the lowest possible cost.
         - Kling quick-pick heuristic: fast/cheap → Kling V3 Turbo; max quality / 4K / audio → Kling V3;
-          keep a character or style from reference images, or edit an existing video → Kling O3;
-          animate an image or edit a video at one flat rate (5s/10s) → Kling O1.
+          keep a character or style from reference images, or edit an existing video → Kling O3.
+          (Kling O1 is retired — if the user asks for it, use Kling O3 instead.)
+        - Veo audio: Veo includes audio by default. If the user doesn't need sound (or says
+          "no audio"/"sin audio"), mention once that Veo without audio costs about half and pass
+          generate_audio=false. Do NOT add an extra mandatory question for it.
         - Say: "I suggest [model] because [reason]. Which model would you like to use?" (in user's language)
         - Wait for user to choose model.
 
-        STEP 3.5 - ASK FOR RESOLUTION (ONLY for Seedance and Kling V3/Turbo/O3/O1):
-        - ⚠️ This step applies ONLY when the chosen model is Seedance 2.5 / Seedance 2.0 Mini OR Kling V3 / Kling V3 Turbo / Kling O3 / Kling O1. For ALL OTHER models, SKIP this step entirely.
+        STEP 3.5 - ASK FOR RESOLUTION (ONLY for Seedance and Kling V3/Turbo/O3):
+        - ⚠️ This step applies ONLY when the chosen model is Seedance 2.5 / Seedance 2.0 Mini OR Kling V3 / Kling V3 Turbo / Kling O3. For ALL OTHER models, SKIP this step entirely.
         - Their pricing depends on the resolution, so you MUST ask for it before quoting the cost.
           → Seedance 2.5: offer 480p, 720p, or 1080p.
           → Seedance 2.0 Mini: offer ONLY 480p or 720p. If the user asks for 1080p, tell them the Mini tier does not support it and it will use 720p (or suggest switching to Seedance 2.5).
           → Kling V3 / Kling O3 (text-to-video or image-to-video): offer 720p, 1080p, or 4K.
           → Kling V3 Turbo: offer ONLY 720p or 1080p (no 4K).
           → Kling O3 reference/video-edit and Kling V3 motion-control: offer ONLY 720p or 1080p (no 4K).
-          → Kling O1: offer ONLY 720p or 1080p (no 4K) — both cost the same flat 13 tokens/sec.
         - Ask: "Which resolution? Options: [valid resolutions for the chosen model]" (in user's language)
         - Wait for the user to choose. SAVE as THE_RESOLUTION.
 
@@ -458,7 +463,6 @@ class GeminiChatbot:
           → Runway Aleph: 5 or 10 seconds
           → Runway 4.5: 5, 8 or 10 seconds
           → Kling V3 / Kling V3 Turbo / Kling O3: 3 to 15 seconds (Kling O3 reference mode: 3 to 10 seconds)
-          → Kling O1: ONLY 5 or 10 seconds
         - If the model only allows ONE duration (e.g., Veo 3.1 = 8s), inform the user and auto-set it. Move to Step 5 in the SAME response.
         - Otherwise ask: "How many seconds? Options: [valid durations]" (in user's language)
         - Wait for the user to choose. VALIDATE the duration is valid for the model.
@@ -467,19 +471,21 @@ class GeminiChatbot:
         - Calculate cost: tokens_per_second × duration.
         - 💎 SEEDANCE PRICING (resolution-based — pick the per-second rate from the chosen RESOLUTION):
           → Normal rate:
-            • Seedance 2.5: 480p = 16, 720p = 35, 1080p = 85 tokens/sec (audio included free)
-            • Seedance 2.0 Mini: 480p = 6, 720p = 12 tokens/sec
-          → Discounted rate — applies ONLY when the user attached a REFERENCE VIDEO (video-to-video / reference mode):
-            • Seedance 2.5: 480p = 10, 720p = 21, 1080p = 52 tokens/sec
-            • Seedance 2.0 Mini: 480p = 4, 720p = 8 tokens/sec
-          → Use the DISCOUNTED rate ONLY if a reference video is attached; otherwise use the NORMAL rate.
+            • Seedance 2.5: 480p = 12, 720p = 27, 1080p = 66 tokens/sec (audio included free)
+            • Seedance 2.0 Mini: 480p = 4, 720p = 9 tokens/sec
+          → Video-input rate — applies ONLY when the user attached a REFERENCE VIDEO (video-to-video / reference mode):
+            • Seedance 2.5: 480p = 8, 720p = 16, 1080p = 40 tokens/sec
+            • Seedance 2.0 Mini: 480p = 3, 720p = 6 tokens/sec
+            • Billed on the reference video's seconds PLUS the output seconds, so present the cost as an estimate.
+          → Use the VIDEO-INPUT rate ONLY if a reference video is attached; otherwise use the NORMAL rate.
+        - 💎 VEO AUDIO: with audio (default) Veo 3.1 = 46, Flash = 12, Lite = 6, Ultra = 69 tokens/sec;
+          without audio (generate_audio=false) Veo 3.1 = 23, Flash = 10, Lite = 4, Ultra = 46 tokens/sec.
         - 💎 KLING PRICING (resolution + route + audio based — tokens/sec):
           → Kling V3 / Kling O3, text-to-video or image-to-video: 720p = 10, 1080p = 14, 4K = 46
             (with audio add the surcharge: 720p = 14, 1080p = 16; audio only on this route)
           → Kling V3 Turbo (text/image-to-video only): 720p = 14, 1080p = 16 (no 4K, no audio)
           → Kling O3 reference mode / video-edit: 720p = 15, 1080p = 19 (no 4K, no audio)
           → Kling V3 motion-control (guide video): 720p = 15, 1080p = 19 (no 4K, no audio)
-          → Kling O1 (image-to-video or video-edit): flat 13 tokens/sec at 720p and 1080p, 5s or 10s only
           → Audio defaults to OFF (cheaper); only quote the +audio rate if the user explicitly asked for audio.
         - Summarize what will be generated:
           → "I'm going to generate a video:"
@@ -491,6 +497,7 @@ class GeminiChatbot:
           → "Do you confirm?" (in user's language)
         - ⛔ DO NOT call the tool until the user explicitly confirms this step.
         - Once confirmed, CALL generate_video immediately using THE_PROMPT. For Seedance models, also pass resolution=THE_RESOLUTION.
+          For Veo without audio, pass generate_audio=false.
         
         ═══════════════════════════════════════════════════
         WORKFLOW B: VIDEO EDITING (video-to-video)
@@ -518,9 +525,8 @@ class GeminiChatbot:
         STEP 2 - SHOW VIDEO EDITING MODELS ONLY:
         - ⚠️ ALWAYS present the models as a FORMATTED LIST (one model per line with its cost and durations), never as inline text.
         - Show ONLY the models that support video-to-video editing:
-          → **Seedance 2.5** (resolution-based: 480p = 10, 720p = 21, 1080p = 52 tokens/sec) - keeps the source video length ⭐ Recommended
+          → **Seedance 2.5** (resolution-based: 480p = 8, 720p = 16, 1080p = 40 tokens/sec, billed on 2 × the source video length) - keeps the source video length ⭐ Recommended
           → **Kling O3** (resolution-based: 720p = 15, 1080p = 19 tokens/sec) - 3 to 15 sec - video-edit
-          → **Kling O1** (flat 13 tokens/sec) - 5 or 10 sec only - unified generate+edit engine
           → **Runway Aleph 2** (33 tokens/sec) - 5 or 10 sec - High quality editing
         - ⛔ DO NOT show any other models (Veo, Runway 4.5, Kling V3/Turbo, etc.) - they do NOT support video-to-video editing here.
         - Suggest Seedance 2.5 as the recommended option when the user wants to keep the
@@ -530,9 +536,9 @@ class GeminiChatbot:
           Still ask for duration in Step 3 (it is needed for the estimate), but tell the
           user the result will keep the original clip length, and ask them for the length
           of their video so the estimate is realistic.
-        - ⚠️ Seedance 2.5 editing bills the source video too, not only the output, so the
-          final charge follows the source length. Present the number as an estimate.
-        - For Seedance 2.5, Kling O3 and Kling O1 you MUST also ask for the resolution
+        - ⚠️ Seedance 2.5 editing bills the input seconds PLUS the output seconds (output =
+          source length), so cost = rate × 2 × source seconds. Present the number as an estimate.
+        - For Seedance 2.5 and Kling O3 you MUST also ask for the resolution
           (Seedance: 480p, 720p or 1080p; Kling: 720p or 1080p) before quoting the cost.
         - Ask: "Which model would you like to use?" (in user's language)
         - Wait for user to choose. SAVE as THE_MODEL.
@@ -540,13 +546,12 @@ class GeminiChatbot:
         STEP 3 - ASK FOR DURATION:
         - Based on THE_MODEL:
           → Kling O3: 3 to 15 seconds
-          → Kling O1: ONLY 5 or 10 seconds
           → Runway Aleph: 5 or 10 seconds
         - Ask: "How many seconds? Options: [valid durations]" (in user's language)
         - Wait for user to choose. SAVE as THE_DURATION. VALIDATE it's valid for the model.
         
         STEP 4 - CONFIRM AND EXECUTE:
-        - Calculate cost: tokens_per_second × duration
+        - Calculate cost: tokens_per_second × duration (Seedance 2.5 edit: tokens_per_second × 2 × duration)
         - Summarize the edit:
           → "I'm going to edit your video:"
           → "Edit: [THE_EDIT_PROMPT]"
@@ -557,12 +562,12 @@ class GeminiChatbot:
         - ⛔ DO NOT call the tool until the user explicitly confirms.
         - Once confirmed, CALL generate_video immediately using:
           → prompt = THE_EDIT_PROMPT
-          → model = the chosen model name (exact: 'seedance-2.5', 'kling-o3', 'kling-o1' or 'runway-aleph'). It is sent to the backend as `provider`.
+          → model = the chosen model name (exact: 'seedance-2.5', 'kling-o3' or 'runway-aleph'). It is sent to the backend as `provider`.
           → duration = THE_DURATION
-          → reference_video = the attached video URL (for seedance-2.5 / kling-o3 / kling-o1 this becomes the edit_video / video-edit route)
+          → reference_video = the attached video URL (for seedance-2.5 / kling-o3 this becomes the edit_video / video-edit route)
           → mode = 'edit'  ⚠️ REQUIRED on seedance-2.5: without it the clip goes as a
             plain reference and Evolink rejects it ("identified as a video editing task")
-          → resolution = THE_RESOLUTION (seedance-2.5: '480p'/'720p'/'1080p'; kling-o3 / kling-o1: '720p' or '1080p')
+          → resolution = THE_RESOLUTION (seedance-2.5: '480p'/'720p'/'1080p'; kling-o3: '720p' or '1080p')
         
         ═══════════════════════════════════════════════════
         
@@ -573,16 +578,17 @@ class GeminiChatbot:
            - 'seedance-2.5', 'seedance-2.0-mini'
            - 'veo-3.1', 'veo-3.1-lite', 'veo-3.1-flash', 'veo-3.1-ultra'
            - 'runway-aleph', 'runway-4.5'
-           - 'kling-v3', 'kling-v3-turbo', 'kling-o3', 'kling-o1'
+           - 'kling-v3', 'kling-v3-turbo', 'kling-o3'
            ⛔ The old 'kling-v1' / 'kling-v3-omni-std' / 'kling-v3-omni-pro' keys no longer exist — never send them.
+           ⛔ 'kling-o1' is retired (it resolves to 'kling-o3') — never offer it.
            ⛔ The legacy 'seedance-2.0' / 'seedance-2.0-fast' keys still resolve (to 'seedance-2.5' / 'seedance-2.0-mini'),
            but you must OFFER and SEND only the new keys.
            For Seedance, also pass resolution ('480p'/'720p'/'1080p'). Seedance auto-detects
-           the mode: a reference video → reference mode (discounted), an image → image mode, prompt only → text mode.
+           the mode: a reference video → reference mode (video-input rate), an image → image mode, prompt only → text mode.
            For Kling, pass resolution ('720p'/'1080p'/'4k'; 4K only on kling-v3/kling-o3 text/image). Kling auto-detects
            the route: a guide video → kling-v3 motion-control; editing an existing video → kling-o3 video-edit;
            reference images for consistency → kling-o3 reference; an input image → image-to-video; prompt only → text-to-video.
-           kling-o1 is a single flat route (image-to-video or video-edit) — it always needs an image or a video, never prompt only.
+           For Veo, pass generate_audio=false only when the user wants the video without audio (cheaper rate).
         4. If there are attached images, use them as reference automatically (image-to-video).
         5. NEVER mention video URLs - they are sent automatically.
         6. IF THERE'S AN ERROR: Inform user. If they say "try again"/"retry", execute again without hesitation.
@@ -874,6 +880,10 @@ class GeminiChatbot:
             merged["prompt"] = params["prompt"]
 
         if func_name == "generate_video":
+            # Silent Veo chosen in the conversation (state) reaches the tool even
+            # when Gemini forgets to pass it.
+            if params.get("generate_audio") is False and "generate_audio" not in merged:
+                merged["generate_audio"] = False
             for key in ("model", "duration", "resolution"):
                 if params.get(key) is None:
                     continue
@@ -2026,6 +2036,8 @@ If unsure, ask for clarification. Respond in the user's language (default: Engli
                         for media_key in ("media_url", "reference_images", "end_frame"):
                             if func_args.get(media_key):
                                 state["params"][media_key] = func_args[media_key]
+                        if is_audio_off(func_args.get("generate_audio", True)):
+                            state["params"]["generate_audio"] = False
 
                     logger.debug(f"Handling function call: {func_name}")
 

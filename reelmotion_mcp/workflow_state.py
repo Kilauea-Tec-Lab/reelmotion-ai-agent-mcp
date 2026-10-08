@@ -49,11 +49,11 @@ VIDEO_WORKFLOWS = (WORKFLOW_VIDEO_GEN, WORKFLOW_VIDEO_EDIT)
 
 # Models allowed for video-to-video editing (the rest don't support it).
 # kling-o3 covers both the "edit an existing video" and "reference-to-video"
-# routes; kling-o1 is the unified generate+edit engine (flat rate); runway-aleph
-# remains a high-quality editor; seedance-2.5 routes to seedance-2.5-video-edit,
-# which keeps the source length (Evolink forces duration=-1) and bills the
-# discounted video tier.
-VIDEO_EDIT_MODELS = ("runway-aleph", "kling-o3", "kling-o1", "seedance-2.5")
+# routes (the retired kling-o1 now resolves to it); runway-aleph remains a
+# high-quality editor; seedance-2.5 routes to seedance-2.5-video-edit, which
+# keeps the source length and bills the video-input rate on input + output
+# seconds (2 × source length).
+VIDEO_EDIT_MODELS = ("runway-aleph", "kling-o3", "seedance-2.5")
 
 RACHEL_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"
 
@@ -319,8 +319,9 @@ def _build_model_alias_table() -> Dict[str, str]:
         "kling v3": "kling-v3",
         "kling o3": "kling-o3",
         "kling-o3": "kling-o3",
-        "kling o1": "kling-o1",
-        "kling-o1": "kling-o1",
+        # Kling O1 is retired; the backend routes it to Kling O3.
+        "kling o1": "kling-o3",
+        "kling-o1": "kling-o3",
         "kling pro": "kling-v3",
         "kling std": "kling-v3-turbo",
         "kling standard": "kling-v3-turbo",
@@ -328,6 +329,7 @@ def _build_model_alias_table() -> Dict[str, str]:
         "kling v3 omni std": "kling-v3-turbo",
         "kling omni pro": "kling-v3",
         "kling omni std": "kling-v3-turbo",
+        "nano banana 2.1": "Nano Banana 2",
         "nano banana 2": "Nano Banana 2",
         "nano banana": "Nano Banana 2",
         "nanobanana": "Nano Banana 2",
@@ -343,6 +345,9 @@ def _build_model_alias_table() -> Dict[str, str]:
         "seedream lite": "Seedream",
         "seedream 5.0 lite": "Seedream",
         "seedream 5 lite": "Seedream",
+        "seedream flash": "Seedream Flash",
+        "seedream 5.0 flash": "Seedream Flash",
+        "seedream 5 flash": "Seedream Flash",
         "midjourney": "Midjourney",
         "mid journey": "Midjourney",
     })
@@ -414,6 +419,26 @@ def parse_resolution(text: str, allow_bare: bool = False) -> Optional[str]:
         bare = _BARE_RESOLUTION_RE.search(text or "")
         if bare:
             return bare.group(1) + "p"
+    return None
+
+
+# Explicit "no audio" / "with audio" requests (Veo has a cheaper silent rate).
+# Only unambiguous phrasings: a bare "silent" could describe the scene itself.
+_AUDIO_OFF_RE = re.compile(
+    r"\b(?:sin\s+(?:audio|sonido)|without\s+(?:audio|sound)|no\s+(?:audio|sound))\b",
+    re.IGNORECASE,
+)
+_AUDIO_ON_RE = re.compile(
+    r"\b(?:con\s+(?:audio|sonido)|with\s+(?:audio|sound))\b", re.IGNORECASE
+)
+
+
+def parse_audio_preference(text: str) -> Optional[bool]:
+    """False for an explicit 'no audio' request, True for 'with audio', else None."""
+    if _AUDIO_OFF_RE.search(text or ""):
+        return False
+    if _AUDIO_ON_RE.search(text or ""):
+        return True
     return None
 
 
@@ -557,6 +582,8 @@ def new_state(workflow_type: str = WORKFLOW_UNKNOWN) -> dict:
             "media_url": None,
             "reference_images": None,
             "end_frame": None,
+            # None = backend default (audio on). False = Veo silent rate.
+            "generate_audio": None,
         },
         "updated_at": "",
     }
@@ -684,6 +711,9 @@ def apply_user_message(state: dict, message: str, has_reference_video: bool = Fa
                 params["resolution"] = normalize_kling_quality(model_for_res, None, resolution)
             else:
                 params["resolution"] = resolution
+        audio = parse_audio_preference(scan_text)
+        if audio is not None:
+            params["generate_audio"] = audio
 
     # --- Speech -------------------------------------------------------------
     if state["workflow_type"] == WORKFLOW_SPEECH:
@@ -906,14 +936,17 @@ def build_action_args(state: dict, ref_urls: Optional[List[str]] = None) -> Opti
             route = (
                 KLING_ROUTE_EDIT
                 if (workflow_type == WORKFLOW_VIDEO_EDIT and model == "kling-o3")
-                # turbo -> turbo, kling-o1 -> its flat route, everything else -> base
+                # turbo -> turbo, everything else -> base
                 else default_kling_route(model)
             )
             args["resolution"] = normalize_kling_quality(model, route, params.get("resolution"))
             # mode=edit makes the cost estimate use the edit rate; the tool also
             # auto-detects the edit route from the attached reference video.
-            if workflow_type == WORKFLOW_VIDEO_EDIT and model in ("kling-o3", "kling-o1"):
+            if workflow_type == WORKFLOW_VIDEO_EDIT and model == "kling-o3":
                 args["mode"] = "edit"
+        elif model.startswith("veo-") and params.get("generate_audio") is False:
+            # Silent Veo: forwarded to the backend and priced at the silent rate.
+            args["generate_audio"] = False
         # Reference files are attached by execute_pending_action from refs:{uuid};
         # explicit project media (see new_state) rides along and wins over them.
         for media_key in ("media_url", "reference_images", "end_frame"):
@@ -958,6 +991,8 @@ def state_context_note(state: dict) -> str:
     for field in ("model", "duration", "resolution", "voice_name"):
         if params.get(field):
             parts.append(f"{field}={params[field]}")
+    if params.get("generate_audio") is False:
+        parts.append("generate_audio=false")
     if params.get("speech_text"):
         text = params["speech_text"]
         preview = text if len(text) <= 80 else text[:77] + "..."

@@ -28,6 +28,7 @@ from workflow_state import (
     missing_fields,
     new_state,
     normalize_model_name,
+    parse_audio_preference,
     parse_duration,
     parse_resolution,
     parse_voice,
@@ -130,7 +131,11 @@ class TestNormalizeModelName:
         ("seedance 2", "seedance-2.5"),
         ("seedance 2.5", "seedance-2.5"),
         ("seedance mini", "seedance-2.0-mini"),
-        ("kling o1", "kling-o1"),
+        ("kling o1", "kling-o3"),  # retired: backend routes O1 to O3
+        ("use kling-o1 please", "kling-o3"),
+        ("seedream flash", "Seedream Flash"),
+        ("Seedream 5.0 Flash", "Seedream Flash"),
+        ("nano banana 2.1", "Nano Banana 2"),
         ("veo 3.1 lite", "veo-3.1-lite"),
         ("runway aleph", "runway-aleph"),
         ("runway 4.5", "runway-4.5"),
@@ -550,6 +555,19 @@ class TestBuildActionArgs:
         state["step"] = compute_step(state)
         return state
 
+    def test_veo_without_audio_forwards_generate_audio_false(self):
+        state = self._ready_video_state()
+        state = apply_user_message(state, "sin audio por favor")
+        assert state["params"]["generate_audio"] is False
+        _, args = build_action_args(state)
+        assert args["generate_audio"] is False
+        assert pricing.estimate_generation_cost("generate_video", args) == 23 * 8
+
+    def test_veo_default_omits_generate_audio(self):
+        _, args = build_action_args(self._ready_video_state())
+        assert "generate_audio" not in args
+        assert pricing.estimate_generation_cost("generate_video", args) == 46 * 8
+
     def test_video_args_json_verbatim(self):
         result = build_action_args(self._ready_video_state())
         assert result is not None
@@ -713,3 +731,22 @@ class TestKlingV3ConfirmationLoop:
         assert state["params"]["resolution"] == "1080p"
         assert state["params"]["duration"] == 5
         assert state["step"] == "awaiting_confirmation"
+
+
+# ---------------------------------------------------------------------------
+# parse_audio_preference (Veo silent rate)
+# ---------------------------------------------------------------------------
+class TestParseAudioPreference:
+    @pytest.mark.parametrize("text", [
+        "sin audio", "Sin sonido porfa", "without audio", "no sound please", "no audio",
+    ])
+    def test_audio_off(self, text):
+        assert parse_audio_preference(text) is False
+
+    @pytest.mark.parametrize("text", ["con audio", "with sound"])
+    def test_audio_on(self, text):
+        assert parse_audio_preference(text) is True
+
+    @pytest.mark.parametrize("text", ["a silent forest at dawn", "veo 3.1", ""])
+    def test_no_preference(self, text):
+        assert parse_audio_preference(text) is None

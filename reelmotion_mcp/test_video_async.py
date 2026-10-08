@@ -270,6 +270,30 @@ class TestVideoPayloadContract:
         )
         assert client.last_json["reference_images"] == ["https://cdn/a.jpg", "https://cdn/b.jpg"]
 
+    def test_veo_forwards_generate_audio_false(self):
+        _, _, client = _run_generate_video(
+            _FakeResponse(_OK, 200), model="veo-3.1-lite", duration=8, generate_audio=False
+        )
+        assert client.last_json["provider"] == "veo-3.1-lite"
+        assert client.last_json["generate_audio"] is False
+
+    def test_veo_defaults_to_audio_on(self):
+        _, _, client = _run_generate_video(_FakeResponse(_OK, 200), model="veo-3.1", duration=8)
+        assert client.last_json["generate_audio"] is True
+
+    def test_runway_does_not_send_generate_audio(self):
+        _, _, client = _run_generate_video(_FakeResponse(_OK, 200), model="runway-4.5", duration=5)
+        assert "generate_audio" not in client.last_json
+
+    def test_kling_o1_is_sent_as_kling_o3(self):
+        refs = [{"type": "video", "url": "https://cdn/source.mp4"}]
+        _, _, client = _run_generate_video(
+            _FakeResponse(_OK, 200), model="kling-o1", duration=5, reference_files=refs,
+        )
+        body = client.last_json
+        assert body["provider"] == "kling-o3"
+        assert body["edit_video"] == "https://cdn/source.mp4"
+
     def test_invalid_provider_is_rejected(self):
         result, _, client = _run_generate_video(
             _FakeResponse(_OK, 200), model="kling-v3-omni-std", duration=5

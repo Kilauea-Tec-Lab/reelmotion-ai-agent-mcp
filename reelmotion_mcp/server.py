@@ -405,7 +405,7 @@ async def chat_endpoint(request: Request):
 
         # If the bot just quoted a cost and is now waiting for a yes/no, tell the
         # frontend the media_type + model so it can show the "Generating…" card
-        # the instant the user confirms. Sync models (Veo/Sora/Seedance) block the
+        # the instant the user confirms. Sync models (Veo/Seedance) block the
         # whole request while rendering, so the card can't wait for the round-trip
         # that returns the finished media — it has to be optimistic. Async models
         # use pending_generations (above) instead.
@@ -486,12 +486,14 @@ def generate_image(
     """
     Generate or edit an image using the reelmotion backend.
     This tool supports both text-to-image generation AND image-to-image editing/transformation.
-    COST: Seedream = 3, Seedream Pro = 4, GPT = 6, Nano Banana 2 = 8, Midjourney = 9 tokens per image.
+    COST: Seedream Flash = 3, Seedream = 4, Seedream Pro = 6 (+1 per extra reference image),
+    Nano Banana 2 (runs Nano Banana 2.1) = 5, GPT = 7, Midjourney = 10 tokens per image.
     There is NO 'Freepik' model.
 
     Model selection (pick by intent):
-    - Seedream: realism, photographic fidelity, cinematic scenes, reference images (cheapest, recommended default).
+    - Seedream: realism, photographic fidelity, cinematic scenes, reference images (recommended default).
     - Seedream Pro: the same realism with higher fidelity — when the user wants maximum image quality.
+    - Seedream Flash: cheapest image model — fast drafts and tight budgets.
     - Midjourney: artistic style, illustration, creative concepts.
     - Nano Banana 2: quick edits of an existing image, multi-reference composition.
     - GPT: readable text inside the image, strict instruction following.
@@ -502,16 +504,16 @@ def generate_image(
       Examples: change style, add elements, modify colors, remove objects, apply effects.
     - Multi-image reference: Generate using multiple reference images (type 3).
 
-    Delivery: Seedream, Seedream Pro and Midjourney are asynchronous (hybrid). The call returns the
+    Delivery: Seedream, Seedream Pro, Seedream Flash and Midjourney are asynchronous (hybrid). The call returns the
     finished image (200) or, for slow jobs, a "still processing" marker (202) — the user
     is notified when it's ready; never retry a processing job. They always produce ONE
     image per call ('type'/'quantity' are ignored). A failed job (422) is auto-refunded.
 
     Args:
         prompt: The description of the image to generate (rich, visual, in English), or editing instructions.
-        model: One of: 'Seedream', 'Seedream Pro', 'GPT', 'Nano Banana 2', 'Midjourney'. Defaults to 'Seedream'.
+        model: One of: 'Seedream', 'Seedream Pro', 'Seedream Flash', 'GPT', 'Nano Banana 2', 'Midjourney'. Defaults to 'Seedream'.
         image_type: 1 (text only), 2 (text + reference image), 3 (text + multiple references). Only GPT and Nano Banana 2 honor it.
-        quantity: Number of images (GPT / Nano Banana 2 only; Seedream/Seedream Pro/Midjourney always 1). Defaults to 1.
+        quantity: Number of images (GPT / Nano Banana 2 only; Seedream/Seedream Pro/Seedream Flash/Midjourney always 1). Defaults to 1.
         reference_image: URL of a reference image (image editing/transformation).
         reference_images: List of reference image URLs (multi-image reference).
         aspect_ratio: '16:9' (default), '9:16', '1:1', etc. Choose to match the destination.
@@ -555,7 +557,7 @@ def generate_video(
     - Image-to-video: Animate a reference image into a video.
     - Video-to-video (editing): Transform or edit an existing video using a text prompt + reference video.
       Examples: change style, add effects, modify movement, re-edit scenes.
-      Supported models for video-to-video: seedance-2.5 (video-edit/extend), runway-aleph, kling-o3 (video-edit), kling-o1.
+      Supported models for video-to-video: seedance-2.5 (video-edit/extend), runway-aleph, kling-o3 (video-edit).
 
     Token costs per second and valid durations:
     - runway-aleph: 33 tokens/sec (5-10s) - Aleph 2, video-to-video editing
@@ -564,25 +566,26 @@ def generate_video(
     - veo-3.1-lite: 6 tokens/sec (8s only) - cheapest video with native audio
     - veo-3.1-flash: 12 tokens/sec (8s only)
     - veo-3.1-ultra: 69 tokens/sec (8s only) - maximum quality
+    - Veo WITHOUT audio (generate_audio=False, roughly half price): veo-3.1=23,
+      veo-3.1-flash=10, veo-3.1-lite=4, veo-3.1-ultra=46 tokens/sec.
 
-    Kling v3 / o3 / o1 (RESOLUTION + route + audio based, 3-15s; reference 3-10s):
+    Kling v3 / o3 (RESOLUTION + route + audio based, 3-15s; reference 3-10s):
     - kling-v3: max quality, 4K, native audio, motion-control. text/image: 720p=10, 1080p=14,
       4k=46 (+audio 720p=14, 1080p=16); motion-control: 720p=15, 1080p=19.
     - kling-v3-turbo: fast/cheap drafts (text/image only, max 1080p, no audio): 720p=14, 1080p=16.
     - kling-o3: character/style consistency (reference) or edit an existing video: 720p=15, 1080p=19;
       plain text/image: 720p=10, 1080p=14, 4k=46.
-    - kling-o1: flat 13 tokens/sec (720p and 1080p), 5s or 10s ONLY. Unified generate+edit engine
-      (image-to-video or video editing) with NO text-to-video route — it always needs an image
-      (media_url) or a video (edit_video).
+    - kling-o1 is retired: a legacy 'kling-o1' resolves to kling-o3 — never offer it.
       Heuristic: edit a video -> kling-o3 + edit_video; keep a character/style from images ->
       kling-o3 + reference_images; animate with a guide video -> kling-v3 + motion_video;
       fast/cheap -> kling-v3-turbo; max quality/4K/audio -> kling-v3.
 
     Seedance (RESOLUTION-based pricing, default 5s):
-    - seedance-2.5: 480p=16, 720p=35, 1080p=85 tokens/sec, 4-30s (supports 1080p, audio free)
-    - seedance-2.0-mini: 480p=6, 720p=12 tokens/sec, 4-15s (max 720p; 1080p auto-downgraded to
+    - seedance-2.5: 480p=12, 720p=27, 1080p=66 tokens/sec, 4-30s (supports 1080p, audio free)
+    - seedance-2.0-mini: 480p=4, 720p=9 tokens/sec, 4-15s (max 720p; 1080p auto-downgraded to
       720p) - cheapest video option on the platform
-    - Reference-video discount (reference_videos sent): seedance-2.5 480p=10/720p=21/1080p=52; seedance-2.0-mini 480p=4/720p=8.
+    - Video-input rate (reference_videos or video-edit): seedance-2.5 480p=8/720p=16/1080p=40;
+      seedance-2.0-mini 480p=3/720p=6. Billed on INPUT + OUTPUT seconds (video-edit = 2 × source seconds).
     - Legacy keys seedance-2.0 / seedance-2.0-fast still resolve to seedance-2.5 /
       seedance-2.0-mini, but only the new keys should be offered and sent.
     - Mode is auto-detected: mode='edit' + edit_video -> video-edit; reference_images/
@@ -592,7 +595,7 @@ def generate_video(
       while keeping everything else) MUST go through mode='edit' + edit_video, NOT
       reference_videos. reference-to-video makes a NEW video and Evolink rejects it with
       "identified as a video editing task". video-edit keeps framing, motion and length,
-      and bills at the discounted video rate.
+      and bills at the video-input rate on input + output seconds.
 
     Args:
         prompt: Description of the video to generate or editing instructions (exact user text, NO modifications)
@@ -600,14 +603,15 @@ def generate_video(
         duration: Video duration in seconds. Valid durations depend on model (see above)
         aspect_ratio: '16:9', '9:16', '1:1', etc. Seedance also accepts adaptive/21:9/4:3/3:4. Defaults to '16:9'
         reference_image: URL of reference image (for image-to-video generation)
-        reference_video: URL of reference video (for video-to-video editing with runway-aleph / kling-o3 / kling-o1 / seedance-2.5)
+        reference_video: URL of reference video (for video-to-video editing with runway-aleph / kling-o3 / seedance-2.5)
         resolution: '480p'/'720p'/'1080p' (Seedance) or '720p'/'1080p'/'4k' (Kling). Defaults to '720p'
-        generate_audio: Whether to generate audio (Seedance only). Defaults to True. Does not affect price.
+        generate_audio: Whether to generate audio (Seedance and Veo). Defaults to True. Free on Seedance;
+            on Veo, False runs without audio at the cheaper silent rate.
         seed: Optional random seed for reproducibility (Seedance only)
         media_url: Reference image (or video) URL — image mode (Seedance/Kling) or video-edit (Kling)
         end_frame: Optional last-frame image URL for Seedance image mode
         reference_images: Reference image URLs — Seedance reference mode (max 9) or Kling reference/consistency
-        reference_videos: Reference video URLs — Seedance reference mode (max 3, discount)
+        reference_videos: Reference video URLs — Seedance reference mode (max 3, video-input rate)
         reference_audios: List of reference audio URLs for Seedance reference mode (max 3)
         quality: Kling resolution '720p'/'1080p'/'4k' (default 720p; 4K only on kling-v3/o3 text/image)
         sound: Kling audio 'on'/'off' (default off; only effective on the text/image route of kling-v3/o3)
@@ -615,7 +619,7 @@ def generate_video(
               on seedance-2.5 (-> seedance-2.5-video-edit)
         keep_sound: Keep the original audio in Kling motion/reference/edit routes
         motion_video: Guide video URL for kling-v3 motion-control
-        edit_video: Source video URL for video-edit (kling-o3 / kling-o1 / seedance-2.5)
+        edit_video: Source video URL for video-edit (kling-o3 / seedance-2.5)
     """
     return generate_video_impl(
         prompt, model, duration, aspect_ratio, reference_image, reference_video,
