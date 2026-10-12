@@ -567,7 +567,7 @@ def generate_video(
     - veo-3.1-flash: 17 tokens/sec (8s only)
     - veo-3.1-ultra: 69 tokens/sec (8s only) - maximum quality
     - Veo WITHOUT audio (generate_audio=False, roughly half price): veo-3.1=23,
-      veo-3.1-flash=10, veo-3.1-lite=4, veo-3.1-ultra=46 tokens/sec.
+      veo-3.1-flash=10, veo-3.1-lite=5, veo-3.1-ultra=46 tokens/sec.
 
     Kling v3 / o3 (RESOLUTION + route + audio based, 3-15s; reference 3-10s):
     - kling-v3: max quality, 4K, native audio, motion-control. text/image: 720p=10, 1080p=14,

@@ -432,7 +432,7 @@ class GeminiChatbot:
           → Veo 3.1 Flash (17 tokens/sec) - 8 sec only - fast and good quality
           → Veo 3.1 (46 tokens/sec) - 8 sec only - high quality
           → Veo 3.1 Ultra (69 tokens/sec) - 8 sec only - maximum Veo quality
-          (Veo without audio is about half price: Veo 3.1 = 23, Flash = 10, Lite = 4, Ultra = 46 tokens/sec)
+          (Veo without audio is about half price: Veo 3.1 = 23, Flash = 10, Lite = 5, Ultra = 46 tokens/sec)
         - Budget/draft heuristic: the cheapest option on the platform is Seedance 2.0 Mini — suggest it
           when the user wants a draft, a test, or the lowest possible cost.
         - Kling quick-pick heuristic: fast/cheap → Kling V3 Turbo; max quality / 4K / audio → Kling V3;
@@ -479,7 +479,7 @@ class GeminiChatbot:
             • Billed on the reference video's seconds PLUS the output seconds, so present the cost as an estimate.
           → Use the VIDEO-INPUT rate ONLY if a reference video is attached; otherwise use the NORMAL rate.
         - 💎 VEO AUDIO: with audio (default) Veo 3.1 = 46, Flash = 12, Lite = 6, Ultra = 69 tokens/sec;
-          without audio (generate_audio=false) Veo 3.1 = 23, Flash = 10, Lite = 4, Ultra = 46 tokens/sec.
+          without audio (generate_audio=false) Veo 3.1 = 23, Flash = 10, Lite = 5, Ultra = 46 tokens/sec.
         - 💎 KLING PRICING (resolution + route + audio based — tokens/sec):
           → Kling V3 / Kling O3, text-to-video or image-to-video: 720p = 10, 1080p = 14, 4K = 46
             (with audio add the surcharge: 720p = 14, 1080p = 22; audio only on this route)

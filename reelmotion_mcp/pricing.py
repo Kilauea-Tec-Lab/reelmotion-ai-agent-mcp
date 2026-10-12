@@ -60,7 +60,7 @@ VIDEO_TOKEN_RATES: Dict[str, int] = {
 VEO_SILENT_TOKEN_RATES: Dict[str, int] = {
     "veo-3.1": 23,
     "veo-3.1-flash": 10,
-    "veo-3.1-lite": 4,
+    "veo-3.1-lite": 5,
     "veo-3.1-ultra": 46,
 }
 

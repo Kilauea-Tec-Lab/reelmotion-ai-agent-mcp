@@ -591,7 +591,7 @@ async def generate_video(
     - veo-3.1-lite: 11 tokens/sec (8s only) — cheapest video with native audio
     - veo-3.1-ultra: 69 tokens/sec (8s only)
     - Veo WITHOUT audio (generate_audio=False, roughly half price): veo-3.1=23,
-      veo-3.1-flash=10, veo-3.1-lite=4, veo-3.1-ultra=46 tokens/sec.
+      veo-3.1-flash=10, veo-3.1-lite=5, veo-3.1-ultra=46 tokens/sec.
 
     Kling v3 / o3 (Evolink) — resolution + route + audio based pricing, 3-15s
     (reference route 3-10s), tokens/sec:

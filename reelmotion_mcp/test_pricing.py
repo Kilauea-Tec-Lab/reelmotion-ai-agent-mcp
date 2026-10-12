@@ -122,7 +122,7 @@ class TestEstimateGenerationCost:
         assert cost == 46 * 8
 
     @pytest.mark.parametrize("model,rate", [
-        ("veo-3.1", 23), ("veo-3.1-flash", 10), ("veo-3.1-lite", 4), ("veo-3.1-ultra", 46),
+        ("veo-3.1", 23), ("veo-3.1-flash", 10), ("veo-3.1-lite", 5), ("veo-3.1-ultra", 46),
     ])
     def test_video_veo_without_audio_uses_silent_rate(self, model, rate):
         assert estimate_generation_cost(
