@@ -62,8 +62,8 @@ class TestEstimateGenerationCost:
     def test_image_gpt_costs_seven(self):
         assert estimate_generation_cost("generate_image", {"model": "GPT"}) == 7
 
-    def test_image_seedream_costs_four(self):
-        assert estimate_generation_cost("generate_image", {"model": "Seedream"}) == 4
+    def test_image_seedream_costs_five(self):
+        assert estimate_generation_cost("generate_image", {"model": "Seedream"}) == 5
 
     def test_image_seedream_pro_costs_six(self):
         assert estimate_generation_cost("generate_image", {"model": "Seedream Pro"}) == 6
@@ -94,7 +94,7 @@ class TestEstimateGenerationCost:
         cost = estimate_generation_cost(
             "generate_image", {"model": "Seedream", "quantity": 5}
         )
-        assert cost == 4
+        assert cost == 5
 
     def test_image_quantity_ignored_for_midjourney(self):
         cost = estimate_generation_cost(
@@ -104,7 +104,7 @@ class TestEstimateGenerationCost:
 
     def test_image_loose_model_name_is_normalized(self):
         assert estimate_generation_cost("generate_image", {"model": "nano-banana"}) == 5
-        assert estimate_generation_cost("generate_image", {"model": "seedream 4.0"}) == 4
+        assert estimate_generation_cost("generate_image", {"model": "seedream 4.0"}) == 5
         assert estimate_generation_cost("generate_image", {"model": "seedream pro"}) == 6
         assert estimate_generation_cost("generate_image", {"model": "seedream 5.0 flash"}) == 3
 
@@ -130,7 +130,7 @@ class TestEstimateGenerationCost:
         ) == rate * 8
 
     @pytest.mark.parametrize("model,rate", [
-        ("veo-3.1", 46), ("veo-3.1-flash", 12), ("veo-3.1-lite", 6), ("veo-3.1-ultra", 69),
+        ("veo-3.1", 46), ("veo-3.1-flash", 17), ("veo-3.1-lite", 11), ("veo-3.1-ultra", 69),
     ])
     def test_video_veo_with_audio_keeps_audio_rate(self, model, rate):
         assert estimate_generation_cost(
@@ -220,7 +220,7 @@ class TestEstimateGenerationCost:
     def test_video_veo_lite_is_the_cheapest_veo(self):
         assert estimate_generation_cost(
             "generate_video", {"model": "veo-3.1-lite", "duration": 8}
-        ) == 6 * 8
+        ) == 11 * 8
 
     def test_video_aleph2_rate(self):
         assert estimate_generation_cost(

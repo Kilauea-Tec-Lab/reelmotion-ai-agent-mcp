@@ -25,7 +25,7 @@ from typing import Dict, List, Optional
 # - "Nano Banana 2" keeps its backend name but now runs Nano Banana 2.1
 #   (gemini-nano-banana-2.1) at 5 tokens.
 IMAGE_COSTS: Dict[str, int] = {
-    "Seedream": 4,
+    "Seedream": 5,
     "Seedream Pro": 6,
     "Seedream Flash": 3,
     "GPT": 7,
@@ -49,8 +49,8 @@ VIDEO_TOKEN_RATES: Dict[str, int] = {
     "runway-aleph": 33,  # aleph2 $0.28/s (gen4_aleph was shut down 2026-07-30)
     "runway-4.5": 14,
     "veo-3.1": 46,
-    "veo-3.1-flash": 12,
-    "veo-3.1-lite": 6,
+    "veo-3.1-flash": 17,
+    "veo-3.1-lite": 11,
     "veo-3.1-ultra": 69,
 }
 
@@ -222,7 +222,7 @@ KLING_TOKEN_RATES = {
 # Audio surcharge applies ONLY to the base (v3/o3 text/image) route, at
 # 720p/1080p. Audio is ignored (and not charged) on turbo/reference/edit/motion.
 KLING_AUDIO_RATES = {
-    KLING_ROUTE_BASE: {"720p": 14, "1080p": 16},
+    KLING_ROUTE_BASE: {"720p": 14, "1080p": 22},
 }
 
 KLING_VALID_QUALITIES = ("720p", "1080p", "4k")

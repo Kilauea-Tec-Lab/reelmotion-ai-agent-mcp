@@ -563,15 +563,15 @@ def generate_video(
     - runway-aleph: 33 tokens/sec (5-10s) - Aleph 2, video-to-video editing
     - runway-4.5: 14 tokens/sec (5, 8, or 10s) - high quality (hybrid: 200 sync or 202 processing)
     - veo-3.1: 46 tokens/sec (8s only)
-    - veo-3.1-lite: 6 tokens/sec (8s only) - cheapest video with native audio
-    - veo-3.1-flash: 12 tokens/sec (8s only)
+    - veo-3.1-lite: 11 tokens/sec (8s only) - cheapest video with native audio
+    - veo-3.1-flash: 17 tokens/sec (8s only)
     - veo-3.1-ultra: 69 tokens/sec (8s only) - maximum quality
     - Veo WITHOUT audio (generate_audio=False, roughly half price): veo-3.1=23,
       veo-3.1-flash=10, veo-3.1-lite=4, veo-3.1-ultra=46 tokens/sec.
 
     Kling v3 / o3 (RESOLUTION + route + audio based, 3-15s; reference 3-10s):
     - kling-v3: max quality, 4K, native audio, motion-control. text/image: 720p=10, 1080p=14,
-      4k=46 (+audio 720p=14, 1080p=16); motion-control: 720p=15, 1080p=19.
+      4k=46 (+audio 720p=14, 1080p=22); motion-control: 720p=15, 1080p=19.
     - kling-v3-turbo: fast/cheap drafts (text/image only, max 1080p, no audio): 720p=14, 1080p=16.
     - kling-o3: character/style consistency (reference) or edit an existing video: 720p=15, 1080p=19;
       plain text/image: 720p=10, 1080p=14, 4k=46.

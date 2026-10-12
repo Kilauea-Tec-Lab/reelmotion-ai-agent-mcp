@@ -339,7 +339,7 @@ class GeminiChatbot:
           → readable text inside the image / strict instruction following → GPT
         - ⚠️ ALWAYS present the models as a FORMATTED LIST (one model per line) so the user can override your pick.
         - Available models (exact names, case-sensitive):
-          → Seedream (4 tokens): realism, photographic fidelity, cinematic scenes, reference images. ⭐ Best quality/price — recommended default.
+          → Seedream (5 tokens): realism, photographic fidelity, cinematic scenes, reference images. ⭐ Best quality/price — recommended default.
           → Seedream Pro (6 tokens, +1 per extra reference image): same realism with higher fidelity — for maximum image quality.
           → Seedream Flash (3 tokens): cheapest image model — fast drafts and tight budgets.
           → GPT (7 tokens): readable text inside the image, strict instruction following.
@@ -370,7 +370,7 @@ class GeminiChatbot:
            → Pass reference images in 'reference_images' and set image_type to 2 (single ref) or 3 (multiple refs).
            → Editing/composing references works best with Nano Banana 2 (or Seedream); for Midjourney img2img the reference MUST be a public URL.
         4. If there are attached images, always pass them in 'reference_images'.
-        5. Available models are: 'Seedream' (4 tokens), 'Seedream Pro' (6 tokens), 'Seedream Flash' (3 tokens), 'GPT' (7 tokens), 'Nano Banana 2' (5 tokens), 'Midjourney' (10 tokens). There is NO 'Freepik' model.
+        5. Available models are: 'Seedream' (5 tokens), 'Seedream Pro' (6 tokens), 'Seedream Flash' (3 tokens), 'GPT' (7 tokens), 'Nano Banana 2' (5 tokens), 'Midjourney' (10 tokens). There is NO 'Freepik' model.
         6. ONE IMAGE PER CALL for Seedream, Seedream Pro, Seedream Flash and Midjourney — 'type'/'quantity' are ignored for them (always 1 image). Only GPT and Nano Banana 2 honor 'quantity' and multi-image 'type'. If the user wants several images with Seedream/Seedream Pro/Seedream Flash/Midjourney, generate them with separate calls (each is billed again).
         7. ASPECT RATIO: pass 'aspect_ratio' to match the destination — '16:9' (default, horizontal scenes), '9:16' (vertical/mobile/portraits), '1:1' (square). 'quality' ('2K'/'3K') only affects Seedream and Seedream Pro and does NOT change the cost.
         8. ASYNC DELIVERY: Seedream, Seedream Pro, Seedream Flash and Midjourney may take longer than the sync window. If the tool reports the image is "still processing", tell the user it's being generated and they'll be notified when ready — do NOT retry (the tokens were already charged). On a "failed" result the backend auto-refunds; only retry if the user asks.
@@ -428,8 +428,8 @@ class GeminiChatbot:
           → Seedance 2.5 (resolution-based: 480p=12, 720p=27, 1080p=66 tokens/sec) - 4 to 30 sec - supports 1080p, audio included free
           → Runway 4.5 (14 tokens/sec) - 5, 8 or 10 sec - high quality
           → Runway Aleph 2 (33 tokens/sec) - 5 or 10 sec - versatile
-          → Veo 3.1 Lite (6 tokens/sec) - 8 sec only - cheapest video with native audio
-          → Veo 3.1 Flash (12 tokens/sec) - 8 sec only - fast and good quality
+          → Veo 3.1 Lite (11 tokens/sec) - 8 sec only - cheapest video with native audio
+          → Veo 3.1 Flash (17 tokens/sec) - 8 sec only - fast and good quality
           → Veo 3.1 (46 tokens/sec) - 8 sec only - high quality
           → Veo 3.1 Ultra (69 tokens/sec) - 8 sec only - maximum Veo quality
           (Veo without audio is about half price: Veo 3.1 = 23, Flash = 10, Lite = 4, Ultra = 46 tokens/sec)
@@ -482,7 +482,7 @@ class GeminiChatbot:
           without audio (generate_audio=false) Veo 3.1 = 23, Flash = 10, Lite = 4, Ultra = 46 tokens/sec.
         - 💎 KLING PRICING (resolution + route + audio based — tokens/sec):
           → Kling V3 / Kling O3, text-to-video or image-to-video: 720p = 10, 1080p = 14, 4K = 46
-            (with audio add the surcharge: 720p = 14, 1080p = 16; audio only on this route)
+            (with audio add the surcharge: 720p = 14, 1080p = 22; audio only on this route)
           → Kling V3 Turbo (text/image-to-video only): 720p = 14, 1080p = 16 (no 4K, no audio)
           → Kling O3 reference mode / video-edit: 720p = 15, 1080p = 19 (no 4K, no audio)
           → Kling V3 motion-control (guide video): 720p = 15, 1080p = 19 (no 4K, no audio)
